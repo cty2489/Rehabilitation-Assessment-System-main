@@ -1,0 +1,10 @@
+{
+  "metric": "all.char_bleu4",
+  "best_model_id": "yi15_6b",
+  "best_hf_id": "01-ai/Yi-1.5-6B-Chat",
+  "best_all.char_bleu4_mean": 92.9032,
+  "best_all.char_bleu4_std": 0.9113,
+  "runner_up_id": "glm4_9b",
+  "margin_over_runner_up": 1.6435,
+  "n_folds": 3
+}

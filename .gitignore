@@ -1,0 +1,55 @@
+# ---- Secrets / env ----
+.env
+.env.local
+*.env
+!.env.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ---- Node / frontend ----
+node_modules/
+frontend/node_modules/
+dist/
+build/
+.next/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+
+# ---- Caches ----
+.cache/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+# ---- Model weights & training artifacts (kept out of git) ----
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+*.h5
+*.onnx
+*.gguf
+*.npz
+optimizer.pt
+checkpoints_llm/
+DL_model/*.pth
+
+# ---- Databases ----
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Docs (not published to GitHub) ----
+docs/
+
+# ---- Device gateway (not published to GitHub) ----
+device_gateway/

@@ -1,0 +1,466 @@
+"""MySQL persistence for the device-end (task-interface) workflow.
+
+This is a **separate** store from the SQLite layer in ``db.py``. SQLite backs the
+「康复评估」page (signal upload / output inspection during testing) and is left
+untouched. This module backs the「任务一与任务三对接接口页面」(device workflow):
+
+* ``patients``    — one row per business ``patient_id`` (minimal basic info,
+                    enrolled by the hospital or auto-created from a device manifest).
+* ``assessments`` — many rows per patient: the hospital's first record at
+                    enrollment + every later device assessment.
+
+Stdlib-style raw SQL via PyMySQL (no ORM), mirroring ``db.py``'s function API so
+the inference worker can dispatch on a per-session ``persist_target`` flag.
+Connection config comes from ``.env`` (MYSQL_HOST / MYSQL_PORT / MYSQL_USER /
+MYSQL_PASSWORD / MYSQL_DB). PyMySQL is imported defensively so a host without it
+(or without a running MySQL) still serves the SQLite flow.
+"""
+from __future__ import annotations
+
+import os
+import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+try:  # defensive: a host without pymysql must still serve the SQLite flow
+    import pymysql
+    from pymysql.cursors import DictCursor
+except ImportError:  # pragma: no cover - exercised only when dep missing
+    pymysql = None  # type: ignore[assignment]
+    DictCursor = None  # type: ignore[assignment]
+
+_init_lock = threading.Lock()
+_initialized = False
+
+
+class MySQLUnavailable(RuntimeError):
+    """Raised when MySQL / pymysql is not usable; callers surface a clear error."""
+
+
+# --------------------------------------------------------------------------- #
+# Config / connection                                                          #
+# --------------------------------------------------------------------------- #
+def _config() -> Dict[str, Any]:
+    return {
+        "host": os.environ.get("MYSQL_HOST", "127.0.0.1"),
+        "port": int(os.environ.get("MYSQL_PORT", "3306")),
+        "user": os.environ.get("MYSQL_USER", "root"),
+        "password": os.environ.get("MYSQL_PASSWORD", ""),
+        "db": os.environ.get("MYSQL_DB", "rehab_mysql"),
+    }
+
+
+def get_conn(with_db: bool = True):
+    if pymysql is None:
+        raise MySQLUnavailable("未安装 pymysql，无法连接 MySQL（pip install pymysql）")
+    cfg = _config()
+    kwargs: Dict[str, Any] = {
+        "host": cfg["host"],
+        "port": cfg["port"],
+        "user": cfg["user"],
+        "password": cfg["password"],
+        "charset": "utf8mb4",
+        "autocommit": True,
+        "cursorclass": DictCursor,
+    }
+    if with_db:
+        kwargs["database"] = cfg["db"]
+    try:
+        return pymysql.connect(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        raise MySQLUnavailable(f"连接 MySQL 失败：{exc}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# Time helpers                                                                 #
+# --------------------------------------------------------------------------- #
+def now_dt() -> str:
+    """UTC 'YYYY-MM-DD HH:MM:SS' for a MySQL DATETIME column."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _to_dt(value: Any) -> Optional[str]:
+    """Best-effort parse of a manifest timestamp (ISO-8601, possibly with tz)
+    into a MySQL DATETIME string. Returns None if it can't be parsed."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).strip()).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _field(obj: Any, name: str) -> Any:
+    """Read ``name`` from a dict or an object (PatientInfo / PredictionResult)."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _norm(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Stringify DATETIME values so rows are JSON/Pydantic friendly."""
+    if row is None:
+        return None
+    for k, v in list(row.items()):
+        if isinstance(v, datetime):
+            row[k] = v.strftime("%Y-%m-%d %H:%M:%S")
+    return row
+
+
+# --------------------------------------------------------------------------- #
+# Schema                                                                       #
+# --------------------------------------------------------------------------- #
+_CREATE_PATIENTS = """
+CREATE TABLE IF NOT EXISTS patients (
+  id              BIGINT PRIMARY KEY AUTO_INCREMENT,
+  patient_id      VARCHAR(64)  NOT NULL UNIQUE,
+  name            VARCHAR(128),
+  sex             VARCHAR(8),
+  age             INT,
+  diagnosis       VARCHAR(255),
+  paralysis_side  VARCHAR(8),
+  disease_days    INT,
+  source          VARCHAR(16),
+  created_at      DATETIME NOT NULL,
+  updated_at      DATETIME NOT NULL
+) CHARACTER SET utf8mb4
+"""
+
+_CREATE_ASSESSMENTS = """
+CREATE TABLE IF NOT EXISTS assessments (
+  id              BIGINT PRIMARY KEY AUTO_INCREMENT,
+  patient_db_id   BIGINT NOT NULL,
+  source          VARCHAR(16) NOT NULL,
+  assessment_id   VARCHAR(64),
+  session_id      VARCHAR(32),
+  package_name    VARCHAR(255),
+  created_at      DATETIME NOT NULL,
+  assessment_time DATETIME,
+  fma_ue          FLOAT NOT NULL,
+  bi              FLOAT NOT NULL,
+  hand_tone       VARCHAR(8) NOT NULL,
+  hand_function   INT NOT NULL,
+  report          MEDIUMTEXT,
+  report_status   VARCHAR(16) NOT NULL,
+  biomarkers      LONGTEXT,
+  CONSTRAINT fk_assess_patient FOREIGN KEY (patient_db_id)
+    REFERENCES patients(id) ON DELETE CASCADE,
+  INDEX idx_assess_patient (patient_db_id),
+  INDEX idx_assess_created (created_at)
+) CHARACTER SET utf8mb4
+"""
+
+
+def init_db() -> None:
+    """Create the database (if missing) and both tables. Idempotent.
+
+    Raises ``MySQLUnavailable`` if MySQL can't be reached; the caller (startup)
+    only warns so the SQLite flow keeps working.
+    """
+    global _initialized
+    with _init_lock:
+        if _initialized:
+            return
+        cfg = _config()
+        conn = get_conn(with_db=False)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{cfg['db']}` CHARACTER SET utf8mb4"
+                )
+        finally:
+            conn.close()
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_CREATE_PATIENTS)
+                cur.execute(_CREATE_ASSESSMENTS)
+        finally:
+            conn.close()
+        _initialized = True
+
+
+# --------------------------------------------------------------------------- #
+# Patients                                                                     #
+# --------------------------------------------------------------------------- #
+def upsert_patient(patient: Any, source: str = "device-auto") -> int:
+    """Insert or update a patient by business key ``patient_id``. ``source`` is
+    only applied on first insert (an existing enrollment source is preserved).
+    ``patient`` is a PatientInfo or a dict. Returns the patient row id."""
+    ts = now_dt()
+    pid = _field(patient, "patient_id")
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO patients
+                  (patient_id, name, sex, age, diagnosis, paralysis_side,
+                   disease_days, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  name=VALUES(name), sex=VALUES(sex), age=VALUES(age),
+                  diagnosis=VALUES(diagnosis), paralysis_side=VALUES(paralysis_side),
+                  disease_days=VALUES(disease_days), updated_at=VALUES(updated_at)
+                """,
+                (
+                    pid,
+                    _field(patient, "name"),
+                    _field(patient, "sex"),
+                    _field(patient, "age"),
+                    _field(patient, "diagnosis"),
+                    _field(patient, "paralysis_side"),
+                    _field(patient, "disease_days"),
+                    source,
+                    ts,
+                    ts,
+                ),
+            )
+            cur.execute("SELECT id FROM patients WHERE patient_id=%s", (pid,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return int(row["id"])
+
+
+def get_patient_by_business_id(patient_id: str) -> Optional[Dict[str, Any]]:
+    """Return the patient basic-info row for a business ``patient_id`` (or None).
+    Used by the task-interface parse step to refill the form from the档案."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM patients WHERE patient_id=%s", (patient_id,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm(row)
+
+
+def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
+    """Patient row + assessment count + full assessment list."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM patients WHERE id=%s", (patient_db_id,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            patient = _norm(row)
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM assessments WHERE patient_db_id=%s",
+                (patient_db_id,),
+            )
+            patient["assessment_count"] = int(cur.fetchone()["c"])
+            cur.execute(
+                """
+                SELECT id, source, assessment_id, session_id, package_name,
+                       created_at, assessment_time, fma_ue, bi, hand_tone,
+                       hand_function, report_status
+                FROM assessments WHERE patient_db_id=%s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (patient_db_id,),
+            )
+            patient["assessments"] = [_norm(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return patient
+
+
+def list_patients() -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.*,
+                       COUNT(a.id)       AS assessment_count,
+                       MAX(a.created_at) AS last_assessed_at
+                FROM patients p
+                LEFT JOIN assessments a ON a.patient_db_id = p.id
+                GROUP BY p.id
+                ORDER BY (last_assessed_at IS NULL), last_assessed_at DESC, p.updated_at DESC
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [_norm(r) for r in rows]
+
+
+def delete_patient(patient_db_id: int) -> int:
+    """Delete a patient (assessments cascade). Returns rows affected."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM patients WHERE id=%s", (patient_db_id,))
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Assessments                                                                  #
+# --------------------------------------------------------------------------- #
+def insert_assessment(
+    patient_db_id: int,
+    session_id: Optional[str],
+    predictions: Any,
+    report: Optional[str],
+    report_status: str,
+    *,
+    source: str,
+    package_name: Optional[str] = None,
+    assessment_id: Optional[str] = None,
+    assessment_time: Optional[str] = None,
+    created_at: Optional[str] = None,
+    biomarkers: Optional[str] = None,
+) -> int:
+    """Insert one assessment row. ``predictions`` exposes FMA_UE / BI / hand_tone
+    / hand_function (PredictionResult or a dict). Returns the new row id."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO assessments
+                  (patient_db_id, source, assessment_id, session_id, package_name,
+                   created_at, assessment_time, fma_ue, bi, hand_tone,
+                   hand_function, report, report_status, biomarkers)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    patient_db_id,
+                    source,
+                    assessment_id,
+                    session_id,
+                    package_name,
+                    created_at or now_dt(),
+                    _to_dt(assessment_time),
+                    float(_field(predictions, "FMA_UE")),
+                    float(_field(predictions, "BI")),
+                    str(_field(predictions, "hand_tone")),
+                    int(_field(predictions, "hand_function")),
+                    report,
+                    report_status,
+                    biomarkers,
+                ),
+            )
+            new_id = cur.lastrowid
+    finally:
+        conn.close()
+    return int(new_id)
+
+
+def latest_assessment_for_patient(patient_id: str) -> Optional[Dict[str, Any]]:
+    """Most recent assessment (4 indicators + biomarkers) for a business
+    ``patient_id`` — the report's 变化趋势 column reads this before inserting the
+    current visit. Returns None if the patient has no prior assessment."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.fma_ue, a.bi, a.hand_tone, a.hand_function,
+                       a.biomarkers, a.created_at
+                FROM assessments a
+                JOIN patients p ON p.id = a.patient_db_id
+                WHERE p.patient_id = %s
+                ORDER BY a.created_at DESC, a.id DESC
+                LIMIT 1
+                """,
+                (patient_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm(row)
+
+
+def list_assessments(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM assessments")
+            total = int(cur.fetchone()["c"])
+            cur.execute(
+                """
+                SELECT a.id, a.created_at, a.patient_db_id, p.patient_id, p.name,
+                       a.source, a.assessment_id, a.session_id, a.package_name,
+                       a.assessment_time, a.fma_ue, a.bi, a.hand_tone,
+                       a.hand_function, a.report_status
+                FROM assessments a
+                JOIN patients p ON p.id = a.patient_db_id
+                ORDER BY a.created_at DESC, a.id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+            items = [_norm(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return {"total": total, "items": items}
+
+
+def delete_assessment(assessment_id: int) -> int:
+    """Delete one assessment row by primary key. Returns rows affected."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM assessments WHERE id=%s", (assessment_id,))
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+def delete_all_assessments() -> int:
+    """Clear every assessment row (test cleanup). Returns rows affected."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM assessments")
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Enrollment (hospital → MySQL): basic info + first assessment record          #
+# --------------------------------------------------------------------------- #
+def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Enroll a patient: upsert basic info (source='enrollment') and, if a first
+    assessment is supplied (the hospital's first record, manually entered),
+    insert it (source='hospital'). Returns the full patient record."""
+    pid = upsert_patient(basic, source="enrollment")
+    if first:
+        insert_assessment(
+            pid,
+            None,
+            first,
+            first.get("report"),
+            "generated" if first.get("report") else "manual",
+            source="hospital",
+            assessment_id=first.get("assessment_id"),
+            assessment_time=first.get("assessment_time"),
+            biomarkers=first.get("biomarkers"),
+        )
+    return get_patient(pid)  # type: ignore[return-value]
+
+
+__all__ = [
+    "MySQLUnavailable",
+    "init_db",
+    "get_conn",
+    "now_dt",
+    "upsert_patient",
+    "get_patient_by_business_id",
+    "get_patient",
+    "list_patients",
+    "delete_patient",
+    "insert_assessment",
+    "latest_assessment_for_patient",
+    "list_assessments",
+    "delete_assessment",
+    "delete_all_assessments",
+    "enroll_patient",
+]

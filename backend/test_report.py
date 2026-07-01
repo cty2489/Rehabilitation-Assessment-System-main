@@ -1,0 +1,102 @@
+"""Tests for the local QLoRA report path (backend/report.py).
+
+These do NOT load the 6B base model — they only cover the cheap, deterministic
+glue: PatientInfo → demographics adaptation and the clear error raised when the
+LoRA adapter directory is missing.
+
+Run from backend/:
+    python -m unittest test_report -v
+"""
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import report
+from schemas import PatientInfo
+
+
+def _patient() -> PatientInfo:
+    return PatientInfo(
+        patient_id="7",
+        name="张三",
+        sex="男",
+        age=65,
+        diagnosis="脑梗死",
+        disease_days=90,
+        paralysis_side="右",
+    )
+
+
+class AdaptationTests(unittest.TestCase):
+    def test_to_demographics_maps_backend_fields(self) -> None:
+        d = report.to_demographics(_patient())
+        self.assertEqual(d["gender"], "男")
+        self.assertEqual(d["age"], 65)
+        self.assertEqual(d["disease"], "脑梗死")
+        self.assertEqual(d["days_post"], 90)
+        self.assertEqual(d["affected_side"], "右")
+
+
+class LoadErrorTests(unittest.TestCase):
+    def test_missing_adapter_dir_raises_clear_error(self) -> None:
+        rm = report.ReportModel()
+        rm.adapter_dir = Path("/nonexistent/checkpoints_llm/yi15_6b")
+        with self.assertRaises(RuntimeError) as ctx:
+            rm.load()
+        self.assertIn("adapter", str(ctx.exception).lower())
+
+
+class DeepSeekTests(unittest.TestCase):
+    def test_missing_key_raises_clear_error(self) -> None:
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                report._reason_deepseek({})
+        self.assertIn("DEEPSEEK_API_KEY", str(ctx.exception))
+
+    def test_deepseek_payload_and_response_parsing(self) -> None:
+        calls = []
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "{\"overall_interpretation\":\"ok\"}"}}]}
+
+        class FakeClient:
+            def __init__(self, timeout) -> None:
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def post(self, url, headers, json):
+                calls.append({"url": url, "headers": headers, "json": json})
+                return FakeResponse()
+
+        env = {
+            "DEEPSEEK_API_KEY": "sk-test",
+            "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
+            "DEEPSEEK_MODEL": "deepseek-v4-flash",
+            "DEEPSEEK_MAX_TOKENS": "256",
+            "DEEPSEEK_TEMPERATURE": "0",
+        }
+        with patch.dict("os.environ", env, clear=False), patch("httpx.Client", FakeClient):
+            text = report._reason_deepseek({"stage_roman": "III", "biomarkers": {"groups": []}})
+
+        self.assertEqual(text, "{\"overall_interpretation\":\"ok\"}")
+        self.assertEqual(calls[0]["url"], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer sk-test")
+        self.assertEqual(calls[0]["json"]["model"], "deepseek-v4-flash")
+        self.assertEqual(calls[0]["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(calls[0]["json"]["max_tokens"], 256)
+        self.assertFalse(calls[0]["json"]["stream"])
+
+
+if __name__ == "__main__":
+    unittest.main()
