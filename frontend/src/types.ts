@@ -25,19 +25,32 @@ export type Route =
   | 'system'
   | 'task-interface'
 
-export type ReportStatus = 'generated' | 'failed'
+export type ReportStatus = 'generated' | 'failed' | 'manual'
 
 // Backend-mirrored persistence types --------------------------------------- //
 export interface AssessmentRecord {
   id: number
+  source?: string | null
+  assessment_id?: string | null
   session_id: string | null
+  package_name?: string | null
+  institution?: string | null
+  n_trials?: number | null
+  package_hash?: string | null
   created_at: string
+  assessment_time?: string | null
   fma_ue: number
   bi: number
   hand_tone: string
   hand_function: number
   report: string | null
   report_status: ReportStatus
+  biomarkers?: unknown
+  parse_warnings?: unknown
+  prediction_json?: unknown
+  model_version?: string | null
+  llm_provider?: string | null
+  llm_model?: string | null
 }
 
 export interface PatientSummary {

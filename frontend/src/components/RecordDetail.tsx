@@ -1,4 +1,5 @@
 import { AssessmentRecord } from '../types'
+import { fmtDateTime } from '../util'
 import MarkdownReport from './MarkdownReport'
 
 const HAND_TONE_DESC: Record<string, string> = {
@@ -19,11 +20,124 @@ const BRUNNSTROM_DESC: Record<number, string> = {
   6: '接近正常',
 }
 
-// Renders the 4 indicators + Chinese report for one persisted assessment record.
-// Reuses the .result-card / .results-grid styling from the assessment page.
+interface BiomarkerCoverage {
+  available: number
+  total: number
+  missing: string[]
+}
+
+const shortHash = (value?: string | null) =>
+  value ? `${value.slice(0, 12)}...${value.slice(-6)}` : '—'
+
+function asStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item))
+  if (typeof value === 'string' && value.trim()) return [value]
+  return []
+}
+
+function num(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function biomarkerCoverage(value: unknown): BiomarkerCoverage | null {
+  if (!value || typeof value !== 'object') return null
+  const obj = value as { coverage?: unknown; groups?: unknown; flat?: unknown }
+  const coverage = obj.coverage
+  if (coverage && typeof coverage === 'object') {
+    const cov = coverage as { available?: unknown; total?: unknown; missing_keys?: unknown }
+    const available = num(cov.available)
+    const total = num(cov.total)
+    if (available != null && total != null) {
+      return {
+        available,
+        total,
+        missing: Array.isArray(cov.missing_keys) ? cov.missing_keys.map(String) : [],
+      }
+    }
+  }
+
+  if (Array.isArray(obj.groups)) {
+    const total = obj.groups.reduce((sum, group) => {
+      const markers = (group as { markers?: unknown }).markers
+      return sum + (Array.isArray(markers) ? markers.length : 0)
+    }, 0)
+    return total > 0 ? { available: total, total, missing: [] } : null
+  }
+
+  if (obj.flat && typeof obj.flat === 'object') {
+    const total = Object.keys(obj.flat).length
+    return total > 0 ? { available: total, total, missing: [] } : null
+  }
+
+  return null
+}
+
+function reportBadge(record: AssessmentRecord) {
+  if (record.report_status === 'failed') {
+    return <span className="badge badge-warn">报告未生成</span>
+  }
+  if (record.report_status === 'manual') {
+    return <span className="badge badge-neutral">手工记录</span>
+  }
+  return <span className="badge badge-ok">报告已生成</span>
+}
+
+function Meta({ label, value, title }: { label: string; value: React.ReactNode; title?: string }) {
+  return (
+    <div className="record-meta-item" title={title}>
+      <span className="record-meta-label">{label}</span>
+      <span className="record-meta-value">{value || '—'}</span>
+    </div>
+  )
+}
+
+// Renders provenance, 4 indicators, biomarker coverage, and the report for one
+// persisted assessment record in a patient history timeline.
 export default function RecordDetail({ record }: { record: AssessmentRecord }) {
+  const coverage = biomarkerCoverage(record.biomarkers)
+  const warnings = asStringList(record.parse_warnings)
+  const source = record.institution || record.source || '—'
+  const model = [record.llm_provider, record.llm_model].filter(Boolean).join(' / ') || '—'
+
   return (
     <div className="record-detail">
+      <div className="record-status-line">
+        {reportBadge(record)}
+        {coverage ? (
+          <span className="badge badge-ok">
+            Biomarker {coverage.available}/{coverage.total}
+          </span>
+        ) : (
+          <span className="badge badge-neutral">Biomarker 未记录</span>
+        )}
+        {record.n_trials != null && <span className="badge badge-neutral">{record.n_trials} trials</span>}
+      </div>
+
+      <div className="record-meta-grid">
+        <Meta label="数据来源" value={source} />
+        <Meta label="评估时间" value={fmtDateTime(record.assessment_time || record.created_at)} />
+        <Meta label="Session" value={record.session_id || '—'} />
+        <Meta label="Assessment ID" value={record.assessment_id || '—'} />
+        <Meta label="数据包" value={record.package_name || '—'} />
+        <Meta label="SHA-256" value={shortHash(record.package_hash)} title={record.package_hash || undefined} />
+        <Meta label="LLM" value={model} />
+        <Meta label="DL Checkpoints" value={record.model_version || '—'} />
+      </div>
+
+      {warnings.length > 0 && (
+        <div className="record-warning-strip">
+          <strong>解析警告：</strong>
+          {warnings.join('；')}
+        </div>
+      )}
+
+      {coverage && coverage.missing.length > 0 && (
+        <div className="record-warning-strip">
+          <strong>缺失 biomarker：</strong>
+          {coverage.missing.join('、')}
+        </div>
+      )}
+
       <div className="results-grid">
         <div className="result-card">
           <div className="label">FMA-UE 手部分数</div>

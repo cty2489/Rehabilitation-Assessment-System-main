@@ -60,14 +60,27 @@ class PatientUpdate(BaseModel):
 
 class AssessmentRecord(BaseModel):
     id: int
+    source: Optional[str] = None
+    assessment_id: Optional[str] = None
     session_id: Optional[str] = None
+    package_name: Optional[str] = None
+    institution: Optional[str] = None
+    n_trials: Optional[int] = None
+    package_hash: Optional[str] = None
     created_at: str
+    assessment_time: Optional[str] = None
     fma_ue: float
     bi: float
     hand_tone: str
     hand_function: int
     report: Optional[str] = None
     report_status: str
+    biomarkers: Optional[Any] = None
+    parse_warnings: Optional[Any] = None
+    prediction_json: Optional[Any] = None
+    model_version: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class PatientSummary(BaseModel):

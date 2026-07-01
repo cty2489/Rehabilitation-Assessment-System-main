@@ -355,13 +355,14 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
                 SELECT id, source, assessment_id, session_id, package_name,
                        institution, n_trials, package_hash, created_at,
                        assessment_time, fma_ue, bi, hand_tone, hand_function,
-                       report, report_status, model_version, llm_provider, llm_model
+                       report, report_status, biomarkers, parse_warnings,
+                       prediction_json, model_version, llm_provider, llm_model
                 FROM assessments WHERE patient_db_id=%s
                 ORDER BY created_at DESC, id DESC
                 """,
                 (patient_db_id,),
             )
-            patient["assessments"] = [_norm(r) for r in cur.fetchall()]
+            patient["assessments"] = [_norm_assessment_detail(r) for r in cur.fetchall()]
     finally:
         conn.close()
     return patient
