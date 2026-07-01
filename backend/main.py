@@ -70,9 +70,8 @@ class SessionState:
         self.eeg_paths = eeg_paths
         self.emg_paths = emg_paths
         self.institution = institution
-        # Where this session's result is persisted: "sqlite" (康复评估 page) or
-        # "mysql" (任务一与任务三对接接口 device workflow). Extra fields below are
-        # only used by the MySQL branch (manifest provenance).
+        # Where this session's result is persisted. MySQL is the formal business
+        # store; SQLite is kept only as a legacy/local fallback target.
         self.persist_target = persist_target
         self.package_name = package_name
         self.assessment_id = assessment_id
@@ -321,7 +320,14 @@ async def create_assessment(
     eeg_paths = _save_uploads(eeg_files, destdir / "eeg", "eeg")
     emg_paths = _save_uploads(emg_files, destdir / "emg", "emg")
 
-    SESSIONS[session_id] = SessionState(session_id, patient, eeg_paths, emg_paths)
+    SESSIONS[session_id] = SessionState(
+        session_id,
+        patient,
+        eeg_paths,
+        emg_paths,
+        persist_target="mysql",
+        institution="hospital",
+    )
     return AssessSessionResponse(session_id=session_id, n_trials=len(eeg_paths))
 
 
@@ -533,16 +539,22 @@ async def health():
 
 
 # --------------------------------------------------------------------------- #
-# Patient management / records / stats (SQLite-backed)                        #
+# Patient management / records / stats (MySQL-backed business store)           #
 # --------------------------------------------------------------------------- #
 @app.get("/api/patients", response_model=List[PatientSummary])
 async def list_patients():
-    return db.list_patients()
+    try:
+        return mysql_db.list_patients()
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
 
 
 @app.get("/api/patients/{patient_db_id}", response_model=PatientDetail)
 async def get_patient(patient_db_id: int):
-    patient = db.get_patient(patient_db_id)
+    try:
+        patient = mysql_db.get_patient(patient_db_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
     if patient is None:
         raise HTTPException(status_code=404, detail="患者不存在")
     return patient
@@ -551,7 +563,10 @@ async def get_patient(patient_db_id: int):
 @app.patch("/api/patients/{patient_db_id}", response_model=PatientDetail)
 async def update_patient(patient_db_id: int, payload: PatientUpdate):
     fields = payload.model_dump(exclude_unset=True)
-    patient = db.update_patient(patient_db_id, fields)
+    try:
+        patient = mysql_db.update_patient(patient_db_id, fields)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
     if patient is None:
         raise HTTPException(status_code=404, detail="患者不存在")
     return patient
@@ -561,12 +576,18 @@ async def update_patient(patient_db_id: int, payload: PatientUpdate):
 async def list_assessments(limit: int = 50, offset: int = 0):
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
-    return db.list_all_assessments(limit=limit, offset=offset)
+    try:
+        return mysql_db.list_assessments(limit=limit, offset=offset)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
 
 
 @app.get("/api/stats/summary", response_model=StatsSummary)
 async def stats_summary():
-    return db.stats_summary()
+    try:
+        return mysql_db.stats_summary()
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
 
 
 # --------------------------------------------------------------------------- #

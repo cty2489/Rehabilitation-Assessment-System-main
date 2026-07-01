@@ -33,6 +33,17 @@ except ImportError:  # pragma: no cover - exercised only when dep missing
 _init_lock = threading.Lock()
 _initialized = False
 
+_PATIENT_EXTRA_COLUMNS: Dict[str, str] = {
+    "birth_date": "VARCHAR(32)",
+    "id_number": "VARCHAR(32)",
+    "phone": "VARCHAR(32)",
+    "onset_date": "VARCHAR(32)",
+}
+
+_PATIENT_CORE = ("name", "sex", "age", "diagnosis", "disease_days", "paralysis_side")
+_PATIENT_EXTENDED = ("birth_date", "id_number", "phone", "onset_date")
+_PATIENT_EDITABLE = _PATIENT_CORE + _PATIENT_EXTENDED
+
 _ASSESSMENT_EXTRA_COLUMNS: Dict[str, str] = {
     "institution": "VARCHAR(16)",
     "n_trials": "INT",
@@ -124,6 +135,16 @@ def _norm(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return row
 
 
+def _norm_patient(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    row = _norm(row)
+    if row is None:
+        return None
+    for key in ("name", "sex", "diagnosis", "paralysis_side"):
+        if row.get(key) is None:
+            row[key] = ""
+    return row
+
+
 def _json_value(value: Optional[str]) -> Any:
     if value in (None, ""):
         return None
@@ -155,6 +176,10 @@ CREATE TABLE IF NOT EXISTS patients (
   diagnosis       VARCHAR(255),
   paralysis_side  VARCHAR(8),
   disease_days    INT,
+  birth_date      VARCHAR(32),
+  id_number       VARCHAR(32),
+  phone           VARCHAR(32),
+  onset_date      VARCHAR(32),
   source          VARCHAR(16),
   created_at      DATETIME NOT NULL,
   updated_at      DATETIME NOT NULL
@@ -196,6 +221,14 @@ CREATE TABLE IF NOT EXISTS assessments (
 """
 
 
+def _ensure_patient_schema(cur) -> None:
+    cur.execute("SHOW COLUMNS FROM patients")
+    existing = {row["Field"] for row in cur.fetchall()}
+    for name, ddl in _PATIENT_EXTRA_COLUMNS.items():
+        if name not in existing:
+            cur.execute(f"ALTER TABLE patients ADD COLUMN {name} {ddl}")
+
+
 def _ensure_assessment_schema(cur) -> None:
     cur.execute("SHOW COLUMNS FROM assessments")
     existing = {row["Field"] for row in cur.fetchall()}
@@ -234,6 +267,7 @@ def init_db() -> None:
             with conn.cursor() as cur:
                 cur.execute(_CREATE_PATIENTS)
                 cur.execute(_CREATE_ASSESSMENTS)
+                _ensure_patient_schema(cur)
                 _ensure_assessment_schema(cur)
         finally:
             conn.close()
@@ -293,7 +327,7 @@ def get_patient_by_business_id(patient_id: str) -> Optional[Dict[str, Any]]:
             row = cur.fetchone()
     finally:
         conn.close()
-    return _norm(row)
+    return _norm_patient(row)
 
 
 def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
@@ -305,18 +339,23 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
             row = cur.fetchone()
             if row is None:
                 return None
-            patient = _norm(row)
+            patient = _norm_patient(row)
             cur.execute(
-                "SELECT COUNT(*) AS c FROM assessments WHERE patient_db_id=%s",
+                """
+                SELECT COUNT(*) AS c, MAX(created_at) AS last_assessed_at
+                FROM assessments WHERE patient_db_id=%s
+                """,
                 (patient_db_id,),
             )
-            patient["assessment_count"] = int(cur.fetchone()["c"])
+            summary = cur.fetchone()
+            patient["assessment_count"] = int(summary["c"])
+            patient["last_assessed_at"] = _norm({"v": summary["last_assessed_at"]})["v"]
             cur.execute(
                 """
                 SELECT id, source, assessment_id, session_id, package_name,
                        institution, n_trials, package_hash, created_at,
                        assessment_time, fma_ue, bi, hand_tone, hand_function,
-                       report_status, model_version, llm_provider, llm_model
+                       report, report_status, model_version, llm_provider, llm_model
                 FROM assessments WHERE patient_db_id=%s
                 ORDER BY created_at DESC, id DESC
                 """,
@@ -326,6 +365,28 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
     finally:
         conn.close()
     return patient
+
+
+def update_patient(patient_db_id: int, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Update editable patient profile fields and return the full patient row."""
+    updates = {k: v for k, v in fields.items() if k in _PATIENT_EDITABLE}
+    if not updates:
+        return get_patient(patient_db_id)
+
+    updates["updated_at"] = now_dt()
+    cols = ", ".join(f"{k}=%s" for k in updates)
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE patients SET {cols} WHERE id=%s",
+                (*updates.values(), patient_db_id),
+            )
+            if cur.rowcount == 0:
+                return None
+    finally:
+        conn.close()
+    return get_patient(patient_db_id)
 
 
 def list_patients() -> List[Dict[str, Any]]:
@@ -340,13 +401,13 @@ def list_patients() -> List[Dict[str, Any]]:
                 FROM patients p
                 LEFT JOIN assessments a ON a.patient_db_id = p.id
                 GROUP BY p.id
-                ORDER BY (last_assessed_at IS NULL), last_assessed_at DESC, p.updated_at DESC
+                ORDER BY MAX(a.created_at) IS NULL, MAX(a.created_at) DESC, p.updated_at DESC
                 """
             )
             rows = cur.fetchall()
     finally:
         conn.close()
-    return [_norm(r) for r in rows]
+    return [_norm_patient(r) for r in rows]
 
 
 def delete_patient(patient_db_id: int) -> int:
@@ -465,7 +526,8 @@ def list_assessments(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
             total = int(cur.fetchone()["c"])
             cur.execute(
                 """
-                SELECT a.id, a.created_at, a.patient_db_id, p.patient_id, p.name,
+                SELECT a.id, a.created_at, a.patient_db_id, p.patient_id,
+                       COALESCE(p.name, '') AS name,
                        a.source, a.assessment_id, a.session_id, a.package_name,
                        a.institution, a.n_trials, a.package_hash, a.assessment_time,
                        a.fma_ue, a.bi, a.hand_tone, a.hand_function, a.report_status,
@@ -502,6 +564,74 @@ def get_assessment(assessment_id: int) -> Optional[Dict[str, Any]]:
     finally:
         conn.close()
     return _norm_assessment_detail(row)
+
+
+def stats_summary() -> Dict[str, Any]:
+    """Aggregate dashboard/statistics metrics from the MySQL business store."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM patients")
+            patient_count = int(cur.fetchone()["c"])
+            cur.execute("SELECT COUNT(*) AS c FROM assessments")
+            assessment_count = int(cur.fetchone()["c"])
+            cur.execute("SELECT COUNT(*) AS c FROM assessments WHERE report_status='failed'")
+            report_failed = int(cur.fetchone()["c"])
+
+            cur.execute(
+                """
+                SELECT COALESCE(NULLIF(diagnosis, ''), '未填写') AS diagnosis,
+                       COUNT(*) AS c
+                FROM patients
+                GROUP BY COALESCE(NULLIF(diagnosis, ''), '未填写')
+                """
+            )
+            diag_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT hand_function, COUNT(*) AS c
+                FROM assessments
+                GROUP BY hand_function
+                """
+            )
+            hand_rows = cur.fetchall()
+
+            cur.execute("SELECT AVG(fma_ue) AS fma, AVG(bi) AS bi FROM assessments")
+            avg_row = cur.fetchone()
+
+            cur.execute(
+                """
+                SELECT DATE(created_at) AS date, COUNT(*) AS count
+                FROM assessments
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+                LIMIT 30
+                """
+            )
+            day_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    fma = avg_row["fma"] if avg_row else None
+    bi = avg_row["bi"] if avg_row else None
+    return {
+        "patient_count": patient_count,
+        "assessment_count": assessment_count,
+        "report_failed_count": report_failed,
+        "diagnosis_distribution": {
+            str(r["diagnosis"]): int(r["c"]) for r in diag_rows
+        },
+        "hand_function_distribution": {
+            str(r["hand_function"]): int(r["c"]) for r in hand_rows
+        },
+        "avg_fma_ue": round(float(fma), 1) if fma is not None else None,
+        "avg_bi": round(float(bi), 1) if bi is not None else None,
+        "assessments_by_day": [
+            {"date": str(r["date"]), "count": int(r["count"])}
+            for r in reversed(day_rows)
+        ],
+    }
 
 
 def delete_assessment(assessment_id: int) -> int:
@@ -565,12 +695,14 @@ __all__ = [
     "upsert_patient",
     "get_patient_by_business_id",
     "get_patient",
+    "update_patient",
     "list_patients",
     "delete_patient",
     "insert_assessment",
     "latest_assessment_for_patient",
     "list_assessments",
     "get_assessment",
+    "stats_summary",
     "delete_assessment",
     "delete_all_assessments",
     "enroll_patient",
