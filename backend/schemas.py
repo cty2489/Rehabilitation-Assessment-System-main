@@ -81,6 +81,8 @@ class AssessmentRecord(BaseModel):
     model_version: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    trials: List[Dict[str, Any]] = []
+    biomarker_items: List[Dict[str, Any]] = []
 
 
 class PatientSummary(BaseModel):
@@ -193,6 +195,8 @@ class MysqlAssessmentDetail(MysqlAssessmentItem):
     biomarkers: Optional[Any] = None
     parse_warnings: Optional[Any] = None
     prediction_json: Optional[Any] = None
+    trials: List[Dict[str, Any]] = []
+    biomarker_items: List[Dict[str, Any]] = []
 
 
 class MysqlAssessmentList(BaseModel):

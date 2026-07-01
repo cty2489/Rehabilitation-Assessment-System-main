@@ -44,6 +44,7 @@ class EvalPackage:
     emg_paths: List[Path]
     patient_prefill: Dict[str, Any]
     manifest_summary: Dict[str, Any]
+    trial_details: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -177,6 +178,7 @@ def read_eval_package(
 
     eeg_paths: List[Path] = []
     emg_paths: List[Path] = []
+    trial_details: List[Dict[str, Any]] = []
     n_active_trials = 0
     for block in manifest.get("assessments", []) or []:
         if str(block.get("assessment_type", "")).lower() != assessment_type:
@@ -199,6 +201,18 @@ def read_eval_package(
                 continue
             eeg_paths.append(eeg_p)
             emg_paths.append(emg_p)
+            trial_details.append(
+                {
+                    "assessment_type": assessment_type,
+                    "action_name": str(action),
+                    "trial_index": trial.get("trial_index"),
+                    "eeg_file": str(eeg_rel),
+                    "emg_imu_file": str(emg_rel),
+                    "eeg_name": Path(str(eeg_rel)).name,
+                    "emg_name": Path(str(emg_rel)).name,
+                    "status": "used",
+                }
+            )
 
     if n_active_trials == 0:
         warnings.append(f"manifest 中未找到 {assessment_type} 评估数据")
@@ -212,6 +226,7 @@ def read_eval_package(
         emg_paths=emg_paths,
         patient_prefill=_patient_prefill(manifest),
         manifest_summary=_manifest_summary(manifest),
+        trial_details=trial_details,
         warnings=warnings,
     )
 

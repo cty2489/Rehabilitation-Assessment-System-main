@@ -51,6 +51,38 @@ export interface AssessmentRecord {
   model_version?: string | null
   llm_provider?: string | null
   llm_model?: string | null
+  trials?: AssessmentTrial[]
+  biomarker_items?: AssessmentBiomarkerItem[]
+}
+
+export interface AssessmentTrial {
+  id: number
+  trial_index: number | null
+  assessment_type: string | null
+  action_name: string | null
+  eeg_file: string | null
+  emg_file: string | null
+  eeg_name: string | null
+  emg_name: string | null
+  status: string | null
+  note: string | null
+  created_at: string
+}
+
+export interface AssessmentBiomarkerItem {
+  id: number
+  group_key: string | null
+  group_label: string | null
+  marker_key: string
+  marker_name: string | null
+  value_text: string | null
+  value_num: number | null
+  unit: string | null
+  ref_range: string | null
+  n_valid: number | null
+  available: boolean
+  note: string | null
+  created_at: string
 }
 
 export interface PatientSummary {
@@ -170,6 +202,8 @@ export interface MysqlAssessmentDetail extends MysqlAssessmentItem {
   biomarkers: unknown
   parse_warnings: unknown
   prediction_json: unknown
+  trials?: AssessmentTrial[]
+  biomarker_items?: AssessmentBiomarkerItem[]
 }
 
 export interface MysqlAssessmentList {

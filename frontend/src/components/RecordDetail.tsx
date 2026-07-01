@@ -98,6 +98,8 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
   const warnings = asStringList(record.parse_warnings)
   const source = record.institution || record.source || '—'
   const model = [record.llm_provider, record.llm_model].filter(Boolean).join(' / ') || '—'
+  const trials = record.trials || []
+  const biomarkerItems = record.biomarker_items || []
 
   return (
     <div className="record-detail">
@@ -136,6 +138,73 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
           <strong>缺失 biomarker：</strong>
           {coverage.missing.join('、')}
         </div>
+      )}
+
+      {trials.length > 0 && (
+        <details className="record-subsection" open>
+          <summary>运动 / Trial 明细（{trials.length} 条）</summary>
+          <div className="mini-table-wrap">
+            <table className="mini-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>动作</th>
+                  <th>类型</th>
+                  <th>EEG</th>
+                  <th>EMG/IMU</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trials.map((trial, index) => (
+                  <tr key={trial.id || index}>
+                    <td>{trial.trial_index ?? index + 1}</td>
+                    <td>{trial.action_name || '—'}</td>
+                    <td>{trial.assessment_type || '—'}</td>
+                    <td title={trial.eeg_file || undefined}>{trial.eeg_name || trial.eeg_file || '—'}</td>
+                    <td title={trial.emg_file || undefined}>{trial.emg_name || trial.emg_file || '—'}</td>
+                    <td>{trial.status || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      {biomarkerItems.length > 0 && (
+        <details className="record-subsection">
+          <summary>生物标志物明细（{biomarkerItems.length} 项）</summary>
+          <div className="mini-table-wrap">
+            <table className="mini-table">
+              <thead>
+                <tr>
+                  <th>分组</th>
+                  <th>指标</th>
+                  <th>值</th>
+                  <th>单位</th>
+                  <th>参考范围</th>
+                  <th>有效试次</th>
+                </tr>
+              </thead>
+              <tbody>
+                {biomarkerItems.map((marker) => (
+                  <tr key={marker.id}>
+                    <td>{marker.group_label || marker.group_key || '—'}</td>
+                    <td>
+                      {marker.marker_name || marker.marker_key}
+                      {!marker.available && <span className="mini-muted">（未提取）</span>}
+                    </td>
+                    <td>{marker.value_text || '—'}</td>
+                    <td>{marker.unit || '—'}</td>
+                    <td>{marker.ref_range || '—'}</td>
+                    <td>{marker.n_valid ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
 
       <div className="results-grid">

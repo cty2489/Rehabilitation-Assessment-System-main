@@ -64,7 +64,8 @@ class SessionState:
                  persist_target: str = "sqlite", package_name: Optional[str] = None,
                  assessment_id: Optional[str] = None, assessment_time: Optional[str] = None,
                  n_trials: Optional[int] = None, package_hash: Optional[str] = None,
-                 parse_warnings: Optional[List[str]] = None):
+                 parse_warnings: Optional[List[str]] = None,
+                 trial_details: Optional[List[Dict[str, Any]]] = None):
         self.session_id = session_id
         self.patient = patient
         self.eeg_paths = eeg_paths
@@ -79,6 +80,7 @@ class SessionState:
         self.n_trials = n_trials if n_trials is not None else len(eeg_paths)
         self.package_hash = package_hash
         self.parse_warnings = parse_warnings or []
+        self.trial_details = trial_details or _trial_details_from_paths(eeg_paths, emg_paths)
         self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self.result: Optional[AssessmentResult] = None
         self.started: bool = False
@@ -96,6 +98,24 @@ def _llm_model_name() -> str:
     if provider == "remote":
         return remote_url()
     return os.environ.get("LLM_MODEL_ID", "")
+
+
+def _trial_details_from_paths(eeg_paths: List[Path], emg_paths: List[Path]) -> List[Dict[str, Any]]:
+    details: List[Dict[str, Any]] = []
+    for idx, (eeg_path, emg_path) in enumerate(zip(eeg_paths, emg_paths), start=1):
+        details.append(
+            {
+                "assessment_type": "active",
+                "action_name": f"trial_{idx}",
+                "trial_index": idx,
+                "eeg_file": eeg_path.name,
+                "emg_imu_file": emg_path.name,
+                "eeg_name": eeg_path.name,
+                "emg_name": emg_path.name,
+                "status": "used",
+            }
+        )
+    return details
 
 
 SESSIONS: Dict[str, SessionState] = {}
@@ -238,7 +258,7 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 # Device assessment → MySQL. upsert auto-creates the patient
                 # (source='device-auto') when not yet enrolled by the hospital.
                 pid = mysql_db.upsert_patient(state.patient, source=f"{state.institution}-auto")
-                mysql_db.insert_assessment(
+                assessment_db_id = mysql_db.insert_assessment(
                     pid,
                     state.session_id,
                     predictions,
@@ -258,6 +278,8 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                     llm_provider=llm_provider(),
                     llm_model=_llm_model_name(),
                 )
+                mysql_db.replace_assessment_trials(assessment_db_id, state.trial_details)
+                mysql_db.replace_assessment_biomarkers(assessment_db_id, biomarkers)
             else:
                 pid = db.upsert_patient(state.patient)
                 db.insert_assessment(
@@ -448,6 +470,7 @@ async def task_interface_offline(
         n_trials=pkg.n_trials,
         package_hash=package_hash,
         parse_warnings=pkg.warnings,
+        trial_details=pkg.trial_details,
     )
     return AssessSessionResponse(session_id=session_id, n_trials=pkg.n_trials)
 

@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import os
 import json
+import math
 import threading
 from datetime import datetime, timezone
+from numbers import Real
 from typing import Any, Dict, List, Optional
 
 try:  # defensive: a host without pymysql must still serve the SQLite flow
@@ -163,6 +165,56 @@ def _norm_assessment_detail(row: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     return row
 
 
+def _number_value(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    value_f = float(value)
+    return value_f if math.isfinite(value_f) else None
+
+
+def _fetch_trials(cur, assessment_id: int) -> List[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT id, trial_index, assessment_type, action_name, eeg_file, emg_file,
+               eeg_name, emg_name, status, note, created_at
+        FROM assessment_trials
+        WHERE assessment_db_id=%s
+        ORDER BY COALESCE(trial_index, id), id
+        """,
+        (assessment_id,),
+    )
+    return [_norm(r) for r in cur.fetchall()]
+
+
+def _fetch_biomarker_items(cur, assessment_id: int) -> List[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT id, group_key, group_label, marker_key, marker_name, value_text,
+               value_num, unit, ref_range, n_valid, available, note, created_at
+        FROM assessment_biomarkers
+        WHERE assessment_db_id=%s
+        ORDER BY FIELD(group_key, 'emg', 'eeg', 'imu'), id
+        """,
+        (assessment_id,),
+    )
+    rows = []
+    for row in cur.fetchall():
+        normed = _norm(row)
+        normed["available"] = bool(normed.get("available"))
+        rows.append(normed)
+    return rows
+
+
+def _attach_assessment_children(cur, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    row = _norm_assessment_detail(row)
+    if row is None:
+        return None
+    assessment_id = int(row["id"])
+    row["trials"] = _fetch_trials(cur, assessment_id)
+    row["biomarker_items"] = _fetch_biomarker_items(cur, assessment_id)
+    return row
+
+
 # --------------------------------------------------------------------------- #
 # Schema                                                                       #
 # --------------------------------------------------------------------------- #
@@ -220,6 +272,50 @@ CREATE TABLE IF NOT EXISTS assessments (
 ) CHARACTER SET utf8mb4
 """
 
+_CREATE_ASSESSMENT_TRIALS = """
+CREATE TABLE IF NOT EXISTS assessment_trials (
+  id                BIGINT PRIMARY KEY AUTO_INCREMENT,
+  assessment_db_id  BIGINT NOT NULL,
+  trial_index       INT,
+  assessment_type   VARCHAR(32),
+  action_name       VARCHAR(128),
+  eeg_file          VARCHAR(512),
+  emg_file          VARCHAR(512),
+  eeg_name          VARCHAR(255),
+  emg_name          VARCHAR(255),
+  status            VARCHAR(32),
+  note              VARCHAR(255),
+  created_at        DATETIME NOT NULL,
+  CONSTRAINT fk_trial_assessment FOREIGN KEY (assessment_db_id)
+    REFERENCES assessments(id) ON DELETE CASCADE,
+  INDEX idx_trial_assessment (assessment_db_id)
+) CHARACTER SET utf8mb4
+"""
+
+_CREATE_ASSESSMENT_BIOMARKERS = """
+CREATE TABLE IF NOT EXISTS assessment_biomarkers (
+  id                BIGINT PRIMARY KEY AUTO_INCREMENT,
+  assessment_db_id  BIGINT NOT NULL,
+  group_key         VARCHAR(32),
+  group_label       VARCHAR(128),
+  marker_key        VARCHAR(128) NOT NULL,
+  marker_name       VARCHAR(255),
+  value_text        VARCHAR(64),
+  value_num         DOUBLE,
+  unit              VARCHAR(64),
+  ref_range         VARCHAR(255),
+  n_valid           INT,
+  available         TINYINT(1),
+  note              TEXT,
+  created_at        DATETIME NOT NULL,
+  CONSTRAINT fk_biomarker_assessment FOREIGN KEY (assessment_db_id)
+    REFERENCES assessments(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_biomarker_marker (assessment_db_id, marker_key),
+  INDEX idx_biomarker_assessment (assessment_db_id),
+  INDEX idx_biomarker_key (marker_key)
+) CHARACTER SET utf8mb4
+"""
+
 
 def _ensure_patient_schema(cur) -> None:
     cur.execute("SHOW COLUMNS FROM patients")
@@ -241,6 +337,103 @@ def _ensure_assessment_schema(cur) -> None:
     for name, ddl in _ASSESSMENT_INDEXES.items():
         if name not in indexes:
             cur.execute(ddl)
+
+
+def _biomarker_insert_rows(
+    assessment_id: int,
+    biomarkers: Optional[Dict[str, Any]],
+    ts: str,
+) -> List[tuple]:
+    if not biomarkers:
+        return []
+    rows = []
+    for group in biomarkers.get("groups", []) or []:
+        group_key = group.get("key")
+        group_label = group.get("label")
+        for marker in group.get("markers", []) or []:
+            raw_value = marker.get("value")
+            value_num = _number_value(raw_value)
+            value_text = None if raw_value is None else str(raw_value)
+            rows.append(
+                (
+                    assessment_id,
+                    group_key,
+                    group_label,
+                    marker.get("key"),
+                    marker.get("name"),
+                    value_text,
+                    value_num,
+                    marker.get("unit"),
+                    marker.get("ref_range"),
+                    marker.get("n_valid"),
+                    1 if marker.get("available") else 0,
+                    marker.get("note"),
+                    ts,
+                )
+            )
+    return rows
+
+
+def _backfill_assessment_children(cur) -> None:
+    """Populate new normalized child tables for assessments saved before them."""
+    cur.execute("SELECT id, n_trials, package_name, biomarkers FROM assessments")
+    rows = cur.fetchall()
+    ts = now_dt()
+    for row in rows:
+        assessment_id = int(row["id"])
+
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM assessment_trials WHERE assessment_db_id=%s",
+            (assessment_id,),
+        )
+        if int(cur.fetchone()["c"]) == 0 and row.get("n_trials"):
+            n_trials = int(row["n_trials"])
+            cur.executemany(
+                """
+                INSERT INTO assessment_trials
+                  (assessment_db_id, trial_index, assessment_type, action_name,
+                   eeg_file, emg_file, eeg_name, emg_name, status, note, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        assessment_id,
+                        idx,
+                        "active",
+                        f"trial_{idx}",
+                        row.get("package_name"),
+                        row.get("package_name"),
+                        None,
+                        None,
+                        "backfilled",
+                        "历史记录回填：原始 trial 文件名未单独保存",
+                        ts,
+                    )
+                    for idx in range(1, n_trials + 1)
+                ],
+            )
+
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM assessment_biomarkers WHERE assessment_db_id=%s",
+            (assessment_id,),
+        )
+        if int(cur.fetchone()["c"]) == 0 and row.get("biomarkers"):
+            biomarker_rows = _biomarker_insert_rows(
+                assessment_id,
+                _json_value(row.get("biomarkers")),
+                ts,
+            )
+            if biomarker_rows:
+                cur.executemany(
+                    """
+                    INSERT INTO assessment_biomarkers
+                      (assessment_db_id, group_key, group_label, marker_key, marker_name,
+                       value_text, value_num, unit, ref_range, n_valid, available, note,
+                       created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    biomarker_rows,
+                )
 
 
 def init_db() -> None:
@@ -267,8 +460,11 @@ def init_db() -> None:
             with conn.cursor() as cur:
                 cur.execute(_CREATE_PATIENTS)
                 cur.execute(_CREATE_ASSESSMENTS)
+                cur.execute(_CREATE_ASSESSMENT_TRIALS)
+                cur.execute(_CREATE_ASSESSMENT_BIOMARKERS)
                 _ensure_patient_schema(cur)
                 _ensure_assessment_schema(cur)
+                _backfill_assessment_children(cur)
         finally:
             conn.close()
         _initialized = True
@@ -362,7 +558,9 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
                 """,
                 (patient_db_id,),
             )
-            patient["assessments"] = [_norm_assessment_detail(r) for r in cur.fetchall()]
+            patient["assessments"] = [
+                _attach_assessment_children(cur, r) for r in cur.fetchall()
+            ]
     finally:
         conn.close()
     return patient
@@ -494,6 +692,76 @@ def insert_assessment(
     return int(new_id)
 
 
+def replace_assessment_trials(assessment_id: int, trials: Optional[List[Dict[str, Any]]]) -> int:
+    """Replace normalized movement/trial rows for one assessment."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM assessment_trials WHERE assessment_db_id=%s", (assessment_id,))
+            if not trials:
+                return 0
+            ts = now_dt()
+            rows = []
+            for idx, trial in enumerate(trials, start=1):
+                rows.append(
+                    (
+                        assessment_id,
+                        trial.get("trial_index") or idx,
+                        trial.get("assessment_type"),
+                        trial.get("action_name") or trial.get("action"),
+                        trial.get("eeg_file") or trial.get("eeg_path"),
+                        trial.get("emg_imu_file") or trial.get("emg_file") or trial.get("emg_path"),
+                        trial.get("eeg_name"),
+                        trial.get("emg_name"),
+                        trial.get("status") or "used",
+                        trial.get("note"),
+                        ts,
+                    )
+                )
+            cur.executemany(
+                """
+                INSERT INTO assessment_trials
+                  (assessment_db_id, trial_index, assessment_type, action_name,
+                   eeg_file, emg_file, eeg_name, emg_name, status, note, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
+            return len(rows)
+    finally:
+        conn.close()
+
+
+def replace_assessment_biomarkers(assessment_id: int, biomarkers: Optional[Dict[str, Any]]) -> int:
+    """Replace normalized 26-biomarker rows for one assessment."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM assessment_biomarkers WHERE assessment_db_id=%s",
+                (assessment_id,),
+            )
+            if not biomarkers:
+                return 0
+
+            rows = _biomarker_insert_rows(assessment_id, biomarkers, now_dt())
+            if not rows:
+                return 0
+            cur.executemany(
+                """
+                INSERT INTO assessment_biomarkers
+                  (assessment_db_id, group_key, group_label, marker_key, marker_name,
+                   value_text, value_num, unit, ref_range, n_valid, available, note,
+                   created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
+            return len(rows)
+    finally:
+        conn.close()
+
+
 def latest_assessment_for_patient(patient_id: str) -> Optional[Dict[str, Any]]:
     """Most recent assessment (4 indicators + biomarkers) for a business
     ``patient_id`` — the report's 变化趋势 column reads this before inserting the
@@ -562,9 +830,10 @@ def get_assessment(assessment_id: int) -> Optional[Dict[str, Any]]:
                 (assessment_id,),
             )
             row = cur.fetchone()
+            detail = _attach_assessment_children(cur, row)
     finally:
         conn.close()
-    return _norm_assessment_detail(row)
+    return detail
 
 
 def stats_summary() -> Dict[str, Any]:
@@ -666,7 +935,7 @@ def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None
     insert it (source='hospital'). Returns the full patient record."""
     pid = upsert_patient(basic, source="enrollment")
     if first:
-        insert_assessment(
+        assessment_id = insert_assessment(
             pid,
             None,
             first,
@@ -685,6 +954,8 @@ def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None
             llm_provider=first.get("llm_provider"),
             llm_model=first.get("llm_model"),
         )
+        replace_assessment_trials(assessment_id, first.get("trials"))
+        replace_assessment_biomarkers(assessment_id, _json_value(first.get("biomarkers")))
     return get_patient(pid)  # type: ignore[return-value]
 
 
@@ -700,6 +971,8 @@ __all__ = [
     "list_patients",
     "delete_patient",
     "insert_assessment",
+    "replace_assessment_trials",
+    "replace_assessment_biomarkers",
     "latest_assessment_for_patient",
     "list_assessments",
     "get_assessment",

@@ -1328,6 +1328,44 @@ body::before {
   font-size: 12.5px;
   line-height: 1.6;
 }
+.record-subsection {
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  overflow: hidden;
+}
+.record-subsection summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--ink-700);
+  background: var(--surface-inset);
+  font-size: 13px;
+  font-weight: 600;
+}
+.mini-table-wrap { overflow-x: auto; }
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mini-table th,
+.mini-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+  color: var(--ink-700);
+}
+.mini-table th {
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: #fbfdfe;
+}
+.mini-muted { color: var(--ink-300); margin-left: 4px; }
 .record-report-title { margin: 18px 0 8px; font-size: 14px; color: var(--ink-700); }
 
 /* ============================================================
