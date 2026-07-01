@@ -18,6 +18,7 @@ MYSQL_PASSWORD / MYSQL_DB). PyMySQL is imported defensively so a host without it
 from __future__ import annotations
 
 import os
+import json
 import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -31,6 +32,22 @@ except ImportError:  # pragma: no cover - exercised only when dep missing
 
 _init_lock = threading.Lock()
 _initialized = False
+
+_ASSESSMENT_EXTRA_COLUMNS: Dict[str, str] = {
+    "institution": "VARCHAR(16)",
+    "n_trials": "INT",
+    "package_hash": "VARCHAR(64)",
+    "parse_warnings": "LONGTEXT",
+    "prediction_json": "LONGTEXT",
+    "model_version": "VARCHAR(255)",
+    "llm_provider": "VARCHAR(32)",
+    "llm_model": "VARCHAR(128)",
+}
+
+_ASSESSMENT_INDEXES: Dict[str, str] = {
+    "idx_assess_external": "CREATE INDEX idx_assess_external ON assessments(assessment_id)",
+    "idx_assess_session": "CREATE INDEX idx_assess_session ON assessments(session_id)",
+}
 
 
 class MySQLUnavailable(RuntimeError):
@@ -107,6 +124,24 @@ def _norm(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return row
 
 
+def _json_value(value: Optional[str]) -> Any:
+    if value in (None, ""):
+        return None
+    try:
+        return json.loads(value)
+    except Exception:  # noqa: BLE001
+        return value
+
+
+def _norm_assessment_detail(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    row = _norm(row)
+    if row is None:
+        return None
+    for key in ("biomarkers", "parse_warnings", "prediction_json"):
+        row[key] = _json_value(row.get(key))
+    return row
+
+
 # --------------------------------------------------------------------------- #
 # Schema                                                                       #
 # --------------------------------------------------------------------------- #
@@ -134,6 +169,9 @@ CREATE TABLE IF NOT EXISTS assessments (
   assessment_id   VARCHAR(64),
   session_id      VARCHAR(32),
   package_name    VARCHAR(255),
+  institution     VARCHAR(16),
+  n_trials        INT,
+  package_hash    VARCHAR(64),
   created_at      DATETIME NOT NULL,
   assessment_time DATETIME,
   fma_ue          FLOAT NOT NULL,
@@ -143,12 +181,33 @@ CREATE TABLE IF NOT EXISTS assessments (
   report          MEDIUMTEXT,
   report_status   VARCHAR(16) NOT NULL,
   biomarkers      LONGTEXT,
+  parse_warnings  LONGTEXT,
+  prediction_json LONGTEXT,
+  model_version   VARCHAR(255),
+  llm_provider    VARCHAR(32),
+  llm_model       VARCHAR(128),
   CONSTRAINT fk_assess_patient FOREIGN KEY (patient_db_id)
     REFERENCES patients(id) ON DELETE CASCADE,
   INDEX idx_assess_patient (patient_db_id),
-  INDEX idx_assess_created (created_at)
+  INDEX idx_assess_created (created_at),
+  INDEX idx_assess_external (assessment_id),
+  INDEX idx_assess_session (session_id)
 ) CHARACTER SET utf8mb4
 """
+
+
+def _ensure_assessment_schema(cur) -> None:
+    cur.execute("SHOW COLUMNS FROM assessments")
+    existing = {row["Field"] for row in cur.fetchall()}
+    for name, ddl in _ASSESSMENT_EXTRA_COLUMNS.items():
+        if name not in existing:
+            cur.execute(f"ALTER TABLE assessments ADD COLUMN {name} {ddl}")
+
+    cur.execute("SHOW INDEX FROM assessments")
+    indexes = {row["Key_name"] for row in cur.fetchall()}
+    for name, ddl in _ASSESSMENT_INDEXES.items():
+        if name not in indexes:
+            cur.execute(ddl)
 
 
 def init_db() -> None:
@@ -175,6 +234,7 @@ def init_db() -> None:
             with conn.cursor() as cur:
                 cur.execute(_CREATE_PATIENTS)
                 cur.execute(_CREATE_ASSESSMENTS)
+                _ensure_assessment_schema(cur)
         finally:
             conn.close()
         _initialized = True
@@ -254,8 +314,9 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
             cur.execute(
                 """
                 SELECT id, source, assessment_id, session_id, package_name,
-                       created_at, assessment_time, fma_ue, bi, hand_tone,
-                       hand_function, report_status
+                       institution, n_trials, package_hash, created_at,
+                       assessment_time, fma_ue, bi, hand_tone, hand_function,
+                       report_status, model_version, llm_provider, llm_model
                 FROM assessments WHERE patient_db_id=%s
                 ORDER BY created_at DESC, id DESC
                 """,
@@ -315,6 +376,14 @@ def insert_assessment(
     assessment_time: Optional[str] = None,
     created_at: Optional[str] = None,
     biomarkers: Optional[str] = None,
+    institution: Optional[str] = None,
+    n_trials: Optional[int] = None,
+    package_hash: Optional[str] = None,
+    parse_warnings: Optional[str] = None,
+    prediction_json: Optional[str] = None,
+    model_version: Optional[str] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ) -> int:
     """Insert one assessment row. ``predictions`` exposes FMA_UE / BI / hand_tone
     / hand_function (PredictionResult or a dict). Returns the new row id."""
@@ -325,9 +394,12 @@ def insert_assessment(
                 """
                 INSERT INTO assessments
                   (patient_db_id, source, assessment_id, session_id, package_name,
-                   created_at, assessment_time, fma_ue, bi, hand_tone,
-                   hand_function, report, report_status, biomarkers)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   institution, n_trials, package_hash, created_at, assessment_time,
+                   fma_ue, bi, hand_tone, hand_function, report, report_status,
+                   biomarkers, parse_warnings, prediction_json, model_version,
+                   llm_provider, llm_model)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     patient_db_id,
@@ -335,6 +407,9 @@ def insert_assessment(
                     assessment_id,
                     session_id,
                     package_name,
+                    institution,
+                    n_trials,
+                    package_hash,
                     created_at or now_dt(),
                     _to_dt(assessment_time),
                     float(_field(predictions, "FMA_UE")),
@@ -344,6 +419,11 @@ def insert_assessment(
                     report,
                     report_status,
                     biomarkers,
+                    parse_warnings,
+                    prediction_json,
+                    model_version,
+                    llm_provider,
+                    llm_model,
                 ),
             )
             new_id = cur.lastrowid
@@ -387,8 +467,9 @@ def list_assessments(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
                 """
                 SELECT a.id, a.created_at, a.patient_db_id, p.patient_id, p.name,
                        a.source, a.assessment_id, a.session_id, a.package_name,
-                       a.assessment_time, a.fma_ue, a.bi, a.hand_tone,
-                       a.hand_function, a.report_status
+                       a.institution, a.n_trials, a.package_hash, a.assessment_time,
+                       a.fma_ue, a.bi, a.hand_tone, a.hand_function, a.report_status,
+                       a.model_version, a.llm_provider, a.llm_model
                 FROM assessments a
                 JOIN patients p ON p.id = a.patient_db_id
                 ORDER BY a.created_at DESC, a.id DESC
@@ -400,6 +481,27 @@ def list_assessments(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
     finally:
         conn.close()
     return {"total": total, "items": items}
+
+
+def get_assessment(assessment_id: int) -> Optional[Dict[str, Any]]:
+    """Return one structured assessment row, including report and JSON payloads."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.*, p.patient_id, p.name, p.sex, p.age, p.diagnosis,
+                       p.paralysis_side, p.disease_days
+                FROM assessments a
+                JOIN patients p ON p.id = a.patient_db_id
+                WHERE a.id=%s
+                """,
+                (assessment_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm_assessment_detail(row)
 
 
 def delete_assessment(assessment_id: int) -> int:
@@ -443,6 +545,14 @@ def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None
             assessment_id=first.get("assessment_id"),
             assessment_time=first.get("assessment_time"),
             biomarkers=first.get("biomarkers"),
+            institution="hospital",
+            n_trials=first.get("n_trials"),
+            package_hash=first.get("package_hash"),
+            parse_warnings=first.get("parse_warnings"),
+            prediction_json=first.get("prediction_json"),
+            model_version=first.get("model_version"),
+            llm_provider=first.get("llm_provider"),
+            llm_model=first.get("llm_model"),
         )
     return get_patient(pid)  # type: ignore[return-value]
 
@@ -460,6 +570,7 @@ __all__ = [
     "insert_assessment",
     "latest_assessment_for_patient",
     "list_assessments",
+    "get_assessment",
     "delete_assessment",
     "delete_all_assessments",
     "enroll_patient",

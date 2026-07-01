@@ -1,6 +1,7 @@
 import {
   AssessmentOverview,
   EnrollmentRequest,
+  MysqlAssessmentDetail,
   MysqlAssessmentList,
   PatientDetail,
   PatientSummary,
@@ -72,6 +73,7 @@ export interface EvalPackageParse {
   patient_prefill: EvalPackagePrefill
   manifest_summary: Record<string, unknown>
   warnings: string[]
+  package_hash: string
   enrolled: boolean
 }
 
@@ -115,6 +117,10 @@ export async function enrollPatient(payload: EnrollmentRequest): Promise<unknown
 
 export function fetchMysqlAssessments(limit = 50, offset = 0): Promise<MysqlAssessmentList> {
   return getJSON(`/api/mysql/assessments?limit=${limit}&offset=${offset}`)
+}
+
+export function fetchMysqlAssessment(id: number): Promise<MysqlAssessmentDetail> {
+  return getJSON(`/api/mysql/assessments/${id}`)
 }
 
 export async function deleteMysqlAssessment(id: number): Promise<{ deleted: number }> {

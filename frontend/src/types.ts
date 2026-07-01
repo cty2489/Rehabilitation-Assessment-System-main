@@ -133,12 +133,30 @@ export interface MysqlAssessmentItem {
   assessment_id: string | null
   session_id: string | null
   package_name: string | null
+  institution: string | null
+  n_trials: number | null
+  package_hash: string | null
   assessment_time: string | null
   fma_ue: number
   bi: number
   hand_tone: string
   hand_function: number
   report_status: string
+  model_version: string | null
+  llm_provider: string | null
+  llm_model: string | null
+}
+
+export interface MysqlAssessmentDetail extends MysqlAssessmentItem {
+  sex: string | null
+  age: number | null
+  diagnosis: string | null
+  paralysis_side: string | null
+  disease_days: number | null
+  report: string | null
+  biomarkers: unknown
+  parse_warnings: unknown
+  prediction_json: unknown
 }
 
 export interface MysqlAssessmentList {

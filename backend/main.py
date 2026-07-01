@@ -11,6 +11,7 @@ per-session queue.Queue that the SSE coroutine drains asynchronously.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import queue
@@ -31,13 +32,14 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 import db
 import mysql_db
 from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
-from inference import SENTINEL, ModelRegistry, error_event, run_pipeline
+from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
 from report import REPORT_MODEL, llm_provider, remote_url, stream_report
 from schemas import (
     AssessmentOverview,
     AssessmentResult,
     AssessSessionResponse,
     EnrollmentRequest,
+    MysqlAssessmentDetail,
     MysqlAssessmentList,
     PatientDetail,
     PatientInfo,
@@ -60,7 +62,9 @@ class SessionState:
     def __init__(self, session_id: str, patient: PatientInfo, eeg_paths: List[Path],
                  emg_paths: List[Path], institution: str = "hospital",
                  persist_target: str = "sqlite", package_name: Optional[str] = None,
-                 assessment_id: Optional[str] = None, assessment_time: Optional[str] = None):
+                 assessment_id: Optional[str] = None, assessment_time: Optional[str] = None,
+                 n_trials: Optional[int] = None, package_hash: Optional[str] = None,
+                 parse_warnings: Optional[List[str]] = None):
         self.session_id = session_id
         self.patient = patient
         self.eeg_paths = eeg_paths
@@ -73,10 +77,26 @@ class SessionState:
         self.package_name = package_name
         self.assessment_id = assessment_id
         self.assessment_time = assessment_time
+        self.n_trials = n_trials if n_trials is not None else len(eeg_paths)
+        self.package_hash = package_hash
+        self.parse_warnings = parse_warnings or []
         self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self.result: Optional[AssessmentResult] = None
         self.started: bool = False
         self.lock = threading.Lock()
+
+
+def _dl_model_version() -> str:
+    return ";".join(f"{task}:{path.name}" for task, path in CHECKPOINTS.items())
+
+
+def _llm_model_name() -> str:
+    provider = llm_provider()
+    if provider == "deepseek":
+        return os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    if provider == "remote":
+        return remote_url()
+    return os.environ.get("LLM_MODEL_ID", "")
 
 
 SESSIONS: Dict[str, SessionState] = {}
@@ -206,21 +226,38 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
         try:
             report_status = "generated" if report_text else "failed"
             bio_json = json.dumps(biomarkers, ensure_ascii=False) if biomarkers else None
+            prediction_json = json.dumps(
+                {
+                    "FMA_UE": predictions.FMA_UE,
+                    "BI": predictions.BI,
+                    "hand_tone": predictions.hand_tone,
+                    "hand_function": predictions.hand_function,
+                },
+                ensure_ascii=False,
+            )
             if store is mysql_db:
                 # Device assessment → MySQL. upsert auto-creates the patient
                 # (source='device-auto') when not yet enrolled by the hospital.
-                pid = mysql_db.upsert_patient(state.patient, source="device-auto")
+                pid = mysql_db.upsert_patient(state.patient, source=f"{state.institution}-auto")
                 mysql_db.insert_assessment(
                     pid,
                     state.session_id,
                     predictions,
                     report_text,
                     report_status,
-                    source="device",
+                    source=state.institution,
                     package_name=state.package_name,
                     assessment_id=state.assessment_id,
                     assessment_time=state.assessment_time,
                     biomarkers=bio_json,
+                    institution=state.institution,
+                    n_trials=state.n_trials,
+                    package_hash=state.package_hash,
+                    parse_warnings=json.dumps(state.parse_warnings, ensure_ascii=False),
+                    prediction_json=prediction_json,
+                    model_version=_dl_model_version(),
+                    llm_provider=llm_provider(),
+                    llm_model=_llm_model_name(),
                 )
             else:
                 pid = db.upsert_patient(state.patient)
@@ -291,10 +328,10 @@ async def create_assessment(
 # --------------------------------------------------------------------------- #
 # 任务一与任务三对接接口：离线 zip 数据包导入 + 在线设备端占位                  #
 # --------------------------------------------------------------------------- #
-def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, Any]":
+def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, Any, str]":
     """Persist the uploaded zip, extract it (zip-slip safe), and read the bundle.
 
-    Returns ``(bundle_root, EvalPackage)``. Raises HTTPException(422) on bad input.
+    Returns ``(bundle_root, EvalPackage, package_sha256)``. Raises HTTPException(422) on bad input.
     """
     if institution not in INSTITUTIONS:
         raise HTTPException(status_code=422, detail=f"未知机构类型：{institution}")
@@ -304,14 +341,20 @@ def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, 
     work = SESSION_ROOT / f"pkg_{uuid.uuid4().hex[:12]}"
     work.mkdir(parents=True, exist_ok=True)
     zip_path = work / "bundle.zip"
+    digest = hashlib.sha256()
     with zip_path.open("wb") as fh:
-        shutil.copyfileobj(upload.file, fh)
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            fh.write(chunk)
     try:
         root = safe_extract_zip(zip_path, work / "extracted")
         pkg = read_eval_package(root, institution=institution)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return root, pkg
+    return root, pkg, digest.hexdigest()
 
 
 @app.post("/api/task-interface/parse")
@@ -325,7 +368,7 @@ async def task_interface_parse(
     If the manifest's patient_id is already enrolled in MySQL, the stored basic
     info overrides the manifest prefill and ``enrolled`` is set so the UI shows
     "该患者已入组，已按档案回填"."""
-    _root, pkg = _save_and_extract_zip(package, institution)
+    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
     prefill = dict(pkg.patient_prefill)
     enrolled = False
     pid = (prefill.get("patient_id") or "").strip()
@@ -346,6 +389,7 @@ async def task_interface_parse(
         "patient_prefill": prefill,
         "manifest_summary": pkg.manifest_summary,
         "warnings": pkg.warnings,
+        "package_hash": package_hash,
         "enrolled": enrolled,
     }
 
@@ -369,7 +413,7 @@ async def task_interface_offline(
     Results from this device-end workflow persist to **MySQL** (not the SQLite
     used by the 康复评估 page). The manifest's assessment_id / time and the zip
     filename are carried into the record for traceability."""
-    _root, pkg = _save_and_extract_zip(package, institution)
+    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
     if pkg.n_trials == 0:
         detail = "数据包中没有可用的 trial。" + ("；".join(pkg.warnings) if pkg.warnings else "")
         raise HTTPException(status_code=422, detail=detail)
@@ -395,6 +439,9 @@ async def task_interface_offline(
         package_name=package.filename,
         assessment_id=pkg.manifest_summary.get("assessment_id"),
         assessment_time=pkg.manifest_summary.get("assessment_time"),
+        n_trials=pkg.n_trials,
+        package_hash=package_hash,
+        parse_warnings=pkg.warnings,
     )
     return AssessSessionResponse(session_id=session_id, n_trials=pkg.n_trials)
 
@@ -566,6 +613,17 @@ async def mysql_list_patients():
         raise _mysql_guard(exc) from exc
 
 
+@app.get("/api/mysql/patients/{patient_db_id}")
+async def mysql_get_patient(patient_db_id: int):
+    try:
+        patient = mysql_db.get_patient(patient_db_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return patient
+
+
 @app.get("/api/mysql/assessments", response_model=MysqlAssessmentList)
 async def mysql_list_assessments(limit: int = 50, offset: int = 0):
     limit = max(1, min(limit, 500))
@@ -574,6 +632,17 @@ async def mysql_list_assessments(limit: int = 50, offset: int = 0):
         return mysql_db.list_assessments(limit=limit, offset=offset)
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
+
+
+@app.get("/api/mysql/assessments/{assessment_id}", response_model=MysqlAssessmentDetail)
+async def mysql_get_assessment(assessment_id: int):
+    try:
+        assessment = mysql_db.get_assessment(assessment_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    return assessment
 
 
 @app.delete("/api/mysql/assessments/{assessment_id}")

@@ -1,7 +1,7 @@
 """Pydantic schemas for the rehabilitation assessment API."""
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -156,12 +156,30 @@ class MysqlAssessmentItem(BaseModel):
     assessment_id: Optional[str] = None
     session_id: Optional[str] = None
     package_name: Optional[str] = None
+    institution: Optional[str] = None
+    n_trials: Optional[int] = None
+    package_hash: Optional[str] = None
     assessment_time: Optional[str] = None
     fma_ue: float
     bi: float
     hand_tone: str
     hand_function: int
     report_status: str
+    model_version: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+
+
+class MysqlAssessmentDetail(MysqlAssessmentItem):
+    sex: Optional[str] = None
+    age: Optional[int] = None
+    diagnosis: Optional[str] = None
+    paralysis_side: Optional[str] = None
+    disease_days: Optional[int] = None
+    report: Optional[str] = None
+    biomarkers: Optional[Any] = None
+    parse_warnings: Optional[Any] = None
+    prediction_json: Optional[Any] = None
 
 
 class MysqlAssessmentList(BaseModel):

@@ -9,6 +9,7 @@ import {
   Institution,
   deleteMysqlAssessment,
   enrollPatient,
+  fetchMysqlAssessment,
   fetchMysqlAssessments,
   fetchOnlineStatus,
   parseEvalPackage,
@@ -16,6 +17,7 @@ import {
 } from '../api'
 import {
   EnrollmentRequest,
+  MysqlAssessmentDetail,
   MysqlAssessmentItem,
   ParalysisSide,
   PatientInfo,
@@ -33,6 +35,35 @@ const INITIAL_PATIENT: PatientInfo = {
   diagnosis: '',
   disease_days: '',
   paralysis_side: '左',
+}
+
+const shortHash = (value?: string | null) =>
+  value ? `${value.slice(0, 12)}...${value.slice(-6)}` : '-'
+
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item))
+  if (typeof value === 'string' && value.trim()) return [value]
+  return []
+}
+
+function countBiomarkers(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null
+  const groups = (value as { groups?: unknown }).groups
+  if (Array.isArray(groups)) {
+    return groups.reduce((sum, group) => {
+      const markers = (group as { markers?: unknown }).markers
+      return sum + (Array.isArray(markers) ? markers.length : 0)
+    }, 0)
+  }
+  const flat = (value as { flat?: unknown }).flat
+  if (flat && typeof flat === 'object') return Object.keys(flat).length
+  return null
+}
+
+function formatJSON(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, null, 2)
 }
 
 function prefillToPatient(p: EvalPackageParse['patient_prefill']): PatientInfo {
@@ -242,6 +273,9 @@ export default function TaskInterfacePage() {
                     <p>
                       机构：<strong>{parsed.institution === 'hospital' ? '医院端' : '设备端'}</strong>
                       　·　纳入 active 主动评估试次：<strong>{parsed.n_trials}</strong> 个
+                    </p>
+                    <p style={{ color: '#6b7280', fontSize: 13 }}>
+                      Package SHA-256: {shortHash(parsed.package_hash)}
                     </p>
                     {parsed.enrolled && (
                       <p style={{ color: '#047857' }}>
@@ -504,6 +538,8 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
   const [items, setItems] = useState<MysqlAssessmentItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [selected, setSelected] = useState<MysqlAssessmentDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const refresh = async () => {
@@ -524,15 +560,35 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
     refresh()
   }, [reload])
 
+  const onOpen = async (id: number) => {
+    if (selected?.id === id) {
+      setSelected(null)
+      return
+    }
+    setDetailLoading(true)
+    setErr(null)
+    try {
+      setSelected(await fetchMysqlAssessment(id))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
   const onDelete = async (id: number) => {
     if (!window.confirm(`确认删除记录 #${id}？`)) return
     try {
       await deleteMysqlAssessment(id)
+      if (selected?.id === id) setSelected(null)
       refresh()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
   }
+
+  const selectedWarnings = toStringList(selected?.parse_warnings)
+  const markerCount = countBiomarkers(selected?.biomarkers)
 
   return (
     <div className="card">
@@ -560,10 +616,12 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
                 <th>时间</th>
                 <th>患者</th>
                 <th>来源</th>
+                <th>Trials</th>
                 <th>FMA-UE</th>
                 <th>BI</th>
                 <th>肌张力</th>
                 <th>Brunnstrom</th>
+                <th>Model</th>
                 <th>数据包</th>
                 <th>报告</th>
                 <th></th>
@@ -578,14 +636,32 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
                     <br />
                     <span style={{ color: '#6b7280', fontSize: 12 }}>{r.patient_id}</span>
                   </td>
-                  <td>{r.source}</td>
+                  <td>
+                    {r.institution || r.source}
+                    <br />
+                    <span style={{ color: '#6b7280', fontSize: 12 }}>{r.source}</span>
+                  </td>
+                  <td>{r.n_trials ?? '-'}</td>
                   <td>{r.fma_ue}</td>
                   <td>{r.bi}</td>
                   <td>{r.hand_tone}</td>
                   <td>{r.hand_function}</td>
-                  <td style={{ fontSize: 12, color: '#6b7280' }}>{r.package_name || '—'}</td>
+                  <td style={{ fontSize: 12, color: '#6b7280' }}>{r.llm_provider || '-'} / {r.llm_model || '-'}</td>
+                  <td style={{ fontSize: 12, color: '#6b7280' }}>
+                    {r.package_name || '—'}
+                    <br />
+                    {shortHash(r.package_hash)}
+                  </td>
                   <td>{r.report_status}</td>
-                  <td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button
+                      className="button secondary"
+                      style={{ padding: '2px 10px', marginRight: 6 }}
+                      onClick={() => onOpen(r.id)}
+                      disabled={detailLoading}
+                    >
+                      {selected?.id === r.id ? 'Hide' : 'View'}
+                    </button>
                     <button
                       className="button secondary"
                       style={{ padding: '2px 10px' }}
@@ -598,6 +674,75 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {detailLoading && <p style={{ color: '#6b7280', fontSize: 13 }}>Loading detail...</p>}
+      {selected && (
+        <div className="report-display" style={{ marginTop: 12 }}>
+          <h3 style={{ marginTop: 0 }}>MySQL structured detail #{selected.id}</h3>
+          <div className="grid-2">
+            <p>
+              Patient: <strong>{selected.name || selected.patient_id}</strong>
+              <br />
+              <span style={{ color: '#6b7280', fontSize: 12 }}>
+                {selected.patient_id} / {selected.sex || '-'} / {selected.age ?? '-'}
+              </span>
+            </p>
+            <p>
+              Diagnosis: {selected.diagnosis || '-'}
+              <br />
+              <span style={{ color: '#6b7280', fontSize: 12 }}>
+                Side: {selected.paralysis_side || '-'} / Days: {selected.disease_days ?? '-'}
+              </span>
+            </p>
+            <p>
+              Source: {selected.institution || selected.source} / {selected.n_trials ?? '-'} trials
+              <br />
+              <span style={{ color: '#6b7280', fontSize: 12 }}>
+                session={selected.session_id || '-'} / assessment={selected.assessment_id || '-'}
+              </span>
+            </p>
+            <p>
+              LLM: {selected.llm_provider || '-'} / {selected.llm_model || '-'}
+              <br />
+              <span style={{ color: '#6b7280', fontSize: 12 }}>{selected.model_version || '-'}</span>
+            </p>
+          </div>
+          <p style={{ color: '#6b7280', fontSize: 13 }}>
+            package={selected.package_name || '-'} / sha256={shortHash(selected.package_hash)} /
+            biomarkers={markerCount ?? '-'}
+          </p>
+          {selectedWarnings.length > 0 && (
+            <ul>
+              {selectedWarnings.map((warning, index) => (
+                <li key={index} style={{ color: '#b45309' }}>{warning}</li>
+              ))}
+            </ul>
+          )}
+          {selected.prediction_json != null && (
+            <details open>
+              <summary>Prediction JSON</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 220, overflow: 'auto', fontSize: 12 }}>
+                {formatJSON(selected.prediction_json)}
+              </pre>
+            </details>
+          )}
+          {selected.biomarkers != null && (
+            <details>
+              <summary>Biomarker JSON</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto', fontSize: 12 }}>
+                {formatJSON(selected.biomarkers)}
+              </pre>
+            </details>
+          )}
+          {selected.report && (
+            <details>
+              <summary>AI report</summary>
+              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto', fontSize: 13 }}>
+                {selected.report}
+              </pre>
+            </details>
+          )}
         </div>
       )}
     </div>
