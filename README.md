@@ -9,11 +9,27 @@
 - MySQL 结构化保存患者、评估记录、运动 trial、biomarker 明细和 AI 报告
 - React 前端列表页、详情页、统计页展示
 
-当前推荐版本标签：
+当前推荐分支：
 
 ```text
-local-gguf-llm-v1.1
+main
 ```
+
+当前稳定版本标签：
+
+```text
+local-gguf-llm-v1.2
+```
+
+## 0. 分支和版本说明
+
+对外部署和项目复现统一使用 `main` 分支。
+
+`main` 表示当前完整可运行版本，包含前端、后端、MySQL 结构化存储、PyTorch 评分模型调用、本地 GGUF 大模型服务和部署文档。别人克隆仓库、阅读 README、复现系统时，只需要看 `main`。
+
+`local-gguf-llm-v1.2` 是当前推荐的稳定版本标签，用来固定“本地 Qwen2.5-7B GGUF + MySQL 业务系统 + 完整部署说明 + 清晰分支说明”这一版。如果以后继续迭代，`main` 会继续向前更新，而标签可以用来回到这个确定版本。
+
+历史开发分支只用于开发过程记录，不作为部署入口。
 
 ## 1. 系统架构
 
@@ -139,20 +155,16 @@ C:\Users\22097\Downloads\qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf
 ### 5.1 克隆仓库
 
 ```powershell
-git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
+git clone -b main https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 ```
 
-如果要切到当前本地 GGUF 版本：
+`main` 分支是当前对外推荐的完整系统版本。
+
+如果需要固定到当前稳定标签：
 
 ```powershell
-git checkout local-gguf-llm-v1.1
-```
-
-或者使用最新开发分支：
-
-```powershell
-git checkout feature/mysql-structured-storage
+git checkout local-gguf-llm-v1.2
 ```
 
 ### 5.2 创建后端虚拟环境
@@ -419,10 +431,13 @@ Get-Service -Name MySQL*
 
 ## 12. 版本标签
 
+日常部署请直接使用 `main` 分支。下面这些标签用于回到某一个历史稳定版本，便于汇报、复现和问题定位。
+
 | 标签 | 说明 |
 |---|---|
 | `deepseek-runnable` | DeepSeek API 可运行基础版本 |
 | `mysql-business-system-v1` | MySQL 结构化存储和业务系统版本 |
+| `local-gguf-llm-v1.2` | 本地 Qwen2.5-7B GGUF 大模型服务 + 完整部署说明 + 清晰分支说明 |
 | `local-gguf-llm-v1.1` | 本地 Qwen2.5-7B GGUF 大模型服务 + 最新 README 部署说明 |
 | `local-gguf-llm-v1` | 本地 Qwen2.5-7B GGUF 大模型服务版本 |
 
