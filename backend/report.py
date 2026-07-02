@@ -460,7 +460,7 @@ def _reason_remote(base_url: str, context: Dict[str, Any]) -> str:
     import httpx  # light dep, local backend only
 
     messages = build_clinical_messages(context)
-    with httpx.Client(timeout=_remote_timeout()) as client:
+    with httpx.Client(timeout=_remote_timeout(), trust_env=False) as client:
         resp = client.post(f"{base_url}/generate_messages", json={"messages": messages})
         resp.raise_for_status()
         data = resp.json()

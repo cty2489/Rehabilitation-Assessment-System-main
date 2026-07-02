@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $StateDir = Join-Path $Root ".cache\local-deploy"
 $PidFiles = @(
-  Join-Path $StateDir "backend.pid",
-  Join-Path $StateDir "frontend.pid"
+  (Join-Path $StateDir "backend.pid"),
+  (Join-Path $StateDir "frontend.pid")
 )
 
 foreach ($pidFile in $PidFiles) {

@@ -19,7 +19,17 @@ Show-Check "frontend node_modules" (Test-Path (Join-Path $Root "frontend\node_mo
 Show-Check "backend .env" (Test-Path $EnvFile)
 
 if (Test-Path $EnvFile) {
-  $interesting = @("LLM_PROVIDER", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL", "MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_DB")
+  $interesting = @(
+    "LLM_PROVIDER",
+    "LLM_REMOTE_URL",
+    "LLM_REMOTE_TIMEOUT",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "MYSQL_HOST",
+    "MYSQL_PORT",
+    "MYSQL_USER",
+    "MYSQL_DB"
+  )
   Get-Content $EnvFile | ForEach-Object {
     if ($_ -match "^([^#=]+)=(.*)$") {
       $key = $matches[1].Trim()

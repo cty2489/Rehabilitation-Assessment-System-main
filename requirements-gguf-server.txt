@@ -1,0 +1,10 @@
+# Local GGUF report-generation service.
+#
+# Windows + RTX 4070 + CUDA PyTorch 2.5.1+cu121 tested install:
+#   .\.venv\Scripts\python.exe -m pip install "llama-cpp-python==0.3.4" --only-binary=:all: --index-url https://abetlen.github.io/llama-cpp-python/whl/cu121 --extra-index-url https://pypi.org/simple
+#
+# The latest llama-cpp-python source package may hit Windows long-path/build
+# issues. This pinned CUDA wheel avoids local compilation and provides
+# ggml-cuda.dll for GPU offload.
+llama-cpp-python==0.3.4
+diskcache>=5.6.1

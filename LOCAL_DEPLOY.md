@@ -1,12 +1,12 @@
 # 本地部署说明
 
-本文档用于在本机部署智能康复评估系统。当前推荐模式是：
+本文档用于在本机部署智能康复评估系统。当前支持 DeepSeek API 和本地 GGUF 两种报告生成模式。
 
 - 后端 FastAPI 本地运行，端口 `8000`
 - 前端 Vite/React 本地运行，端口 `5173`
 - MySQL 本地运行，用于患者档案、评估记录、运动 trial、biomarker 明细存储
-- 康复评分模型本地 CPU 运行
-- AI 康复报告使用 DeepSeek API 生成，不在本机加载大语言模型
+- 康复评分模型本地 GPU/CPU 运行
+- AI 康复报告可使用 DeepSeek API，也可使用本机 GGUF 大模型服务
 
 ## 1. 本地部署结构
 
@@ -23,7 +23,7 @@
         |
         +-- 本地深度学习评分模型: FMA-UE / BI / hand_tone / hand_function
         |
-        +-- DeepSeek API: 生成 AI 康复评估报告
+        +-- DeepSeek API 或本机 GGUF LLM 服务: 生成 AI 康复评估报告
 ```
 
 ## 2. 必要环境
@@ -41,7 +41,7 @@
 
 ## 3. 配置 backend\.env
 
-推荐关键配置如下：
+DeepSeek API 模式关键配置如下：
 
 ```env
 LLM_PROVIDER=deepseek
@@ -57,6 +57,22 @@ MYSQL_DB=rehab_mysql
 ```
 
 `DEEPSEEK_API_KEY` 和 `MYSQL_PASSWORD` 也需要在 `backend\.env` 中配置，但不要写入说明文档或公开仓库。
+
+本地 GGUF 模式关键配置如下：
+
+```env
+LLM_PROVIDER=remote
+LLM_REMOTE_URL=http://127.0.0.1:6006
+LLM_REMOTE_TIMEOUT=300
+```
+
+本地 GGUF 服务默认读取第一个分卷：
+
+```text
+C:\Users\22097\Downloads\qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+```
+
+第二个分卷必须与第一个分卷在同一目录，且文件名不能修改。
 
 ## 4. 首次安装依赖
 
@@ -87,6 +103,20 @@ $env:PATH = "$nodeDir;$env:PATH"
 `scripts\start-local.ps1` 会自动搜索常见位置下的 `npm.cmd`，一般不需要手动处理。
 
 ## 5. 一键启动
+
+如果使用本地 GGUF 大模型，先启动 GGUF LLM 服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-gguf-llm.ps1
+```
+
+检查 GGUF 服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-gguf-llm.ps1 -Generate
+```
+
+再启动前后端：
 
 在项目根目录运行：
 
@@ -134,6 +164,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\check-local.ps1
 
 ## 7. 停止本地服务
 
+停止本地 GGUF 大模型服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-gguf-llm.ps1
+```
+
 停止由 `start-local.ps1` 启动的进程：
 
 ```powershell
@@ -176,7 +212,7 @@ Get-Service -Name MySQL*
 
 再确认 `backend\.env` 中的 `MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DB` 是否正确。
 
-### AI 报告生成失败
+### DeepSeek API 模式下 AI 报告生成失败
 
 先确认：
 
@@ -189,6 +225,16 @@ Get-Service -Name MySQL*
 
 前端通过 Vite proxy 把 `/api` 转发到 `http://localhost:8000`，所以要确认后端 8000 正常运行。
 
-### 不建议本机直接加载大语言模型
+### 本地 GGUF 模型服务不可用
 
-本机部署推荐使用 DeepSeek API。3B/7B 本地模型会占用显存和内存，报告生成上下文较长时还需要精简 prompt，稳定性不如 API 模式。
+先检查 6006 端口和模型服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-gguf-llm.ps1 -Generate
+```
+
+如果提示找不到 `llama.dll` 或 CUDA DLL，请优先使用 `scripts\start-gguf-llm.ps1` 启动。该脚本会自动把 PyTorch CUDA DLL 和 llama.cpp DLL 加入进程 PATH。
+
+### 不要用 transformers 直接加载 GGUF
+
+当前模型是分卷 GGUF 量化文件，不是 safetensors / FP16 格式，不适合用 `AutoModelForCausalLM` 加载。请使用本文档中的 llama.cpp / llama-cpp-python 服务路线。
