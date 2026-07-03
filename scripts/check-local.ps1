@@ -20,6 +20,7 @@ Show-Check "backend .env" (Test-Path $EnvFile)
 
 if (Test-Path $EnvFile) {
   $interesting = @(
+    "APP_ADMIN_USER",
     "LLM_PROVIDER",
     "LLM_REMOTE_URL",
     "LLM_REMOTE_TIMEOUT",
@@ -36,7 +37,7 @@ if (Test-Path $EnvFile) {
       $value = $matches[2].Trim()
       if ($interesting -contains $key) {
         Write-Host "  $key=$value"
-      } elseif ($key -match "KEY|PASSWORD") {
+      } elseif ($key -match "KEY|PASSWORD|TOKEN") {
         Write-Host "  $key=<configured, hidden>"
       }
     }
@@ -67,8 +68,36 @@ try {
   Show-Check "backend /api/health" $false $_.Exception.Message
 }
 
+$authHeaders = @{}
 try {
-  $summary = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/stats/summary" -TimeoutSec 8
+  if (-not (Test-Path $EnvFile)) {
+    throw "backend .env not found"
+  }
+  $envMap = @{}
+  Get-Content $EnvFile | ForEach-Object {
+    if ($_ -match "^([^#=]+)=(.*)$") {
+      $envMap[$matches[1].Trim()] = $matches[2].Trim()
+    }
+  }
+  if (-not $envMap["APP_ADMIN_USER"] -or -not $envMap["APP_ADMIN_PASSWORD"]) {
+    throw "APP_ADMIN_USER or APP_ADMIN_PASSWORD is missing"
+  }
+  $body = @{
+    username = $envMap["APP_ADMIN_USER"]
+    password = $envMap["APP_ADMIN_PASSWORD"]
+  } | ConvertTo-Json
+  $login = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/auth/login" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 8
+  if (-not $login.access_token) {
+    throw "login response has no access_token"
+  }
+  $authHeaders = @{ Authorization = "Bearer $($login.access_token)" }
+  Show-Check "backend /api/auth/login" $true ("user={0}" -f $login.user)
+} catch {
+  Show-Check "backend /api/auth/login" $false $_.Exception.Message
+}
+
+try {
+  $summary = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/stats/summary" -Headers $authHeaders -TimeoutSec 8
   Show-Check "backend /api/stats/summary" $true ("patients={0}, assessments={1}" -f $summary.patient_count, $summary.assessment_count)
 } catch {
   Show-Check "backend /api/stats/summary" $false $_.Exception.Message

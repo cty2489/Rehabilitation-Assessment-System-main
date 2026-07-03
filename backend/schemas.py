@@ -40,6 +40,17 @@ class ErrorEvent(BaseModel):
     message: str
 
 
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthLoginResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    user: str
+
+
 # --------------------------------------------------------------------------- #
 # Patient management + records + stats (SQLite-backed)                         #
 # --------------------------------------------------------------------------- #

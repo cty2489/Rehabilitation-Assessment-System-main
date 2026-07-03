@@ -285,6 +285,116 @@ def _strip_trailing_chat_tags(text: str) -> str:
     return text[:cut].rstrip()
 
 
+def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = None) -> Dict[str, Any]:
+    """Conservative clinical text when the LLM does not return valid JSON.
+
+    This is intentionally narrow: measured values remain code-owned, reference
+    judgement comes from ``biomarker_refs.judge``, and wording avoids inventing
+    external thresholds for device-specific quantities.
+    """
+    from biomarker_refs import judge
+
+    roman = str(context.get("stage_roman") or context.get("stage") or "")
+    prefix = f"{roman}期" if roman else "当前分期"
+
+    group_phrase = {
+        "emg": ("外周肌肉激活与屈伸协同", "训练中应优先保持低代偿、低疲劳的主动助力收缩，并记录同一设备下的连续变化。"),
+        "eeg": ("中枢驱动与半球协同", "训练中应加入运动想象、镜像/视觉反馈和患侧主动意图强化，避免只看单次绝对值下结论。"),
+        "imu": ("运动速度、平滑度与震颤控制", "训练中应降低速度追求，优先提高轨迹平滑度、可控活动范围和重复稳定性。"),
+    }
+    key_advice = {
+        "resting_emg_level": "若后续同设备复测持续升高，训练前增加放松、牵伸和低强度热身，避免在高张力状态下强行快速动作。",
+        "wrist_co_contraction_index": "腕屈伸训练应强调分离控制，采用慢速腕伸-回中、必要时降低屈肌共同收缩诱发的阻力。",
+        "finger_co_contraction_index": "伸指训练应减少屈指代偿，可用视觉反馈和分段助力促发指伸肌单独激活。",
+        "emg_activation_rms": "把该值作为同设备下主动募集强度的纵向指标，逐步提高有效收缩时间而非单次用力峰值。",
+        "fcr_iemg": "关注腕屈肌募集是否过度主导，训练中配合腕伸拮抗控制和放松间歇。",
+        "fds_iemg": "关注屈指肌群参与度，练习抓握时需安排充分伸指放松和手指打开动作。",
+        "ecu_iemg": "若伸肌募集不足，增加腕伸主动助力、抗重力维持和短时重复激活。",
+        "extensor_digitorum_iemg": "若伸指募集不足，优先安排伸指启动、保持和缓慢回放练习。",
+        "flexor_extensor_iemg_ratio": "用该比值观察屈伸肌平衡，训练剂量根据屈肌/伸肌偏向做动态调整。",
+        "emg_burst_duration": "若爆发持续时间过长，采用短组数、充分休息和节律提示，减少持续性僵硬收缩。",
+        "fcr_mdf": "MDF 主要用于疲劳趋势观察；训练中避免连续高强度收缩导致频率进一步下降。",
+        "fds_mdf": "MDF 主要用于疲劳趋势观察；手指屈曲训练后安排伸展与休息间隔。",
+        "ecu_mdf": "MDF 主要用于疲劳趋势观察；腕伸训练采用短时多组、不过度追求阻力。",
+        "extensor_digitorum_mdf": "MDF 主要用于疲劳趋势观察；伸指训练应控制单组时长并观察动作质量衰减。",
+        "pathological_asymmetry_index": "结合患侧运动表现复测该指标，必要时增加双侧协调、镜像反馈和患侧注意训练。",
+        "corticomuscular_coherence_beta": "该跨模态指标受同步误差影响，适合看趋势；训练中强化主动意图与肌肉输出的时间一致性。",
+        "prefrontal_theta_beta_ratio": "训练安排应避免认知负荷过高，采用明确目标、短时反馈和分段休息。",
+        "interhemispheric_motor_coherence": "可加入双侧同步任务和健患侧交替任务，促进半球间协同。",
+        "movement_mu_power_change": "运动想象和实际动作应配对练习，观察感觉运动节律是否随训练更稳定地调制。",
+        "movement_beta_power_change": "可通过节律性主动运动和反馈训练促进运动相关 β 调制稳定。",
+        "movement_smoothness_sparc": "优先练习慢速、连续、无停顿的轨迹控制，而不是追求动作次数。",
+        "range_of_motion_proxy": "在无痛范围内逐步扩大主动活动范围，避免代偿性肩肘动作替代腕手活动。",
+        "tremor_index_3_6hz": "若复测持续偏高，应降低任务速度和负荷，采用稳定支撑位下的短时控制训练。",
+        "wrist_flexion_peak_velocity": "腕屈速度训练应保持可控启动和可控停止，避免快速甩动。",
+        "wrist_extension_peak_velocity": "腕伸速度训练应从主动助力开始，逐步提高速度同时保持轨迹稳定。",
+        "finger_extension_peak_velocity": "伸指速度训练以充分打开和稳定保持为先，再逐步提高反应速度。",
+    }
+
+    marker_text: Dict[str, Dict[str, str]] = {}
+    available_by_group = {"emg": 0, "eeg": 0, "imu": 0}
+    for group in context.get("biomarkers", {}).get("groups", []) or []:
+        gkey = group.get("key", "")
+        focus, default_advice = group_phrase.get(gkey, ("该模态功能", "建议结合复测趋势调整训练剂量。"))
+        for marker in group.get("markers", []) or []:
+            key = marker.get("key", "")
+            if marker.get("available", True) is False:
+                marker_text[key] = {
+                    "interpretation": "本次数据不足，未予解读",
+                    "treatment_advice": "—",
+                }
+                continue
+            available_by_group[gkey] = available_by_group.get(gkey, 0) + 1
+            value = marker.get("value")
+            unit = marker.get("unit") or ""
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                numeric_value = None
+            verdict = judge(key, numeric_value)
+            value_text = f"{value}{(' ' + unit) if unit else ''}"
+            marker_text[key] = {
+                "interpretation": (
+                    f"{marker.get('name', key)} 当前值为 {value_text}，{verdict}；"
+                    f"该指标主要用于观察{focus}，临时演示版建议结合后续同设备复测趋势解读。"
+                ),
+                "treatment_advice": key_advice.get(key, default_advice),
+            }
+
+    group_subtypes: Dict[str, str] = {}
+    if available_by_group.get("emg", 0):
+        group_subtypes["emg"] = f"{prefix}-外周肌肉协同与募集可量化型"
+    if available_by_group.get("eeg", 0):
+        group_subtypes["eeg"] = f"{prefix}-中枢驱动与半球协同需纵向观察型"
+    if available_by_group.get("imu", 0):
+        group_subtypes["imu"] = f"{prefix}-运动控制质量可追踪型"
+
+    warn = "本报告的部分解读由保守规则后备生成；临床决策需结合医师查体与复测趋势。"
+    if reason:
+        warn += f" 后备触发原因：大模型结构化输出不可用。"
+
+    return {
+        "overall_interpretation": (
+            f"{prefix}：当前评估显示手功能已有一定主动运动基础，"
+            "需结合肌电、脑电和运动学指标继续观察协同分离、主动募集和运动质量。"
+        ),
+        "marker_text": marker_text,
+        "group_subtypes": group_subtypes,
+        "overall_subtype": (
+            f"{prefix}-主动运动可量化伴协同分离需巩固亚型，"
+            "中枢驱动与外周肌肉募集可通过同设备复测持续追踪，关节活动度和运动平滑度需同步训练。"
+        ),
+        "treatment_strategy": [
+            "分离控制优先策略：以腕伸、伸指和慢速回中为核心，每次10-15分钟、每日2-3组，出现屈肌共同收缩或动作代偿时立即降低难度并增加休息。",
+            "中枢驱动强化策略：运动想象、镜像反馈与实际患侧主动助力动作配对，每轮3-5分钟，用动作完成度和肌电/运动学趋势作为反馈标准。",
+            "运动质量递进策略：先保证轨迹平滑和可控活动范围，再逐步提高速度与重复次数；若震颤、疲劳或张力升高，改为短组数、低负荷、分次完成。",
+        ],
+        "warnings": [warn],
+        "not_recommended": [],
+        "next_assessment": report_builder.NEXT_ASSESSMENT_TEXT,
+    }
+
+
 def stream_report(
     patient: PatientInfo,
     predictions: PredictionResult,
@@ -376,7 +486,12 @@ def _reason_clinical(
             if i + 1 < attempts:
                 q.put({"type": "step_detail", "step": "report",
                        "detail": f"大模型输出不合规（{exc}），正在重试…"})
-    raise RuntimeError(f"大模型不可用或未返回有效的个体化报告：{last_err}")
+    q.put({
+        "type": "step_detail",
+        "step": "report",
+        "detail": "大模型未返回有效结构化结果，已使用保守规则生成可审阅报告。",
+    })
+    return _fallback_clinical(context, last_err)
 
 
 def _remote_timeout() -> "Any":

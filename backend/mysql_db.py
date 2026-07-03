@@ -21,9 +21,10 @@ import os
 import json
 import math
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from numbers import Real
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 try:  # defensive: a host without pymysql must still serve the SQLite flow
     import pymysql
@@ -105,8 +106,12 @@ def get_conn(with_db: bool = True):
 # Time helpers                                                                 #
 # --------------------------------------------------------------------------- #
 def now_dt() -> str:
-    """UTC 'YYYY-MM-DD HH:MM:SS' for a MySQL DATETIME column."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    """Beijing-time 'YYYY-MM-DD HH:MM:SS' for MySQL DATETIME columns.
+
+    MySQL DATETIME is timezone-naive; storing UTC here makes the UI look eight
+    hours behind in this China-facing deployment.
+    """
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _to_dt(value: Any) -> Optional[str]:

@@ -73,7 +73,7 @@ if (-not (Test-Path $PythonExe)) {
 }
 
 if (-not (Test-Path $EnvFile)) {
-  throw "Missing backend\.env. Copy backend\.env.example to backend\.env and fill DeepSeek/MySQL settings."
+  throw "Missing backend\.env. Copy backend\.env.example to backend\.env and fill auth, LLM and MySQL settings."
 }
 
 if (-not (Test-Path $NodeModules)) {

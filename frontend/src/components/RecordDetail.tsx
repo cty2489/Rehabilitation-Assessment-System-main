@@ -117,7 +117,8 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
 
       <div className="record-meta-grid">
         <Meta label="数据来源" value={source} />
-        <Meta label="评估时间" value={fmtDateTime(record.assessment_time || record.created_at)} />
+        <Meta label="记录生成时间" value={fmtDateTime(record.created_at)} />
+        <Meta label="数据采集时间" value={record.assessment_time ? fmtDateTime(record.assessment_time) : '—'} />
         <Meta label="Session" value={record.session_id || '—'} />
         <Meta label="Assessment ID" value={record.assessment_id || '—'} />
         <Meta label="数据包" value={record.package_name || '—'} />

@@ -27,6 +27,12 @@ export type Route =
 
 export type ReportStatus = 'generated' | 'failed' | 'manual'
 
+export interface AuthLoginResponse {
+  access_token: string
+  token_type: 'bearer'
+  user: string
+}
+
 // Backend-mirrored persistence types --------------------------------------- //
 export interface AssessmentRecord {
   id: number

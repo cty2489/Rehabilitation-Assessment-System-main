@@ -6,16 +6,17 @@ import {
   useState,
   ReactNode,
 } from 'react'
+import { clearAuthToken, getAuthToken, loginUser, setAuthToken } from '../api'
 import { Route } from '../types'
 
 const USER_KEY = 'rehab_user'
 
 // --------------------------------------------------------------------------- //
-// Auth (frontend-only demo login). Persisted in localStorage.                 //
+// Auth. The backend issues a demo-scoped bearer token after password login.    //
 // --------------------------------------------------------------------------- //
 interface AuthValue {
   user: string | null
-  login: (username: string) => void
+  login: (username: string, password: string) => Promise<void>
   logout: () => void
 }
 
@@ -35,19 +36,22 @@ const RouteContext = createContext<RouteValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<string | null>(
-    () => localStorage.getItem(USER_KEY),
+    () => (getAuthToken() ? localStorage.getItem(USER_KEY) : null),
   )
   const [route, setRoute] = useState<Route>('dashboard')
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null)
 
-  const login = useCallback((username: string) => {
-    const name = username.trim() || '医生'
+  const login = useCallback(async (username: string, password: string) => {
+    const resp = await loginUser(username.trim(), password)
+    const name = resp.user || username.trim() || '医生'
+    setAuthToken(resp.access_token)
     localStorage.setItem(USER_KEY, name)
     setUser(name)
     setRoute('dashboard')
   }, [])
 
   const logout = useCallback(() => {
+    clearAuthToken()
     localStorage.removeItem(USER_KEY)
     setUser(null)
   }, [])

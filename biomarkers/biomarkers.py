@@ -31,10 +31,16 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _trapz(y: np.ndarray, x: Optional[np.ndarray] = None, dx: float = 1.0) -> np.floating:
-    """Compatibility wrapper for NumPy 2.x, where np.trapz was removed."""
+    """Compatibility wrapper across NumPy versions.
+
+    NumPy 2.x prefers ``trapezoid`` while older server images only provide
+    ``trapz``. Use whichever is available so biomarker extraction does not fail
+    before any marker can be aggregated.
+    """
+    integrator = getattr(np, "trapezoid", np.trapz)
     if x is None:
-        return np.trapezoid(y, dx=dx)
-    return np.trapezoid(y, x)
+        return integrator(y, dx=dx)
+    return integrator(y, x)
 
 # --- 通道 / 肌肉 / 频带常量 --------------------------------------------------- #
 MOTOR_LEFT: Sequence[str] = ("C3", "FC3", "CP3")

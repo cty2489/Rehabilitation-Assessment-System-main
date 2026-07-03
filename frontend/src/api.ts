@@ -1,5 +1,6 @@
 import {
   AssessmentOverview,
+  AuthLoginResponse,
   EnrollmentRequest,
   MysqlAssessmentDetail,
   MysqlAssessmentList,
@@ -9,13 +10,48 @@ import {
   StatsSummary,
 } from './types'
 
+const AUTH_TOKEN_KEY = 'rehab_auth_token'
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY)
+}
+
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function parseError(res: Response): Promise<Error> {
+  const detail = await res.json().catch(() => ({ detail: res.statusText }))
+  return new Error(detail.detail || `HTTP ${res.status}`)
+}
+
 async function getJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+  const res = await fetch(url, { headers: authHeaders() })
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail || `HTTP ${res.status}`)
+    throw await parseError(res)
   }
   return res.json() as Promise<T>
+}
+
+export async function loginUser(username: string, password: string): Promise<AuthLoginResponse> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
 }
 
 export function fetchPatients(): Promise<PatientSummary[]> {
@@ -32,12 +68,11 @@ export async function updatePatient(
 ): Promise<PatientDetail> {
   const res = await fetch(`/api/patients/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail || `HTTP ${res.status}`)
+    throw await parseError(res)
   }
   return res.json()
 }
@@ -78,10 +113,9 @@ export interface EvalPackageParse {
 }
 
 async function postForm<T>(url: string, form: FormData): Promise<T> {
-  const res = await fetch(url, { method: 'POST', body: form })
+  const res = await fetch(url, { method: 'POST', headers: authHeaders(), body: form })
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail || `HTTP ${res.status}`)
+    throw await parseError(res)
   }
   return res.json() as Promise<T>
 }
@@ -105,12 +139,11 @@ export function fetchOnlineStatus(): Promise<{ status: string; device_url: strin
 export async function enrollPatient(payload: EnrollmentRequest): Promise<unknown> {
   const res = await fetch('/api/mysql/enroll', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(payload),
   })
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail || `HTTP ${res.status}`)
+    throw await parseError(res)
   }
   return res.json()
 }
@@ -124,10 +157,12 @@ export function fetchMysqlAssessment(id: number): Promise<MysqlAssessmentDetail>
 }
 
 export async function deleteMysqlAssessment(id: number): Promise<{ deleted: number }> {
-  const res = await fetch(`/api/mysql/assessments/${id}`, { method: 'DELETE' })
+  const res = await fetch(`/api/mysql/assessments/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail || `HTTP ${res.status}`)
+    throw await parseError(res)
   }
   return res.json()
 }

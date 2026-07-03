@@ -24,6 +24,7 @@ import {
   Sex,
 } from '../types'
 import { useAssessmentStream } from '../hooks/useAssessmentStream'
+import { fmtDateTime } from '../util'
 
 type Mode = 'offline' | 'online'
 
@@ -630,7 +631,7 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
             <tbody>
               {items.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.created_at}</td>
+                  <td>{fmtDateTime(r.created_at)}</td>
                   <td>
                     {r.name || '—'}
                     <br />

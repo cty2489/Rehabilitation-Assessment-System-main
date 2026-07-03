@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 DB_PATH = Path(__file__).resolve().parent / "rehab.db"
 
@@ -28,8 +29,8 @@ _PATIENT_EDITABLE = _PATIENT_CORE + _PATIENT_EXTENDED
 
 
 def now_iso() -> str:
-    """UTC ISO-8601 timestamp, second precision, no microseconds."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    """Beijing-time ISO-8601 timestamp, second precision, no microseconds."""
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(microsecond=0).isoformat()
 
 
 def get_conn() -> sqlite3.Connection:

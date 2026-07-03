@@ -15,17 +15,20 @@ import hashlib
 import json
 import os
 import queue
+import secrets
 import shutil
+import time
 import tempfile
 import threading
 import traceback
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -38,6 +41,8 @@ from schemas import (
     AssessmentOverview,
     AssessmentResult,
     AssessSessionResponse,
+    AuthLoginRequest,
+    AuthLoginResponse,
     EnrollmentRequest,
     MysqlAssessmentDetail,
     MysqlAssessmentList,
@@ -53,6 +58,28 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SESSION_ROOT = Path(tempfile.gettempdir()) / "rehab_sessions"
 SESSION_ROOT.mkdir(parents=True, exist_ok=True)
+
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        print(f"[startup][warn] invalid {name}={raw!r}; using {default}")
+        return default
+
+
+MAX_UPLOAD_FILE_BYTES = _env_int("MAX_UPLOAD_FILE_BYTES", 2 * 1024 * 1024 * 1024)
+MAX_TRIALS = _env_int("MAX_TRIALS", 30)
+MAX_ZIP_BYTES = _env_int("MAX_ZIP_BYTES", 4 * 1024 * 1024 * 1024)
+MAX_ZIP_EXTRACTED_BYTES = _env_int("MAX_ZIP_EXTRACTED_BYTES", 10 * 1024 * 1024 * 1024)
+MAX_ZIP_MEMBERS = _env_int("MAX_ZIP_MEMBERS", 2000)
+SESSION_TTL_HOURS = _env_int("SESSION_TTL_HOURS", 168)
+_LAST_SESSION_CLEANUP = 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -123,6 +150,8 @@ SESSIONS: Dict[str, SessionState] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _cleanup_old_sessions(force=True)
+
     db.init_db()
     print(f"[startup] SQLite ready at {db.DB_PATH}")
 
@@ -177,14 +206,84 @@ app.add_middleware(
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
+def _admin_settings() -> tuple[str, str, str]:
+    return (
+        os.environ.get("APP_ADMIN_USER", "rehabdemo").strip(),
+        os.environ.get("APP_ADMIN_PASSWORD", ""),
+        os.environ.get("APP_AUTH_TOKEN", ""),
+    )
+
+
+def _require_admin(authorization: Optional[str] = Header(None)) -> None:
+    _, _, expected_token = _admin_settings()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="后端鉴权未配置：缺少 APP_AUTH_TOKEN")
+
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=401,
+            detail="请先登录后再执行该操作",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not secrets.compare_digest(token, expected_token):
+        raise HTTPException(
+            status_code=403,
+            detail="登录凭证无效或已过期",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _human_bytes(num: int) -> str:
+    value = float(num)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+        value /= 1024
+    return f"{num}B"
+
+
+def _cleanup_old_sessions(force: bool = False) -> None:
+    global _LAST_SESSION_CLEANUP
+    now = time.time()
+    if not force and now - _LAST_SESSION_CLEANUP < 3600:
+        return
+    _LAST_SESSION_CLEANUP = now
+    ttl_seconds = SESSION_TTL_HOURS * 3600
+    for child in SESSION_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            age = now - child.stat().st_mtime
+            if age > ttl_seconds:
+                shutil.rmtree(child, ignore_errors=True)
+        except OSError as exc:
+            print(f"[cleanup][warn] failed to inspect {child}: {exc}")
+
+
 def _save_uploads(files: List[UploadFile], destdir: Path, prefix: str) -> List[Path]:
+    if len(files) > MAX_TRIALS:
+        raise HTTPException(status_code=413, detail=f"单次最多上传 {MAX_TRIALS} 组 trial")
     destdir.mkdir(parents=True, exist_ok=True)
     out: List[Path] = []
     for i, uf in enumerate(files):
         suffix = Path(uf.filename or f"{prefix}_{i}.csv").suffix or ".csv"
         target = destdir / f"{prefix}_{i:02d}{suffix}"
+        written = 0
         with target.open("wb") as fh:
-            shutil.copyfileobj(uf.file, fh)
+            while True:
+                chunk = uf.file.read(UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_FILE_BYTES:
+                    fh.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{uf.filename or target.name} 超过单文件限制 {_human_bytes(MAX_UPLOAD_FILE_BYTES)}",
+                    )
+                fh.write(chunk)
         out.append(target)
     return out
 
@@ -315,7 +414,9 @@ async def create_assessment(
     paralysis_side: str = Form(...),
     eeg_files: List[UploadFile] = File(...),
     emg_files: List[UploadFile] = File(...),
+    _admin: None = Depends(_require_admin),
 ):
+    _cleanup_old_sessions()
     if len(eeg_files) == 0 or len(emg_files) == 0:
         raise HTTPException(status_code=422, detail="必须至少上传一对 EEG / EMG 文件")
     if len(eeg_files) != len(emg_files):
@@ -366,17 +467,44 @@ def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, 
     if not (upload.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=422, detail="请上传 .zip 压缩包")
 
+    _cleanup_old_sessions()
     work = SESSION_ROOT / f"pkg_{uuid.uuid4().hex[:12]}"
     work.mkdir(parents=True, exist_ok=True)
     zip_path = work / "bundle.zip"
     digest = hashlib.sha256()
+    written = 0
     with zip_path.open("wb") as fh:
         while True:
             chunk = upload.file.read(1024 * 1024)
             if not chunk:
                 break
+            written += len(chunk)
+            if written > MAX_ZIP_BYTES:
+                fh.close()
+                shutil.rmtree(work, ignore_errors=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"压缩包超过限制 {_human_bytes(MAX_ZIP_BYTES)}",
+                )
             digest.update(chunk)
             fh.write(chunk)
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            members = [info for info in zf.infolist() if not info.is_dir()]
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=422, detail="压缩包不是有效的 zip 文件") from exc
+
+    total_uncompressed = sum(info.file_size for info in members)
+    if len(members) > MAX_ZIP_MEMBERS:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=413, detail=f"压缩包内文件数超过限制 {MAX_ZIP_MEMBERS}")
+    if total_uncompressed > MAX_ZIP_EXTRACTED_BYTES:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(
+            status_code=413,
+            detail=f"压缩包解压后超过限制 {_human_bytes(MAX_ZIP_EXTRACTED_BYTES)}",
+        )
     try:
         root = safe_extract_zip(zip_path, work / "extracted")
         pkg = read_eval_package(root, institution=institution)
@@ -389,6 +517,7 @@ def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, 
 async def task_interface_parse(
     institution: str = Form(...),
     package: UploadFile = File(...),
+    _admin: None = Depends(_require_admin),
 ):
     """Parse-only preview: unzip + read manifest, return trial count + patient
     prefill + warnings so the UI can pre-fill the form before running.
@@ -433,6 +562,7 @@ async def task_interface_offline(
     diagnosis: str = Form(...),
     disease_days: Optional[int] = Form(None),
     paralysis_side: str = Form(...),
+    _admin: None = Depends(_require_admin),
 ):
     """Offline mode: ingest a zip bundle and start a session reusing the existing
     inference/report/SSE machinery. The client then streams progress from the
@@ -476,7 +606,7 @@ async def task_interface_offline(
 
 
 @app.get("/api/task-interface/online/status")
-async def task_interface_online_status():
+async def task_interface_online_status(_admin: None = Depends(_require_admin)):
     """Online mode placeholder: the wearable device real-time acquisition
     interface is not wired yet. Exposes a configurable device URL (env
     DEVICE_STREAM_URL) and a 'pending integration' status for the UI."""
@@ -561,11 +691,24 @@ async def health():
     return {"status": "ok", "models_loaded": list(app.state.registry.models.keys())}
 
 
+@app.post("/api/auth/login", response_model=AuthLoginResponse)
+async def auth_login(payload: AuthLoginRequest):
+    expected_user, expected_password, token = _admin_settings()
+    if not expected_password or not token:
+        raise HTTPException(status_code=503, detail="后端鉴权未配置")
+    if not (
+        secrets.compare_digest(payload.username, expected_user)
+        and secrets.compare_digest(payload.password, expected_password)
+    ):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return AuthLoginResponse(access_token=token, user=expected_user)
+
+
 # --------------------------------------------------------------------------- #
 # Patient management / records / stats (MySQL-backed business store)           #
 # --------------------------------------------------------------------------- #
 @app.get("/api/patients", response_model=List[PatientSummary])
-async def list_patients():
+async def list_patients(_admin: None = Depends(_require_admin)):
     try:
         return mysql_db.list_patients()
     except mysql_db.MySQLUnavailable as exc:
@@ -573,7 +716,7 @@ async def list_patients():
 
 
 @app.get("/api/patients/{patient_db_id}", response_model=PatientDetail)
-async def get_patient(patient_db_id: int):
+async def get_patient(patient_db_id: int, _admin: None = Depends(_require_admin)):
     try:
         patient = mysql_db.get_patient(patient_db_id)
     except mysql_db.MySQLUnavailable as exc:
@@ -584,7 +727,11 @@ async def get_patient(patient_db_id: int):
 
 
 @app.patch("/api/patients/{patient_db_id}", response_model=PatientDetail)
-async def update_patient(patient_db_id: int, payload: PatientUpdate):
+async def update_patient(
+    patient_db_id: int,
+    payload: PatientUpdate,
+    _admin: None = Depends(_require_admin),
+):
     fields = payload.model_dump(exclude_unset=True)
     try:
         patient = mysql_db.update_patient(patient_db_id, fields)
@@ -596,7 +743,11 @@ async def update_patient(patient_db_id: int, payload: PatientUpdate):
 
 
 @app.get("/api/assessments", response_model=AssessmentOverview)
-async def list_assessments(limit: int = 50, offset: int = 0):
+async def list_assessments(
+    limit: int = 50,
+    offset: int = 0,
+    _admin: None = Depends(_require_admin),
+):
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     try:
@@ -606,7 +757,7 @@ async def list_assessments(limit: int = 50, offset: int = 0):
 
 
 @app.get("/api/stats/summary", response_model=StatsSummary)
-async def stats_summary():
+async def stats_summary(_admin: None = Depends(_require_admin)):
     try:
         return mysql_db.stats_summary()
     except mysql_db.MySQLUnavailable as exc:
@@ -622,7 +773,7 @@ def _mysql_guard(exc: Exception) -> HTTPException:
 
 
 @app.post("/api/mysql/enroll")
-async def mysql_enroll(payload: EnrollmentRequest):
+async def mysql_enroll(payload: EnrollmentRequest, _admin: None = Depends(_require_admin)):
     """医院入组：写入患者基本信息 + 可选的第一次评估记录（手工分数）。"""
     basic = {
         "patient_id": payload.patient_id,
@@ -650,7 +801,7 @@ async def mysql_enroll(payload: EnrollmentRequest):
 
 
 @app.get("/api/mysql/patients")
-async def mysql_list_patients():
+async def mysql_list_patients(_admin: None = Depends(_require_admin)):
     try:
         return mysql_db.list_patients()
     except mysql_db.MySQLUnavailable as exc:
@@ -658,7 +809,7 @@ async def mysql_list_patients():
 
 
 @app.get("/api/mysql/patients/{patient_db_id}")
-async def mysql_get_patient(patient_db_id: int):
+async def mysql_get_patient(patient_db_id: int, _admin: None = Depends(_require_admin)):
     try:
         patient = mysql_db.get_patient(patient_db_id)
     except mysql_db.MySQLUnavailable as exc:
@@ -669,7 +820,11 @@ async def mysql_get_patient(patient_db_id: int):
 
 
 @app.get("/api/mysql/assessments", response_model=MysqlAssessmentList)
-async def mysql_list_assessments(limit: int = 50, offset: int = 0):
+async def mysql_list_assessments(
+    limit: int = 50,
+    offset: int = 0,
+    _admin: None = Depends(_require_admin),
+):
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     try:
@@ -679,7 +834,10 @@ async def mysql_list_assessments(limit: int = 50, offset: int = 0):
 
 
 @app.get("/api/mysql/assessments/{assessment_id}", response_model=MysqlAssessmentDetail)
-async def mysql_get_assessment(assessment_id: int):
+async def mysql_get_assessment(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
     try:
         assessment = mysql_db.get_assessment(assessment_id)
     except mysql_db.MySQLUnavailable as exc:
@@ -690,7 +848,10 @@ async def mysql_get_assessment(assessment_id: int):
 
 
 @app.delete("/api/mysql/assessments/{assessment_id}")
-async def mysql_delete_assessment(assessment_id: int):
+async def mysql_delete_assessment(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
     try:
         deleted = mysql_db.delete_assessment(assessment_id)
     except mysql_db.MySQLUnavailable as exc:
@@ -701,7 +862,7 @@ async def mysql_delete_assessment(assessment_id: int):
 
 
 @app.delete("/api/mysql/assessments")
-async def mysql_clear_assessments():
+async def mysql_clear_assessments(_admin: None = Depends(_require_admin)):
     """清空全部设备评估记录（测试期清理）。"""
     try:
         deleted = mysql_db.delete_all_assessments()
@@ -711,7 +872,10 @@ async def mysql_clear_assessments():
 
 
 @app.delete("/api/mysql/patients/{patient_db_id}")
-async def mysql_delete_patient(patient_db_id: int):
+async def mysql_delete_patient(
+    patient_db_id: int,
+    _admin: None = Depends(_require_admin),
+):
     """删除患者及其全部评估记录（级联，测试期清理）。"""
     try:
         deleted = mysql_db.delete_patient(patient_db_id)

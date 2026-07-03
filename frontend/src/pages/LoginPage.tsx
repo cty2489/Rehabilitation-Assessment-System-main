@@ -1,16 +1,25 @@
 import { useState } from 'react'
 import { useAuth } from '../app/AppContext'
 
-// Frontend-only demo login: any credentials enter the system. The username is
-// shown in the top bar and persisted in localStorage.
 export default function LoginPage() {
   const { login } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    login(username || '医生')
+    setError(null)
+    setLoading(true)
+    try {
+      await login(username, password)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -48,10 +57,12 @@ export default function LoginPage() {
           />
         </div>
 
-        <button className="button login-button" type="submit">
-          登录
+        {error && <div className="error-banner">{error}</div>}
+
+        <button className="button login-button" type="submit" disabled={loading}>
+          {loading ? '登录中...' : '登录'}
         </button>
-        <p className="login-hint">演示环境：输入任意账号即可登录</p>
+        <p className="login-hint">请输入演示账号密码</p>
       </form>
     </div>
   )

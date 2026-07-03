@@ -5,6 +5,7 @@ import ProgressSteps from '../components/ProgressSteps'
 import ResultsPanel from '../components/ResultsPanel'
 import ReportDisplay from '../components/ReportDisplay'
 import { useRoute } from '../app/AppContext'
+import { authHeaders } from '../api'
 import {
   PatientInfo,
   PredictionEntry,
@@ -156,7 +157,11 @@ export default function AssessmentPage() {
     setPhase('processing')
 
     try {
-      const res = await fetch('/api/assess', { method: 'POST', body: form })
+      const res = await fetch('/api/assess', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: form,
+      })
       if (!res.ok) {
         const detail = await res.json().catch(() => ({ detail: res.statusText }))
         throw new Error(detail.detail || `HTTP ${res.status}`)
