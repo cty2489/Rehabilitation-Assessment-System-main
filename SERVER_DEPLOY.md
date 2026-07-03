@@ -29,6 +29,7 @@
 ├── mysql_logs                                 # MySQL 日志
 ├── mysql_run                                  # MySQL socket/pid
 ├── mysql_tmp                                  # MySQL 临时目录
+├── exports                                    # 评估结果 JSON/PDF/ZIP 导出文件
 ├── backend_run.log                            # FastAPI 日志
 ├── gguf_server.log                            # GGUF LLM 日志
 └── start_rehab_system.sh                      # 一键启动脚本
@@ -151,6 +152,7 @@ MAX_ZIP_EXTRACTED_BYTES=10737418240
 MAX_ZIP_MEMBERS=2000
 MAX_TRIALS=30
 SESSION_TTL_HOURS=168
+EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 ```
 
 ## 6. Nginx 配置
@@ -220,7 +222,39 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 4. 确认 `frontend/dist/index.html` 存在，必要时构建
 5. 启动或重载 Nginx `0.0.0.0:6006`
 
-## 8. 访问方式
+## 8. 结果文件导出
+
+评估结果会按需生成到：
+
+```text
+/root/autodl-tmp/rehab_project/exports/assessments/{assessment_id}/
+├── result.json
+├── report.pdf
+├── manifest.json
+└── export.zip
+```
+
+文件用途：
+
+| 文件 | 用途 |
+|---|---|
+| `result.json` | 给设备端/系统端读取的结构化结果 |
+| `report.pdf` | 给医生、患者或设备端留档查看 |
+| `manifest.json` | 文件版本、生成时间、sha256 校验信息 |
+| `export.zip` | 打包结果，适合设备端一次性拉取或人工发送 |
+
+接口：
+
+```text
+GET  /api/mysql/assessments/{id}/export.json
+GET  /api/mysql/assessments/{id}/report.pdf
+GET  /api/mysql/assessments/{id}/export.zip
+POST /api/mysql/assessments/{id}/exports/regenerate
+```
+
+这些接口都需要页面登录后的 Bearer token。设备端自动对接时，推荐优先拉取 `export.zip`。
+
+## 9. 访问方式
 
 服务器内部：
 
@@ -236,7 +270,7 @@ https://<instance-id>.bjb2.seetacloud.com:8443
 
 打开页面后使用 `APP_ADMIN_USER` 和 `APP_ADMIN_PASSWORD` 登录。
 
-## 9. 部署验证
+## 10. 部署验证
 
 ```bash
 # 前端入口
@@ -268,7 +302,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 33060 不监听
 ```
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### 页面一直弹浏览器登录框
 
@@ -304,6 +338,15 @@ mysqlx=0
 1. Nginx `client_max_body_size`
 2. 后端 `.env` 中的 `MAX_ZIP_BYTES`
 3. 服务器磁盘空间 `/root/autodl-tmp`
+
+### PDF 导出失败
+
+确认后端环境安装了 `reportlab`：
+
+```bash
+source /root/autodl-tmp/envs/rehab_backend/bin/activate
+pip install -r /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/requirements.txt
+```
 
 ### GGUF 报告生成失败
 

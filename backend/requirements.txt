@@ -14,6 +14,7 @@ torch>=2.1.0
 python-dotenv>=1.0.1
 httpx>=0.27,<1.0
 pymysql>=1.1.0     # MySQL store for the device-end (task-interface) workflow
+reportlab>=4.2.0   # PDF export for assessment result packages
 
 # ── LOCAL report mode ONLY (i.e. running the LLM in-process on a CUDA GPU box).
 # NOT needed on a CPU-only host using remote mode. To run the model locally,

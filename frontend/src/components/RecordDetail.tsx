@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { downloadAssessmentExport, type AssessmentExportKind } from '../api'
 import { AssessmentRecord } from '../types'
 import { fmtDateTime } from '../util'
 import MarkdownReport from './MarkdownReport'
@@ -94,6 +96,8 @@ function Meta({ label, value, title }: { label: string; value: React.ReactNode; 
 // Renders provenance, 4 indicators, biomarker coverage, and the report for one
 // persisted assessment record in a patient history timeline.
 export default function RecordDetail({ record }: { record: AssessmentRecord }) {
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<AssessmentExportKind | null>(null)
   const coverage = biomarkerCoverage(record.biomarkers)
   const warnings = asStringList(record.parse_warnings)
   const source = record.institution || record.source || '—'
@@ -101,19 +105,47 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
   const trials = record.trials || []
   const biomarkerItems = record.biomarker_items || []
 
+  const download = async (kind: AssessmentExportKind) => {
+    setDownloadError(null)
+    setDownloading(kind)
+    try {
+      await downloadAssessmentExport(record.id, kind)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setDownloadError(msg)
+    } finally {
+      setDownloading(null)
+    }
+  }
+
   return (
     <div className="record-detail">
-      <div className="record-status-line">
-        {reportBadge(record)}
-        {coverage ? (
-          <span className="badge badge-ok">
-            Biomarker {coverage.available}/{coverage.total}
-          </span>
-        ) : (
-          <span className="badge badge-neutral">Biomarker 未记录</span>
-        )}
-        {record.n_trials != null && <span className="badge badge-neutral">{record.n_trials} trials</span>}
+      <div className="record-detail-toolbar">
+        <div className="record-status-line">
+          {reportBadge(record)}
+          {coverage ? (
+            <span className="badge badge-ok">
+              Biomarker {coverage.available}/{coverage.total}
+            </span>
+          ) : (
+            <span className="badge badge-neutral">Biomarker 未记录</span>
+          )}
+          {record.n_trials != null && <span className="badge badge-neutral">{record.n_trials} trials</span>}
+        </div>
+        <div className="record-export-actions" aria-label="导出评估结果">
+          <button className="button secondary" onClick={() => download('json')} disabled={!!downloading}>
+            {downloading === 'json' ? '生成中...' : 'JSON'}
+          </button>
+          <button className="button secondary" onClick={() => download('pdf')} disabled={!!downloading}>
+            {downloading === 'pdf' ? '生成中...' : 'PDF'}
+          </button>
+          <button className="button secondary" onClick={() => download('zip')} disabled={!!downloading}>
+            {downloading === 'zip' ? '生成中...' : 'ZIP'}
+          </button>
+        </div>
       </div>
+
+      {downloadError && <div className="error-banner">导出失败：{downloadError}</div>}
 
       <div className="record-meta-grid">
         <Meta label="数据来源" value={source} />

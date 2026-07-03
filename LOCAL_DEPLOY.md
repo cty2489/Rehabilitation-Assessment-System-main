@@ -127,6 +127,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\check-local.ps1
 - 登录后 `/api/stats/summary`
 - 前端页面
 
+结果导出文件默认写入项目根目录下的 `exports/`。如需改位置，在 `backend\.env` 中设置：
+
+```env
+EXPORT_ROOT=D:\rehab_exports
+```
+
 ## 7. 停止
 
 ```powershell

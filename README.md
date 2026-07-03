@@ -22,6 +22,7 @@
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
 - 页面内登录保护，后端使用 Bearer token 保护读写接口
+- 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，用于设备端对接和留档
 
 ## 当前服务端口
 
@@ -111,6 +112,7 @@ MYSQL_PORT=3306
 MYSQL_USER=rehab_user
 MYSQL_PASSWORD=change-this-mysql-password
 MYSQL_DB=rehab_mysql
+EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 ```
 
 不要提交真实的 `backend/.env`、数据库密码、API key、模型权重和患者数据。
@@ -126,6 +128,11 @@ curl http://127.0.0.1:8000/api/health
 
 # 未登录访问业务数据应返回 401 Bearer
 curl -i http://127.0.0.1:8000/api/stats/summary
+
+# 登录后可下载评估结果文件
+# GET /api/mysql/assessments/{id}/export.json
+# GET /api/mysql/assessments/{id}/report.pdf
+# GET /api/mysql/assessments/{id}/export.zip
 
 # 端口检查：生产不应出现 5173 和 33060
 ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true

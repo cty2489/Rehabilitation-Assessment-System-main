@@ -89,6 +89,39 @@ export function fetchHealth(): Promise<{ status: string; models_loaded: string[]
   return getJSON('/api/health')
 }
 
+export type AssessmentExportKind = 'json' | 'pdf' | 'zip'
+
+function filenameFromDisposition(disposition: string | null, fallback: string): string {
+  if (!disposition) return fallback
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match) return decodeURIComponent(utf8Match[1])
+  const asciiMatch = disposition.match(/filename=\"?([^\";]+)\"?/i)
+  return asciiMatch ? asciiMatch[1] : fallback
+}
+
+export async function downloadAssessmentExport(
+  id: number,
+  kind: AssessmentExportKind,
+): Promise<void> {
+  const suffix = kind === 'json' ? 'export.json' : kind === 'pdf' ? 'report.pdf' : 'export.zip'
+  const fallback = `rehab_assessment_${id}.${kind}`
+  const res = await fetch(`/api/mysql/assessments/${id}/${suffix}`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filenameFromDisposition(res.headers.get('Content-Disposition'), fallback)
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // 任务一与任务三对接接口 ---------------------------------------------------- //
 export type Institution = 'hospital' | 'device'
 

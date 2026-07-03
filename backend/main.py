@@ -30,10 +30,11 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 import db
 import mysql_db
+from assessment_export import ensure_assessment_export, export_filename, file_info
 from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
 from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
 from report import REPORT_MODEL, llm_provider, remote_url, stream_report
@@ -772,6 +773,26 @@ def _mysql_guard(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail=f"MySQL 不可用：{exc}")
 
 
+def _mysql_assessment_or_404(assessment_id: int) -> Dict[str, Any]:
+    try:
+        assessment = mysql_db.get_assessment(assessment_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    return assessment
+
+
+def _assessment_export_bundle(assessment_id: int, force: bool = False):
+    assessment = _mysql_assessment_or_404(assessment_id)
+    try:
+        return assessment, ensure_assessment_export(assessment, force=force)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"生成导出文件失败：{exc}") from exc
+
+
 @app.post("/api/mysql/enroll")
 async def mysql_enroll(payload: EnrollmentRequest, _admin: None = Depends(_require_admin)):
     """医院入组：写入患者基本信息 + 可选的第一次评估记录（手工分数）。"""
@@ -838,13 +859,58 @@ async def mysql_get_assessment(
     assessment_id: int,
     _admin: None = Depends(_require_admin),
 ):
-    try:
-        assessment = mysql_db.get_assessment(assessment_id)
-    except mysql_db.MySQLUnavailable as exc:
-        raise _mysql_guard(exc) from exc
-    if assessment is None:
-        raise HTTPException(status_code=404, detail="Assessment not found")
-    return assessment
+    return _mysql_assessment_or_404(assessment_id)
+
+
+@app.post("/api/mysql/assessments/{assessment_id}/exports/regenerate")
+async def mysql_regenerate_assessment_export(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    _assessment, bundle = _assessment_export_bundle(assessment_id, force=True)
+    return {
+        "manifest": bundle.manifest,
+        "zip": file_info("export.zip", bundle.export_zip),
+    }
+
+
+@app.get("/api/mysql/assessments/{assessment_id}/export.json")
+async def mysql_download_assessment_json(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.result_json,
+        media_type="application/json",
+        filename=export_filename(assessment, "json"),
+    )
+
+
+@app.get("/api/mysql/assessments/{assessment_id}/report.pdf")
+async def mysql_download_assessment_pdf(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.report_pdf,
+        media_type="application/pdf",
+        filename=export_filename(assessment, "pdf"),
+    )
+
+
+@app.get("/api/mysql/assessments/{assessment_id}/export.zip")
+async def mysql_download_assessment_zip(
+    assessment_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.export_zip,
+        media_type="application/zip",
+        filename=export_filename(assessment, "zip"),
+    )
 
 
 @app.delete("/api/mysql/assessments/{assessment_id}")

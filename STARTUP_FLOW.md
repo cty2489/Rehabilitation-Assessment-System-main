@@ -79,9 +79,26 @@ APP_ADMIN_PASSWORD
 10. 查看 FMA-UE / BI / 手部肌张力 / Brunnstrom 结果
 11. 查看 biomarker 表格和临床解读
 12. 在记录详情中查看 trial、biomarker、报告和 prediction JSON
+13. 下载 JSON / PDF / ZIP 结果文件，演示设备端交付格式
 ```
 
-## 5. 本地开发启动
+## 5. 结果文件
+
+页面详情中的 `JSON`、`PDF`、`ZIP` 按钮会调用后端导出接口，并在服务器保存文件：
+
+```text
+/root/autodl-tmp/rehab_project/exports/assessments/{assessment_id}/
+```
+
+设备端推荐使用 `export.zip`，其中包含：
+
+```text
+result.json
+report.pdf
+manifest.json
+```
+
+## 6. 本地开发启动
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-gguf-llm.ps1
@@ -95,14 +112,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\check-local.ps1
 http://localhost:5173
 ```
 
-## 6. 停止本地开发服务
+## 7. 停止本地开发服务
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-gguf-llm.ps1
 ```
 
-## 7. 常见问题
+## 8. 常见问题
 
 ### 仍然弹浏览器登录框
 

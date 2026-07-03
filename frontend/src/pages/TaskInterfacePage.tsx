@@ -7,7 +7,9 @@ import { useRoute } from '../app/AppContext'
 import {
   EvalPackageParse,
   Institution,
+  type AssessmentExportKind,
   deleteMysqlAssessment,
+  downloadAssessmentExport,
   enrollPatient,
   fetchMysqlAssessment,
   fetchMysqlAssessments,
@@ -542,6 +544,7 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [selected, setSelected] = useState<MysqlAssessmentDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<AssessmentExportKind | null>(null)
 
   const refresh = async () => {
     setLoading(true)
@@ -585,6 +588,18 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
       refresh()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const onDownload = async (id: number, kind: AssessmentExportKind) => {
+    setDownloading(kind)
+    setErr(null)
+    try {
+      await downloadAssessmentExport(id, kind)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -680,7 +695,20 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
       {detailLoading && <p style={{ color: '#6b7280', fontSize: 13 }}>Loading detail...</p>}
       {selected && (
         <div className="report-display" style={{ marginTop: 12 }}>
-          <h3 style={{ marginTop: 0 }}>MySQL structured detail #{selected.id}</h3>
+          <div className="record-detail-toolbar">
+            <h3 style={{ marginTop: 0 }}>MySQL structured detail #{selected.id}</h3>
+            <div className="record-export-actions" aria-label="导出评估结果">
+              <button className="button secondary" onClick={() => onDownload(selected.id, 'json')} disabled={!!downloading}>
+                {downloading === 'json' ? '生成中...' : 'JSON'}
+              </button>
+              <button className="button secondary" onClick={() => onDownload(selected.id, 'pdf')} disabled={!!downloading}>
+                {downloading === 'pdf' ? '生成中...' : 'PDF'}
+              </button>
+              <button className="button secondary" onClick={() => onDownload(selected.id, 'zip')} disabled={!!downloading}>
+                {downloading === 'zip' ? '生成中...' : 'ZIP'}
+              </button>
+            </div>
+          </div>
           <div className="grid-2">
             <p>
               Patient: <strong>{selected.name || selected.patient_id}</strong>

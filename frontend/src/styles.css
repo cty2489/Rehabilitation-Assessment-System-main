@@ -1281,11 +1281,29 @@ body::before {
 .record-summary { color: var(--ink-500); font-size: 13px; flex: 1; }
 .record-caret { color: var(--ink-300); }
 .record-detail { padding: 16px; }
+.record-detail-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
 .record-status-line {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
+}
+.record-export-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.record-export-actions .button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
 }
 .record-meta-grid {
   display: grid;

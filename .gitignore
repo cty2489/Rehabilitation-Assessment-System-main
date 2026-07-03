@@ -25,6 +25,7 @@ npm-debug.log*
 
 # ---- Caches ----
 .cache/
+exports/
 .pytest_cache/
 .mypy_cache/
 .DS_Store
