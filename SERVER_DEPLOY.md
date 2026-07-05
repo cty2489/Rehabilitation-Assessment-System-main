@@ -35,6 +35,27 @@
 └── start_rehab_system.sh                      # 一键启动脚本
 ```
 
+### 2.1 从 GitHub 获取源码
+
+首次部署建议从 GitHub 拉取当前稳定基线：
+
+```bash
+mkdir -p /root/autodl-tmp/rehab_project
+cd /root/autodl-tmp/rehab_project
+git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
+cd Rehabilitation-Assessment-System-main
+git checkout cloud-server-v1.0.0
+```
+
+如果是继续开发或验证最新代码，也可以使用 `main` 分支：
+
+```bash
+git checkout main
+git pull
+```
+
+仓库不包含真实密钥、患者数据、MySQL 数据目录、GGUF 大模型文件和康复评分 `.pth` 权重。这些文件需要按本机实际路径单独准备。
+
 ## 3. 系统依赖
 
 建议准备三个隔离环境：
