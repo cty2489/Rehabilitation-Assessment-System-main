@@ -260,10 +260,14 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 
 | 文件 | 用途 |
 |---|---|
-| `result.json` | 给设备端/系统端读取的结构化结果 |
-| `report.pdf` | 给医生、患者或设备端留档查看 |
+| `result.json` | 给设备端/系统端读取的 v2 精简结构化结果 |
+| `report.pdf` | 给医生、患者或设备端留档查看，内容与 v2 结构一致且不重复粘贴整篇 Markdown |
 | `manifest.json` | 文件版本、生成时间、sha256 校验信息 |
 | `export.zip` | 打包结果，适合设备端一次性拉取或人工发送 |
+
+`result.json` 的 `schema_version` 为 `rehab.assessment_result.v2`。正式交付文件不再包含
+`report.content`、`biomarkers_raw`、`prediction_json` 或 trial 全量调试字段；数据不足的
+biomarker 只进入 `biomarker_coverage.missing_keys`，不生成临床解读。
 
 接口：
 

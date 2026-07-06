@@ -41,7 +41,7 @@ cloud-server-v1.0.0
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
 - 页面内登录保护，后端使用 Bearer token 保护读写接口
-- 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，用于设备端对接和留档
+- 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，其中 JSON/PDF 采用去重后的设备端交付结构
 
 ## 当前服务端口
 

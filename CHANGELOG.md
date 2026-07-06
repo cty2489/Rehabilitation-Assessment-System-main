@@ -1,5 +1,13 @@
 # Changelog
 
+## device-api-v0.3 - 2026-07-06
+
+### 改进
+
+- `result.json` 升级为 `rehab.assessment_result.v2`，改为设备端友好的精简结构。
+- `report.pdf` 改为直接从 v2 结构渲染，不再先列 biomarker 简表再粘贴完整 Markdown 报告。
+- 数据不足或当前采集格式暂不支持的 biomarker 只进入 coverage/missing_keys，不生成临床解读。
+
 ## cloud-server-v1.0.0 - 2026-07-05
 
 当前云服务器可运行基线版本。后续模型优化、设备采集接入和论文实验建议以此为基础继续开发。

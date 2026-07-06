@@ -310,6 +310,28 @@ result.json
 report.pdf
 ```
 
+`result.json` 使用 `rehab.assessment_result.v2`。该版本是设备端友好的精简结构，
+不会再重复保存整篇 Markdown 报告、原始 `biomarkers_raw`、`prediction_json`
+或 trial 明细。设备端通常只需要读取以下字段：
+
+```text
+schema_version
+report_metadata
+patient_basic_info
+stage_assessment
+clinical_scores
+biomarker_coverage
+biomarker_sections
+subtype_classification_and_treatment_strategy
+next_week_training_plan
+warnings_and_recommendations
+natural_language_summary
+```
+
+其中 `biomarker_sections[].indicators[]` 已把每个可计算指标的当前值、参考范围、
+解读和治疗建议放在同一个对象中；数据不足或当前采集格式暂不支持的指标不会生成
+临床解读，只会进入 `biomarker_coverage.missing_keys`。
+
 也可分别下载：
 
 ```bash
