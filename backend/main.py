@@ -93,7 +93,8 @@ class SessionState:
                  assessment_id: Optional[str] = None, assessment_time: Optional[str] = None,
                  n_trials: Optional[int] = None, package_hash: Optional[str] = None,
                  parse_warnings: Optional[List[str]] = None,
-                 trial_details: Optional[List[Dict[str, Any]]] = None):
+                 trial_details: Optional[List[Dict[str, Any]]] = None,
+                 device_job_id: Optional[str] = None):
         self.session_id = session_id
         self.patient = patient
         self.eeg_paths = eeg_paths
@@ -109,6 +110,8 @@ class SessionState:
         self.package_hash = package_hash
         self.parse_warnings = parse_warnings or []
         self.trial_details = trial_details or _trial_details_from_paths(eeg_paths, emg_paths)
+        self.device_job_id = device_job_id
+        self.assessment_db_id: Optional[int] = None
         self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self.result: Optional[AssessmentResult] = None
         self.started: bool = False
@@ -235,6 +238,34 @@ def _require_admin(authorization: Optional[str] = Header(None)) -> None:
         )
 
 
+def _require_device(
+    authorization: Optional[str] = Header(None),
+    x_device_token: Optional[str] = Header(None, alias="X-Device-Token"),
+) -> None:
+    expected_token = os.environ.get("DEVICE_API_TOKEN", "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="设备端鉴权未配置：缺少 DEVICE_API_TOKEN")
+
+    token = (x_device_token or "").strip()
+    if not token:
+        scheme, _, bearer = (authorization or "").partition(" ")
+        if scheme.lower() == "bearer":
+            token = bearer.strip()
+
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="缺少设备端 Bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not secrets.compare_digest(token, expected_token):
+        raise HTTPException(
+            status_code=403,
+            detail="设备端凭证无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def _human_bytes(num: int) -> str:
     value = float(num)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -292,6 +323,16 @@ def _save_uploads(files: List[UploadFile], destdir: Path, prefix: str) -> List[P
 def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
     """Run the full pipeline + report generation on a worker thread."""
     try:
+        if state.device_job_id:
+            try:
+                mysql_db.update_device_job(
+                    state.device_job_id,
+                    status="running",
+                    mark_started=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[device_job][warn] failed to mark running: {exc}")
+
         predictions_raw = run_pipeline(
             state.eeg_paths, state.emg_paths, registry, state.queue,
             affected_side=state.patient.paralysis_side,
@@ -378,6 +419,7 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                     llm_provider=llm_provider(),
                     llm_model=_llm_model_name(),
                 )
+                state.assessment_db_id = int(assessment_db_id)
                 mysql_db.replace_assessment_trials(assessment_db_id, state.trial_details)
                 mysql_db.replace_assessment_biomarkers(assessment_db_id, biomarkers)
             else:
@@ -393,12 +435,52 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[persist][warn] failed to save assessment {state.session_id}: {exc}")
 
+        if state.device_job_id:
+            try:
+                if state.assessment_db_id is not None:
+                    mysql_db.update_device_job(
+                        state.device_job_id,
+                        status="completed",
+                        assessment_db_id=state.assessment_db_id,
+                        mark_completed=True,
+                    )
+                else:
+                    mysql_db.update_device_job(
+                        state.device_job_id,
+                        status="failed",
+                        error_message="评估已结束，但未写入 MySQL 评估记录，无法生成设备端导出文件。",
+                        mark_completed=True,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[device_job][warn] failed to mark completed: {exc}")
+
         state.queue.put({"type": "done"})
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
+        if state.device_job_id:
+            try:
+                mysql_db.update_device_job(
+                    state.device_job_id,
+                    status="failed",
+                    error_message=str(exc),
+                    mark_completed=True,
+                )
+            except Exception as job_exc:  # noqa: BLE001
+                print(f"[device_job][warn] failed to mark failed: {job_exc}")
         state.queue.put(error_event(f"会话 {state.session_id} 失败：{exc}"))
     finally:
         state.queue.put(SENTINEL)
+
+
+def _start_session_worker(state: SessionState) -> None:
+    registry: ModelRegistry = app.state.registry
+    report_model = app.state.report_model
+    with state.lock:
+        if not state.started:
+            state.started = True
+            threading.Thread(
+                target=_worker, args=(state, registry, report_model), daemon=True
+            ).start()
 
 
 # --------------------------------------------------------------------------- #
@@ -619,22 +701,229 @@ async def task_interface_online_status(_admin: None = Depends(_require_admin)):
     }
 
 
+# --------------------------------------------------------------------------- #
+# Device-to-cloud HTTPS API                                                   #
+# --------------------------------------------------------------------------- #
+def _nonblank(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _valid_sex(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in {"男", "女"} else "男"
+
+
+def _valid_side(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in {"左", "右"} else "左"
+
+
+def _device_job_files(job_id: str) -> Dict[str, str]:
+    base = f"/api/device/v1/jobs/{job_id}"
+    return {
+        "json": f"{base}/result.json",
+        "pdf": f"{base}/report.pdf",
+        "zip": f"{base}/export.zip",
+    }
+
+
+def _format_device_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {
+        "job_id": job.get("job_id"),
+        "device_id": job.get("device_id"),
+        "session_id": job.get("session_id"),
+        "assessment_db_id": job.get("assessment_db_id"),
+        "assessment_id": job.get("assessment_id"),
+        "patient_id": job.get("patient_id"),
+        "package_name": job.get("package_name"),
+        "package_hash": job.get("package_hash"),
+        "status": job.get("status"),
+        "error_message": job.get("error_message"),
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "completed_at": job.get("completed_at"),
+        "delivered_at": job.get("delivered_at"),
+        "updated_at": job.get("updated_at"),
+    }
+    if job.get("status") in {"completed", "delivered"} and job.get("assessment_db_id"):
+        payload["files"] = _device_job_files(str(job["job_id"]))
+    return payload
+
+
+def _device_job_or_404(job_id: str) -> Dict[str, Any]:
+    try:
+        job = mysql_db.get_device_job(job_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="设备任务不存在")
+    return job
+
+
+def _completed_device_assessment_id(job: Dict[str, Any]) -> int:
+    if job.get("status") not in {"completed", "delivered"}:
+        raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态：{job.get('status')}")
+    assessment_db_id = job.get("assessment_db_id")
+    if not assessment_db_id:
+        raise HTTPException(status_code=409, detail="任务已结束但未生成评估记录")
+    return int(assessment_db_id)
+
+
+@app.post("/api/device/v1/assessments")
+async def device_create_assessment(
+    package: UploadFile = File(...),
+    institution: str = Form("device"),
+    device_id: Optional[str] = Form(None),
+    patient_id: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    sex: Optional[str] = Form(None),
+    age: Optional[int] = Form(None),
+    diagnosis: Optional[str] = Form(None),
+    disease_days: Optional[int] = Form(None),
+    paralysis_side: Optional[str] = Form(None),
+    _device: None = Depends(_require_device),
+):
+    """Device-side machine API: upload one active-assessment zip and start a
+    background analysis job. The device polls ``/jobs/{job_id}`` and downloads
+    the generated export files when the job reaches ``completed``."""
+    institution = (institution or "device").strip().lower()
+    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
+    if pkg.n_trials == 0:
+        detail = "数据包中没有可用的 active trial。" + ("；".join(pkg.warnings) if pkg.warnings else "")
+        raise HTTPException(status_code=422, detail=detail)
+
+    prefill = dict(pkg.patient_prefill)
+    business_pid = _nonblank(patient_id, prefill.get("patient_id"))
+    if not business_pid:
+        raise HTTPException(status_code=422, detail="缺少 patient_id，表单或 manifest.json 至少提供一个")
+
+    enrolled: Dict[str, Any] = {}
+    try:
+        enrolled = mysql_db.get_patient_by_business_id(business_pid) or {}
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+
+    try:
+        patient = PatientInfo(
+            patient_id=business_pid,
+            name=_nonblank(name, enrolled.get("name"), prefill.get("name"), business_pid),
+            sex=_valid_sex(_nonblank(sex, enrolled.get("sex"), prefill.get("sex"))),
+            age=age if age is not None else enrolled.get("age") or prefill.get("age"),
+            diagnosis=_nonblank(diagnosis, enrolled.get("diagnosis"), prefill.get("diagnosis"), "未填写"),
+            disease_days=(
+                disease_days
+                if disease_days is not None
+                else enrolled.get("disease_days") or prefill.get("disease_days")
+            ),
+            paralysis_side=_valid_side(_nonblank(paralysis_side, enrolled.get("paralysis_side"), prefill.get("paralysis_side"))),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"患者信息无效：{exc}") from exc
+
+    session_id = uuid.uuid4().hex[:12]
+    job_id = f"devjob_{uuid.uuid4().hex[:16]}"
+    state = SessionState(
+        session_id, patient, pkg.eeg_paths, pkg.emg_paths,
+        institution=pkg.institution,
+        persist_target="mysql",
+        package_name=package.filename,
+        assessment_id=pkg.manifest_summary.get("assessment_id"),
+        assessment_time=pkg.manifest_summary.get("assessment_time"),
+        n_trials=pkg.n_trials,
+        package_hash=package_hash,
+        parse_warnings=pkg.warnings,
+        trial_details=pkg.trial_details,
+        device_job_id=job_id,
+    )
+    SESSIONS[session_id] = state
+
+    try:
+        job = mysql_db.create_device_job(
+            job_id=job_id,
+            device_id=(device_id or pkg.manifest_summary.get("device_id") or "").strip() or None,
+            session_id=session_id,
+            assessment_id=pkg.manifest_summary.get("assessment_id"),
+            patient_id=patient.patient_id,
+            package_name=package.filename,
+            package_hash=package_hash,
+        )
+    except mysql_db.MySQLUnavailable as exc:
+        SESSIONS.pop(session_id, None)
+        raise _mysql_guard(exc) from exc
+
+    _start_session_worker(state)
+    response = _format_device_job(job)
+    response["status_url"] = f"/api/device/v1/jobs/{job_id}"
+    response["n_trials"] = pkg.n_trials
+    response["parse_warnings"] = pkg.warnings
+    return response
+
+
+@app.get("/api/device/v1/jobs/{job_id}")
+async def device_get_job(job_id: str, _device: None = Depends(_require_device)):
+    return _format_device_job(_device_job_or_404(job_id))
+
+
+@app.get("/api/device/v1/jobs/{job_id}/result.json")
+async def device_download_result_json(job_id: str, _device: None = Depends(_require_device)):
+    job = _device_job_or_404(job_id)
+    assessment_id = _completed_device_assessment_id(job)
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.result_json,
+        media_type="application/json",
+        filename=export_filename(assessment, "json"),
+    )
+
+
+@app.get("/api/device/v1/jobs/{job_id}/report.pdf")
+async def device_download_report_pdf(job_id: str, _device: None = Depends(_require_device)):
+    job = _device_job_or_404(job_id)
+    assessment_id = _completed_device_assessment_id(job)
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.report_pdf,
+        media_type="application/pdf",
+        filename=export_filename(assessment, "pdf"),
+    )
+
+
+@app.get("/api/device/v1/jobs/{job_id}/export.zip")
+async def device_download_export_zip(job_id: str, _device: None = Depends(_require_device)):
+    job = _device_job_or_404(job_id)
+    assessment_id = _completed_device_assessment_id(job)
+    assessment, bundle = _assessment_export_bundle(assessment_id)
+    return FileResponse(
+        bundle.export_zip,
+        media_type="application/zip",
+        filename=export_filename(assessment, "zip"),
+    )
+
+
+@app.post("/api/device/v1/jobs/{job_id}/ack")
+async def device_ack_job(job_id: str, _device: None = Depends(_require_device)):
+    _completed_device_assessment_id(_device_job_or_404(job_id))
+    try:
+        job = mysql_db.update_device_job(job_id, status="delivered", mark_delivered=True)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="设备任务不存在")
+    return _format_device_job(job)
+
+
 @app.get("/api/assess/{session_id}/stream")
 async def stream_assessment(session_id: str):
     state = SESSIONS.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="session 不存在或已过期")
 
-    registry: ModelRegistry = app.state.registry
-    report_model = app.state.report_model
-
     # Kick off worker only once per session.
-    with state.lock:
-        if not state.started:
-            state.started = True
-            threading.Thread(
-                target=_worker, args=(state, registry, report_model), daemon=True
-            ).start()
+    _start_session_worker(state)
 
     async def event_generator():
         loop = asyncio.get_event_loop()

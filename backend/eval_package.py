@@ -135,6 +135,7 @@ def _patient_prefill(manifest: Dict[str, Any]) -> Dict[str, Any]:
 def _manifest_summary(manifest: Dict[str, Any]) -> Dict[str, Any]:
     dd = manifest.get("data_description", {}) or {}
     return {
+        "device_id": manifest.get("device_id"),
         "assessment_id": manifest.get("assessment_id"),
         "assessment_time": manifest.get("assessment_time"),
         "assessment_types": dd.get("assessment_types"),

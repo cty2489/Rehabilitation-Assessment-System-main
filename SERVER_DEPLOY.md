@@ -143,6 +143,7 @@ cp backend/.env.example backend/.env
 APP_ADMIN_USER=your_admin_user
 APP_ADMIN_PASSWORD=change-this-password
 APP_AUTH_TOKEN=generate-a-long-random-token
+DEVICE_API_TOKEN=generate-a-different-long-random-token
 
 LLM_PROVIDER=remote
 LLM_REMOTE_URL=http://127.0.0.1:6007
@@ -275,7 +276,26 @@ POST /api/mysql/assessments/{id}/exports/regenerate
 
 这些接口都需要页面登录后的 Bearer token。设备端自动对接时，推荐优先拉取 `export.zip`。
 
-## 9. 访问方式
+## 9. 设备端 HTTPS 对接
+
+训练设备端不要使用页面管理员账号。云端为设备端提供独立 token：
+
+```env
+DEVICE_API_TOKEN=generate-a-different-long-random-token
+```
+
+第一版设备端流程：
+
+```text
+POST /api/device/v1/assessments          上传 active 评估 zip 并获取 job_id
+GET  /api/device/v1/jobs/{job_id}        查询 queued/running/completed/failed
+GET  /api/device/v1/jobs/{job_id}/export.zip
+POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
+```
+
+详细协议见 `docs/DEVICE_API.md`。
+
+## 10. 访问方式
 
 服务器内部：
 
@@ -291,7 +311,7 @@ https://<instance-id>.bjb2.seetacloud.com:8443
 
 打开页面后使用 `APP_ADMIN_USER` 和 `APP_ADMIN_PASSWORD` 登录。
 
-## 10. 部署验证
+## 11. 部署验证
 
 ```bash
 # 前端入口
@@ -323,7 +343,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 33060 不监听
 ```
 
-## 11. 常见问题
+## 12. 常见问题
 
 ### 页面一直弹浏览器登录框
 

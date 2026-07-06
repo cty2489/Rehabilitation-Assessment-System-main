@@ -49,8 +49,5 @@ DL_model/*.pth
 *.sqlite
 *.sqlite3
 
-# ---- Docs (not published to GitHub) ----
-docs/
-
 # ---- Device gateway (not published to GitHub) ----
 device_gateway/

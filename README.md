@@ -150,6 +150,7 @@ curl http://127.0.0.1:8000/api/health
 | `SERVER_DEPLOY.md` | 云服务器/AutoDL/SeetaCloud 从零部署和生产运维 |
 | `LOCAL_DEPLOY.md` | Windows 本地开发部署 |
 | `STARTUP_FLOW.md` | 已部署环境的启动、验证和演示流程 |
+| `docs/DEVICE_API.md` | 训练设备端 HTTPS 上传、轮询、下载、ACK 接口 |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
 | `start_rehab_system.sh` | 云服务器生产启动脚本模板 |

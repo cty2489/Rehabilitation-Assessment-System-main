@@ -321,6 +321,32 @@ CREATE TABLE IF NOT EXISTS assessment_biomarkers (
 ) CHARACTER SET utf8mb4
 """
 
+_CREATE_DEVICE_JOBS = """
+CREATE TABLE IF NOT EXISTS device_jobs (
+  job_id            VARCHAR(64) PRIMARY KEY,
+  device_id         VARCHAR(128),
+  session_id        VARCHAR(32),
+  assessment_db_id  BIGINT,
+  assessment_id     VARCHAR(64),
+  patient_id        VARCHAR(64),
+  package_name      VARCHAR(255),
+  package_hash      VARCHAR(64),
+  status            VARCHAR(32) NOT NULL,
+  error_message     TEXT,
+  created_at        DATETIME NOT NULL,
+  started_at        DATETIME,
+  completed_at      DATETIME,
+  delivered_at      DATETIME,
+  updated_at        DATETIME NOT NULL,
+  CONSTRAINT fk_device_job_assessment FOREIGN KEY (assessment_db_id)
+    REFERENCES assessments(id) ON DELETE SET NULL,
+  INDEX idx_device_job_session (session_id),
+  INDEX idx_device_job_assessment (assessment_db_id),
+  INDEX idx_device_job_patient (patient_id),
+  INDEX idx_device_job_status (status)
+) CHARACTER SET utf8mb4
+"""
+
 
 def _ensure_patient_schema(cur) -> None:
     cur.execute("SHOW COLUMNS FROM patients")
@@ -467,6 +493,7 @@ def init_db() -> None:
                 cur.execute(_CREATE_ASSESSMENTS)
                 cur.execute(_CREATE_ASSESSMENT_TRIALS)
                 cur.execute(_CREATE_ASSESSMENT_BIOMARKERS)
+                cur.execute(_CREATE_DEVICE_JOBS)
                 _ensure_patient_schema(cur)
                 _ensure_assessment_schema(cur)
                 _backfill_assessment_children(cur)
@@ -591,6 +618,100 @@ def update_patient(patient_db_id: int, fields: Dict[str, Any]) -> Optional[Dict[
     finally:
         conn.close()
     return get_patient(patient_db_id)
+
+
+# --------------------------------------------------------------------------- #
+# Device API jobs                                                              #
+# --------------------------------------------------------------------------- #
+def create_device_job(
+    *,
+    job_id: str,
+    device_id: Optional[str],
+    session_id: str,
+    assessment_id: Optional[str],
+    patient_id: str,
+    package_name: Optional[str],
+    package_hash: Optional[str],
+    status: str = "queued",
+) -> Dict[str, Any]:
+    """Create one device upload/analysis job."""
+    ts = now_dt()
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO device_jobs
+                  (job_id, device_id, session_id, assessment_id, patient_id,
+                   package_name, package_hash, status, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    job_id,
+                    device_id,
+                    session_id,
+                    assessment_id,
+                    patient_id,
+                    package_name,
+                    package_hash,
+                    status,
+                    ts,
+                    ts,
+                ),
+            )
+    finally:
+        conn.close()
+    job = get_device_job(job_id)
+    if job is None:
+        raise MySQLUnavailable(f"设备任务创建后无法读取：{job_id}")
+    return job
+
+
+def update_device_job(
+    job_id: str,
+    *,
+    status: Optional[str] = None,
+    assessment_db_id: Optional[int] = None,
+    error_message: Optional[str] = None,
+    mark_started: bool = False,
+    mark_completed: bool = False,
+    mark_delivered: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Update one device job and return the normalized row."""
+    now = now_dt()
+    fields: Dict[str, Any] = {"updated_at": now}
+    if status is not None:
+        fields["status"] = status
+    if assessment_db_id is not None:
+        fields["assessment_db_id"] = assessment_db_id
+    if error_message is not None:
+        fields["error_message"] = error_message
+    if mark_started:
+        fields["started_at"] = now
+    if mark_completed:
+        fields["completed_at"] = now
+    if mark_delivered:
+        fields["delivered_at"] = now
+
+    cols = ", ".join(f"{k}=%s" for k in fields)
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE device_jobs SET {cols} WHERE job_id=%s", (*fields.values(), job_id))
+    finally:
+        conn.close()
+    return get_device_job(job_id)
+
+
+def get_device_job(job_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM device_jobs WHERE job_id=%s", (job_id,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm(row)
 
 
 def list_patients() -> List[Dict[str, Any]]:
