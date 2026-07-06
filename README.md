@@ -209,6 +209,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 ```text
 GET   /api/settings/llm
 PATCH /api/settings/llm
+PATCH /api/settings/llm/models/{model_id}
 ```
 
 保存后的运行配置默认写入：
@@ -217,7 +218,7 @@ PATCH /api/settings/llm
 backend/config/llm_settings.json
 ```
 
-该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。
+该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。模型表格中的本地权重路径或远程服务地址可以在页面直接保存，权重路径不存在的本地模型不会被允许设为当前报告模型。
 
 默认候选模型包括：
 

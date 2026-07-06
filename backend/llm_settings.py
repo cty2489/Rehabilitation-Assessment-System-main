@@ -34,12 +34,21 @@ def _default_remote_url() -> str:
     return os.environ.get("LLM_REMOTE_URL", "http://127.0.0.1:6007").strip().rstrip("/")
 
 
-def _default_model_path(filename: str) -> str:
+def _first_existing_path(paths: List[str]) -> str:
+    for item in paths:
+        if item and Path(item).exists():
+            return item
+    return paths[0] if paths else ""
+
+
+def _default_model_path(filename: str, extra_candidates: Optional[List[str]] = None) -> str:
     root = os.environ.get(
         "LLM_MODEL_ROOT",
         "/root/autodl-tmp/rehab_project/models",
     ).rstrip("/")
-    return f"{root}/{filename}"
+    candidates = [f"{root}/{filename}"]
+    candidates.extend(extra_candidates or [])
+    return _first_existing_path(candidates)
 
 
 def _default_models() -> List[Dict[str, Any]]:
@@ -66,7 +75,10 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国产",
             "provider": "local",
             "model_id": "qwen3_8b",
-            "weight_path": _default_model_path("Qwen3-8B"),
+            "weight_path": _default_model_path(
+                "Qwen3-8B",
+                extra_candidates=["/root/autodl-tmp/Qwen_data/Qwen3-8B"],
+            ),
             "enabled": True,
             "description": "用户已准备的 HF 格式候选模型，可作为中文基线。",
         },
@@ -205,10 +217,36 @@ def active_model() -> Dict[str, Any]:
 
 def update_active_model(model_id: str) -> Dict[str, Any]:
     settings = read_settings()
-    if get_model(settings, model_id) is None:
+    model = get_model(settings, model_id)
+    if model is None:
         valid = [m.get("id") for m in settings.get("models") or []]
         raise KeyError(f"Unknown LLM model id: {model_id}. Valid ids: {valid}")
+    decorated = decorate_model(model, settings.get("active_model_id", ""), probe=False)
+    if not decorated.get("available"):
+        raise ValueError(
+            f"LLM model is not ready: {model_id}. "
+            "请先配置可用的远程服务地址或本地权重路径。"
+        )
     settings["active_model_id"] = model_id
+    write_settings(settings)
+    return settings
+
+
+def update_model_settings(model_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+    settings = read_settings()
+    model = get_model(settings, model_id)
+    if model is None:
+        valid = [m.get("id") for m in settings.get("models") or []]
+        raise KeyError(f"Unknown LLM model id: {model_id}. Valid ids: {valid}")
+
+    allowed = {"weight_path", "remote_url", "enabled", "adapter_dir", "use_adapter"}
+    for key, value in patch.items():
+        if key not in allowed or value is None:
+            continue
+        if key in {"weight_path", "remote_url", "adapter_dir"}:
+            model[key] = str(value).strip()
+        elif key in {"enabled", "use_adapter"}:
+            model[key] = bool(value)
     write_settings(settings)
     return settings
 
@@ -282,4 +320,5 @@ __all__ = [
     "settings_configured",
     "settings_payload",
     "update_active_model",
+    "update_model_settings",
 ]

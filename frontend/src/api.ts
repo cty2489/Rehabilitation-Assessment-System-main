@@ -3,6 +3,7 @@ import {
   AuthLoginResponse,
   EnrollmentRequest,
   HealthStatus,
+  LlmModelSettingsPatch,
   LlmSettings,
   MysqlAssessmentDetail,
   MysqlAssessmentList,
@@ -100,6 +101,21 @@ export async function updateLlmSettings(activeModelId: string): Promise<LlmSetti
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ active_model_id: activeModelId }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
+}
+
+export async function updateLlmModelSettings(
+  modelId: string,
+  payload: LlmModelSettingsPatch,
+): Promise<LlmSettings> {
+  const res = await fetch(`/api/settings/llm/models/${encodeURIComponent(modelId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
   })
   if (!res.ok) {
     throw await parseError(res)

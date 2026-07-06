@@ -55,6 +55,14 @@ class LlmSettingsUpdate(BaseModel):
     active_model_id: str = Field(..., min_length=1, description="报告生成使用的大模型配置 ID")
 
 
+class LlmModelSettingsUpdate(BaseModel):
+    weight_path: Optional[str] = Field(None, description="本地 HF 权重路径")
+    remote_url: Optional[str] = Field(None, description="远程 LLM 服务地址")
+    enabled: Optional[bool] = Field(None, description="是否启用该候选")
+    adapter_dir: Optional[str] = Field(None, description="可选 LoRA adapter 目录")
+    use_adapter: Optional[bool] = Field(None, description="是否加载 LoRA adapter")
+
+
 # --------------------------------------------------------------------------- #
 # Patient management + records + stats (SQLite-backed)                         #
 # --------------------------------------------------------------------------- #

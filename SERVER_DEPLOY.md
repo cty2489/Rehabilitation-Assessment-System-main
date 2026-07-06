@@ -180,7 +180,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 
 ### 5.1 大模型设置页
 
-登录后进入“系统管理 → 大模型设置”，可以选择下一次报告生成使用的大模型。页面默认内置 7 个候选：
+登录后进入“系统管理 → 大模型设置”，可以选择下一次报告生成使用的大模型，也可以直接保存每个模型的本地权重路径或远程服务地址。页面默认内置 7 个候选：
 
 | 类型 | 模型 |
 |---|---|
@@ -193,7 +193,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/config/llm_settings.json
 ```
 
-该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置，便于兼容老部署。
+该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置，便于兼容老部署。权重路径不存在的本地模型会显示为未就绪，不能设为当前报告模型。
 
 本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
 

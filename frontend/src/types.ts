@@ -69,6 +69,14 @@ export interface LlmSettings {
   models: LlmModelOption[]
 }
 
+export interface LlmModelSettingsPatch {
+  weight_path?: string
+  remote_url?: string
+  enabled?: boolean
+  adapter_dir?: string
+  use_adapter?: boolean
+}
+
 export interface HealthStatus {
   status: string
   models_loaded: string[]

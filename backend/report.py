@@ -201,7 +201,7 @@ class ReportModel:
 
         # 2) Resolve base HF id + per-model config (extra_eos_tokens,
         #    trust_remote_code). model_registry is stdlib-only → safe to import.
-        from llm.model_registry import resolve
+        from llm.model_registry import apply_tokenizer_overrides, resolve
 
         base_override = os.environ.get("LLM_BASE_ID")
         if local_selected and configured_path and configured_path.exists():
@@ -242,6 +242,7 @@ class ReportModel:
                 trust_remote_code=cfg["trust_remote_code"],
             )
             eos_ids = _resolve_eos_ids(tok, cfg)
+            apply_tokenizer_overrides(tok, cfg)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f"加载康复报告大模型失败（base={hf_id}, "

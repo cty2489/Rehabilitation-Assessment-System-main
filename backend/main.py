@@ -46,6 +46,7 @@ from schemas import (
     AuthLoginRequest,
     AuthLoginResponse,
     EnrollmentRequest,
+    LlmModelSettingsUpdate,
     LlmSettingsUpdate,
     MysqlAssessmentDetail,
     MysqlAssessmentList,
@@ -1157,8 +1158,28 @@ async def update_llm_settings(
         llm_settings.update_active_model(payload.active_model_id)
     except KeyError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # The next local report generation should load the newly selected model.
+    REPORT_MODEL.reset()
+    return llm_settings.settings_payload(probe=True)
+
+
+@app.patch("/api/settings/llm/models/{model_id}")
+async def update_llm_model_settings(
+    model_id: str,
+    payload: LlmModelSettingsUpdate,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        llm_settings.update_model_settings(
+            model_id,
+            payload.model_dump(exclude_unset=True),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     REPORT_MODEL.reset()
     return llm_settings.settings_payload(probe=True)
 

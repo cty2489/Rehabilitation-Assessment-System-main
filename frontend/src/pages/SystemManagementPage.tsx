@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchHealth, fetchLlmSettings, updateLlmSettings } from '../api'
+import { fetchHealth, fetchLlmSettings, updateLlmModelSettings, updateLlmSettings } from '../api'
 import { useAuth } from '../app/AppContext'
 import { HealthStatus, LlmModelOption, LlmSettings } from '../types'
 
@@ -26,9 +26,21 @@ export default function SystemManagementPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [llmSettings, setLlmSettings] = useState<LlmSettings | null>(null)
   const [selectedModelId, setSelectedModelId] = useState('')
+  const [modelLocations, setModelLocations] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const [savingModelId, setSavingModelId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  function syncModelLocations(nextSettings: LlmSettings) {
+    const next: Record<string, string> = {}
+    nextSettings.models.forEach((model) => {
+      next[model.id] = model.provider === 'remote'
+        ? (model.remote_url || '')
+        : (model.weight_path || '')
+    })
+    setModelLocations(next)
+  }
 
   useEffect(() => {
     Promise.all([fetchHealth(), fetchLlmSettings()])
@@ -36,6 +48,7 @@ export default function SystemManagementPage() {
         setHealth(nextHealth)
         setLlmSettings(nextSettings)
         setSelectedModelId(nextSettings.active_model_id)
+        syncModelLocations(nextSettings)
       })
       .catch((e) => setError(String(e.message || e)))
   }, [])
@@ -53,11 +66,33 @@ export default function SystemManagementPage() {
       const next = await updateLlmSettings(selectedModelId)
       setLlmSettings(next)
       setSelectedModelId(next.active_model_id)
+      syncModelLocations(next)
       setMessage('大模型设置已保存，下一次生成报告将使用该模型。')
     } catch (e) {
       setError(String((e as Error).message || e))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function saveModelLocation(model: LlmModelOption) {
+    const value = (modelLocations[model.id] || '').trim()
+    setSavingModelId(model.id)
+    setError(null)
+    setMessage(null)
+    try {
+      const payload = model.provider === 'remote'
+        ? { remote_url: value }
+        : { weight_path: value }
+      const next = await updateLlmModelSettings(model.id, payload)
+      setLlmSettings(next)
+      setSelectedModelId(next.active_model_id)
+      syncModelLocations(next)
+      setMessage(`${model.name} 的模型配置已保存。`)
+    } catch (e) {
+      setError(String((e as Error).message || e))
+    } finally {
+      setSavingModelId(null)
     }
   }
 
@@ -137,7 +172,11 @@ export default function SystemManagementPage() {
               disabled={!llmSettings || saving}
             >
               {(llmSettings?.models || []).map((model) => (
-                <option key={model.id} value={model.id}>
+                <option
+                  key={model.id}
+                  value={model.id}
+                  disabled={!model.available && !model.is_active}
+                >
                   {model.origin ? `${model.origin} · ` : ''}{model.name}
                 </option>
               ))}
@@ -209,7 +248,28 @@ export default function SystemManagementPage() {
                     <td>{model.origin || '—'}</td>
                     <td>{providerLabel[model.provider] || model.provider}</td>
                     <td className="model-path">
-                      {modelLocation(model)}
+                      <div className="model-path-edit">
+                        <input
+                          className="model-path-input"
+                          value={modelLocations[model.id] ?? modelLocation(model)}
+                          onChange={(e) => {
+                            setModelLocations((prev) => ({
+                              ...prev,
+                              [model.id]: e.target.value,
+                            }))
+                            setMessage(null)
+                          }}
+                          disabled={savingModelId === model.id}
+                          aria-label={`${model.name} 模型位置`}
+                        />
+                        <button
+                          className="button secondary tiny"
+                          onClick={() => saveModelLocation(model)}
+                          disabled={savingModelId === model.id}
+                        >
+                          {savingModelId === model.id ? '保存中…' : '保存'}
+                        </button>
+                      </div>
                       {model.provider === 'local' && (
                         <span className="model-muted">
                           {model.weight_exists ? ' · 权重已找到' : ' · 权重待放置'}

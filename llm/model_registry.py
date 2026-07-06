@@ -1,4 +1,4 @@
-"""Per-model fine-tuning config for the 4-LLM comparison pipeline.
+"""Per-model fine-tuning config for the LLM comparison pipeline.
 
 Each entry maps a short ``model_id`` (used in checkpoint / output paths)
 to everything that differs across model families:
@@ -25,8 +25,9 @@ to everything that differs across model families:
                             ``<|im_end|>``), otherwise generate.py runs to
                             ``max_new_tokens`` and fabricates a next turn.
 
-All four candidates are usable with bitsandbytes 4-bit NF4 + PEFT LoRA on
-a single RTX 4090D (24 GB).
+The report settings page uses the same short ids for baseline selection, so
+adding a candidate here keeps training, local inference, and the web settings
+page aligned.
 """
 from __future__ import annotations
 
@@ -37,6 +38,20 @@ _LLAMA_STYLE_TARGETS = [
     "q_proj", "k_proj", "v_proj", "o_proj",
     "gate_proj", "up_proj", "down_proj",
 ]
+
+_BAICHUAN2_TARGETS = [
+    "W_pack", "o_proj", "gate_proj", "up_proj", "down_proj",
+]
+
+_BAICHUAN2_CHAT_TEMPLATE = (
+    "{% for message in messages %}"
+    "{% if message['role'] == 'system' %}{{ message['content'] }}"
+    "{% elif message['role'] == 'user' %}<reserved_106>{{ message['content'] }}"
+    "{% elif message['role'] == 'assistant' %}<reserved_107>{{ message['content'] }}"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}<reserved_107>{% endif %}"
+)
 
 
 MODEL_REGISTRY: dict[str, dict] = {
@@ -69,6 +84,41 @@ MODEL_REGISTRY: dict[str, dict] = {
         "trust_remote_code": True,
         "extra_eos_tokens": ["<|im_end|>"],  # stop at turn boundary, no phantom turn
     },
+    "qwen3_8b": {
+        # Main Chinese baseline selected by the current project plan. Qwen3
+        # supports Qwen ChatML-style templates; for clinical report JSON we keep
+        # thinking disabled at prompt level and stop on <|im_end|>.
+        "hf_id": "Qwen/Qwen3-8B",
+        "response_template": "<|im_start|>assistant\n",
+        "target_modules": list(_LLAMA_STYLE_TARGETS),
+        "max_seq_length": 1024,
+        "trust_remote_code": True,
+        "extra_eos_tokens": ["<|im_end|>"],
+    },
+    "deepseek_r1_distill_qwen7b": {
+        # Kept as a report-model candidate for the professor's baseline sweep.
+        # It is reasoner-style and can spend output budget on <think>; use a
+        # stricter prompt / post-processing before treating it as final clinical
+        # prose. Architecture follows Qwen/Llama-style projection names.
+        "hf_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+        "response_template": "<｜Assistant｜>",
+        "target_modules": list(_LLAMA_STYLE_TARGETS),
+        "max_seq_length": 1024,
+        "trust_remote_code": True,
+        "extra_eos_tokens": ["<｜end▁of▁sentence｜>", "<|im_end|>"],
+    },
+    "baichuan2_7b_chat": {
+        # Some Baichuan2 checkpoints do not expose tokenizer.chat_template.
+        # apply_tokenizer_overrides injects a minimal user/assistant template so
+        # SFT and local report inference fail less mysteriously.
+        "hf_id": "baichuan-inc/Baichuan2-7B-Chat",
+        "response_template": "<reserved_107>",
+        "target_modules": list(_BAICHUAN2_TARGETS),
+        "max_seq_length": 1024,
+        "trust_remote_code": True,
+        "extra_eos_tokens": ["</s>"],
+        "chat_template": _BAICHUAN2_CHAT_TEMPLATE,
+    },
     "mistral7b_v03": {
         # Replaces deepseek_r1_distill_qwen_7b: R1-Distill is a think-then-answer
         # model that burns its entire max_new_tokens budget on chain-of-thought
@@ -100,6 +150,16 @@ MODEL_REGISTRY: dict[str, dict] = {
         "trust_remote_code": True,
         "extra_eos_tokens": [],
     },
+    "llama3_8b_instruct": {
+        # Requires accepted Meta license and a Hugging Face token if the weights
+        # are not already present locally. Uses Llama-3 turn tokens.
+        "hf_id": "meta-llama/Meta-Llama-3-8B-Instruct",
+        "response_template": "<|start_header_id|>assistant<|end_header_id|>\n\n",
+        "target_modules": list(_LLAMA_STYLE_TARGETS),
+        "max_seq_length": 1024,
+        "trust_remote_code": False,
+        "extra_eos_tokens": ["<|eot_id|>"],
+    },
     "yi15_6b": {
         # Standard LlamaForCausalLM under the hood and a ChatML-style
         # chat_template (same "<|im_start|>assistant\n" marker as Qwen2.5),
@@ -122,6 +182,13 @@ MODEL_REGISTRY: dict[str, dict] = {
         "extra_eos_tokens": ["<|im_end|>"],
     },
 }
+
+
+def apply_tokenizer_overrides(tok, cfg: dict) -> None:
+    """Apply registry-provided tokenizer fixes before chat-template use."""
+    chat_template = cfg.get("chat_template")
+    if chat_template and not getattr(tok, "chat_template", None):
+        tok.chat_template = chat_template
 
 
 def list_model_ids() -> list[str]:

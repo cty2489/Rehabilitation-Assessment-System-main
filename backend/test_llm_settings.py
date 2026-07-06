@@ -4,6 +4,7 @@ import pytest
 
 import llm_settings
 import report
+from llm.model_registry import resolve
 
 
 def test_default_settings_include_baseline_candidates():
@@ -24,7 +25,10 @@ def test_default_settings_include_baseline_candidates():
 
 def test_update_active_model_persists_to_config(tmp_path, monkeypatch):
     config_path = tmp_path / "llm_settings.json"
+    model_root = tmp_path / "models"
+    (model_root / "Qwen3-8B").mkdir(parents=True)
     monkeypatch.setattr(llm_settings, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(model_root))
 
     llm_settings.update_active_model("qwen3_8b_hf")
 
@@ -51,10 +55,43 @@ def test_local_candidate_without_weight_path_is_not_ready(tmp_path, monkeypatch)
     assert qwen3["status"] == "not_ready"
 
 
+def test_update_active_model_rejects_not_ready_local_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm_settings, "CONFIG_PATH", tmp_path / "llm_settings.json")
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
+
+    with pytest.raises(ValueError):
+        llm_settings.update_active_model("qwen3_8b_hf")
+
+
+def test_update_model_settings_persists_weight_path(tmp_path, monkeypatch):
+    config_path = tmp_path / "llm_settings.json"
+    model_path = tmp_path / "Qwen3-8B"
+    model_path.mkdir()
+    monkeypatch.setattr(llm_settings, "CONFIG_PATH", config_path)
+
+    llm_settings.update_model_settings("qwen3_8b_hf", {"weight_path": str(model_path)})
+
+    payload = llm_settings.settings_payload(probe=False)
+    qwen3 = next(model for model in payload["models"] if model["id"] == "qwen3_8b_hf")
+    assert qwen3["weight_path"] == str(model_path)
+    assert qwen3["weight_exists"] is True
+    assert qwen3["available"] is True
+
+
+def test_settings_candidates_match_model_registry():
+    payload = llm_settings.settings_payload(probe=False)
+    for model in payload["models"]:
+        if model["provider"] == "local":
+            resolve(model["model_id"])
+
+
 def test_report_provider_uses_env_until_ui_config_is_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_settings, "CONFIG_PATH", tmp_path / "llm_settings.json")
     monkeypatch.delenv("LLM_ACTIVE_MODEL_ID", raising=False)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    model_root = tmp_path / "models"
+    (model_root / "Qwen3-8B").mkdir(parents=True)
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(model_root))
 
     assert report.llm_provider() == "deepseek"
 

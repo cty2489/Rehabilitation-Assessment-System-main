@@ -30,7 +30,7 @@ from .data_builder import (
     _split_val_test,
     normalize_rehab_text,
 )
-from .model_registry import resolve
+from .model_registry import apply_tokenizer_overrides, resolve
 from .prompts import build_chat_messages
 
 
@@ -236,6 +236,7 @@ def main() -> None:
         hf_id, args.adapter, load_4bit=not args.no_4bit, bf16=bf16,
         trust_remote_code=cfg["trust_remote_code"],
     )
+    apply_tokenizer_overrides(tok, cfg)
     device = next(model.parameters()).device
     eos_ids = _resolve_eos_ids(tok, cfg)
     print(f"[generate] eos_token_ids={eos_ids}")

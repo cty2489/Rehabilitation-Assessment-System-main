@@ -29,7 +29,7 @@ from transformers import (
 )
 from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
-from .model_registry import MODEL_REGISTRY, resolve
+from .model_registry import MODEL_REGISTRY, apply_tokenizer_overrides, resolve
 
 
 def _load_model_and_tokenizer(base: str, bf16: bool, trust_remote_code: bool):
@@ -135,8 +135,8 @@ def _resolve_response_template_ids(tok, response_template: str) -> List[int]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="QLoRA SFT for rehab-text generation.")
     ap.add_argument("--model-id", default=None,
-                    help="Short id from model_registry (qwen25_3b, "
-                         "mistral7b_v03, glm4_9b, yi15_6b). "
+                    help="Short id from model_registry "
+                         f"({', '.join(MODEL_REGISTRY)}). "
                          "Mutually exclusive with --base.")
     ap.add_argument("--base", default=None,
                     help="Raw HF id or local path. If set, must match a "
@@ -173,6 +173,7 @@ def main() -> None:
     model, tok = _load_model_and_tokenizer(
         hf_id, bf16=bf16, trust_remote_code=cfg["trust_remote_code"],
     )
+    apply_tokenizer_overrides(tok, cfg)
 
     response_template_ids = _resolve_response_template_ids(tok, cfg["response_template"])
     print(
