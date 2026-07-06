@@ -148,6 +148,7 @@ DEVICE_API_TOKEN=generate-a-different-long-random-token
 LLM_PROVIDER=remote
 LLM_REMOTE_URL=http://127.0.0.1:6007
 LLM_REMOTE_TIMEOUT=300
+LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
 
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
@@ -175,6 +176,41 @@ MAX_ZIP_MEMBERS=2000
 MAX_TRIALS=30
 SESSION_TTL_HOURS=168
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
+```
+
+### 5.1 大模型设置页
+
+登录后进入“系统管理 → 大模型设置”，可以选择下一次报告生成使用的大模型。页面默认内置 7 个候选：
+
+| 类型 | 模型 |
+|---|---|
+| 国产 | Qwen2.5-7B-Instruct GGUF、Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、Baichuan2-7B-Chat、GLM-4-9B |
+| 国外 | Mistral-7B-Instruct-v0.3、Llama-3-8B-Instruct |
+
+保存后会生成运行态配置：
+
+```text
+/root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/config/llm_settings.json
+```
+
+该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置，便于兼容老部署。
+
+本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
+
+```text
+/root/autodl-tmp/rehab_project/models/Qwen3-8B
+/root/autodl-tmp/rehab_project/models/DeepSeek-R1-Distill-Qwen-7B
+/root/autodl-tmp/rehab_project/models/Baichuan2-7B-Chat
+/root/autodl-tmp/rehab_project/models/GLM-4-9B-0414
+/root/autodl-tmp/rehab_project/models/Mistral-7B-Instruct-v0.3
+/root/autodl-tmp/rehab_project/models/Meta-Llama-3-8B-Instruct
+```
+
+如果模型放在其他位置，可以通过环境变量修改根目录或配置文件路径：
+
+```env
+LLM_MODEL_ROOT=/data/models
+LLM_SETTINGS_PATH=/data/rehab_config/llm_settings.json
 ```
 
 ## 6. Nginx 配置

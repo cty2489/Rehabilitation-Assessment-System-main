@@ -1,15 +1,65 @@
 import { useEffect, useState } from 'react'
-import { fetchHealth } from '../api'
+import { fetchHealth, fetchLlmSettings, updateLlmSettings } from '../api'
 import { useAuth } from '../app/AppContext'
+import { HealthStatus, LlmModelOption, LlmSettings } from '../types'
+
+const providerLabel: Record<string, string> = {
+  remote: '远程服务',
+  local: '本地权重',
+  deepseek: 'API 服务',
+}
+
+function modelStatus(model: LlmModelOption): { label: string; className: string } {
+  if (model.is_active) return { label: '当前使用', className: 'badge-ok' }
+  if (model.available) return { label: '可选择', className: 'badge-neutral' }
+  return { label: '未就绪', className: 'badge-warn' }
+}
+
+function modelLocation(model: LlmModelOption): string {
+  if (model.provider === 'remote') return model.remote_url || '—'
+  if (model.provider === 'deepseek') return model.model_id || '—'
+  return model.weight_path || model.model_id || '—'
+}
 
 export default function SystemManagementPage() {
   const { user, logout } = useAuth()
-  const [health, setHealth] = useState<{ status: string; models_loaded: string[] } | null>(null)
+  const [health, setHealth] = useState<HealthStatus | null>(null)
+  const [llmSettings, setLlmSettings] = useState<LlmSettings | null>(null)
+  const [selectedModelId, setSelectedModelId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchHealth().then(setHealth).catch((e) => setError(String(e.message || e)))
+    Promise.all([fetchHealth(), fetchLlmSettings()])
+      .then(([nextHealth, nextSettings]) => {
+        setHealth(nextHealth)
+        setLlmSettings(nextSettings)
+        setSelectedModelId(nextSettings.active_model_id)
+      })
+      .catch((e) => setError(String(e.message || e)))
   }, [])
+
+  const activeModel = llmSettings?.active_model || null
+  const selectedModel = llmSettings?.models.find((model) => model.id === selectedModelId) || activeModel
+  const dirty = Boolean(llmSettings && selectedModelId && selectedModelId !== llmSettings.active_model_id)
+
+  async function saveModelSelection() {
+    if (!selectedModelId) return
+    setSaving(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const next = await updateLlmSettings(selectedModelId)
+      setLlmSettings(next)
+      setSelectedModelId(next.active_model_id)
+      setMessage('大模型设置已保存，下一次生成报告将使用该模型。')
+    } catch (e) {
+      setError(String((e as Error).message || e))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div>
@@ -21,6 +71,7 @@ export default function SystemManagementPage() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {message && <div className="success-banner">{message}</div>}
 
       <div className="grid-2-cards">
         <div className="card">
@@ -65,9 +116,112 @@ export default function SystemManagementPage() {
             </div>
             <div className="info-item">
               <span className="info-label">报告模型</span>
-              <span className="info-value">Yi-1.5-6B（QLoRA）</span>
+              <span className="info-value">{health?.report_model || activeModel?.name || '—'}</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card settings-wide-card">
+        <h2>大模型设置<span className="h2-suffix">LLM</span></h2>
+
+        <div className="llm-settings-head">
+          <div className="field llm-select-field">
+            <label>报告生成模型</label>
+            <select
+              value={selectedModelId}
+              onChange={(e) => {
+                setSelectedModelId(e.target.value)
+                setMessage(null)
+              }}
+              disabled={!llmSettings || saving}
+            >
+              {(llmSettings?.models || []).map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.origin ? `${model.origin} · ` : ''}{model.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="llm-active-summary">
+            <span className="info-label">当前配置</span>
+            <span className="llm-active-name">{activeModel?.name || '—'}</span>
+            <span className="model-muted">
+              {activeModel ? `${providerLabel[activeModel.provider] || activeModel.provider} · ${activeModel.vendor || '—'}` : '—'}
+            </span>
+          </div>
+
+          <button
+            className="button"
+            onClick={saveModelSelection}
+            disabled={!dirty || saving}
+          >
+            {saving ? '保存中…' : '保存设置'}
+          </button>
+        </div>
+
+        {selectedModel && (
+          <div className="llm-selected-detail">
+            <div className="info-item">
+              <span className="info-label">待使用模型</span>
+              <span className="info-value">{selectedModel.name}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">调用方式</span>
+              <span className="info-value">{providerLabel[selectedModel.provider] || selectedModel.provider}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">模型位置</span>
+              <span className="info-value model-path">{modelLocation(selectedModel)}</span>
+            </div>
+            <div className="info-item">
+              <span className="info-label">就绪状态</span>
+              <span className="info-value">
+                <span className={`badge ${modelStatus(selectedModel).className}`}>
+                  {modelStatus(selectedModel).label}
+                </span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="model-table-wrap">
+          <table className="data-table compact model-table">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>来源</th>
+                <th>方式</th>
+                <th>位置</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(llmSettings?.models || []).map((model) => {
+                const status = modelStatus(model)
+                return (
+                  <tr key={model.id} className={model.is_active ? 'active-row' : undefined}>
+                    <td>
+                      <strong>{model.name}</strong>
+                      <span className="model-id">{model.id}</span>
+                    </td>
+                    <td>{model.origin || '—'}</td>
+                    <td>{providerLabel[model.provider] || model.provider}</td>
+                    <td className="model-path">
+                      {modelLocation(model)}
+                      {model.provider === 'local' && (
+                        <span className="model-muted">
+                          {model.weight_exists ? ' · 权重已找到' : ' · 权重待放置'}
+                        </span>
+                      )}
+                    </td>
+                    <td><span className={`badge ${status.className}`}>{status.label}</span></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

@@ -33,11 +33,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 import db
+import llm_settings
 import mysql_db
 from assessment_export import ensure_assessment_export, export_filename, file_info
 from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
 from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
-from report import REPORT_MODEL, llm_provider, remote_url, stream_report
+from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url, stream_report
 from schemas import (
     AssessmentOverview,
     AssessmentResult,
@@ -45,6 +46,7 @@ from schemas import (
     AuthLoginRequest,
     AuthLoginResponse,
     EnrollmentRequest,
+    LlmSettingsUpdate,
     MysqlAssessmentDetail,
     MysqlAssessmentList,
     PatientDetail,
@@ -123,12 +125,7 @@ def _dl_model_version() -> str:
 
 
 def _llm_model_name() -> str:
-    provider = llm_provider()
-    if provider == "deepseek":
-        return os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
-    if provider == "remote":
-        return remote_url()
-    return os.environ.get("LLM_MODEL_ID", "")
+    return llm_model_name()
 
 
 def _trial_details_from_paths(eeg_paths: List[Path], emg_paths: List[Path]) -> List[Dict[str, Any]]:
@@ -1138,7 +1135,32 @@ async def get_report_docx(session_id: str):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "models_loaded": list(app.state.registry.models.keys())}
+    return {
+        "status": "ok",
+        "models_loaded": list(app.state.registry.models.keys()),
+        "report_provider": llm_provider(),
+        "report_model": llm_model_name(),
+    }
+
+
+@app.get("/api/settings/llm")
+async def get_llm_settings(_admin: None = Depends(_require_admin)):
+    return llm_settings.settings_payload(probe=True)
+
+
+@app.patch("/api/settings/llm")
+async def update_llm_settings(
+    payload: LlmSettingsUpdate,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        llm_settings.update_active_model(payload.active_model_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # The next local report generation should load the newly selected model.
+    REPORT_MODEL.reset()
+    return llm_settings.settings_payload(probe=True)
 
 
 @app.post("/api/auth/login", response_model=AuthLoginResponse)

@@ -55,6 +55,7 @@ from typing import Any, Dict, Optional
 
 from schemas import PatientInfo, PredictionResult
 
+import llm_settings
 import report_builder
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +68,20 @@ if str(PROJECT_ROOT) not in sys.path:
 
 DEFAULT_ADAPTER_DIR = PROJECT_ROOT / "checkpoints_llm" / "yi15_6b"
 DEFAULT_MODEL_ID = "yi15_6b"
+
+
+def _active_local_load_key(active: Dict[str, Any], fallback_adapter: Path, fallback_model_id: str) -> str:
+    """Stable cache key for the selected in-process report model."""
+    if str(active.get("provider") or "").lower() != "local":
+        return ""
+    return "|".join([
+        str(active.get("model_id") or fallback_model_id),
+        str(active.get("weight_path") or ""),
+        str(active.get("adapter_dir") or fallback_adapter),
+        str(active.get("use_adapter", os.environ.get("LLM_USE_ADAPTER", ""))),
+        str(_env_flag("LLM_LOAD_4BIT", True)),
+        str(os.environ.get("LLM_BASE_ID", "")),
+    ])
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -146,6 +161,7 @@ class ReportModel:
             os.environ.get("LLM_ADAPTER_DIR", str(DEFAULT_ADAPTER_DIR))
         )
         self.model_id: str = os.environ.get("LLM_MODEL_ID", DEFAULT_MODEL_ID)
+        self.loaded_key: str = ""
         self._lock = threading.Lock()
 
     @property
@@ -160,15 +176,25 @@ class ReportModel:
         ``LLM_USE_ADAPTER=1`` to restore the old behaviour (base + LoRA adapter).
         Raises a clear RuntimeError if it can't.
         """
-        use_adapter = _env_flag("LLM_USE_ADAPTER", False)
+        active = llm_settings.active_model()
+        requested_key = _active_local_load_key(active, self.adapter_dir, self.model_id)
+        local_selected = str(active.get("provider") or "").lower() == "local"
+        use_adapter = bool(active.get("use_adapter")) if local_selected and "use_adapter" in active \
+            else _env_flag("LLM_USE_ADAPTER", False)
+        adapter_dir = Path(str(active.get("adapter_dir") or self.adapter_dir)) if local_selected \
+            else self.adapter_dir
+        selected_model_id = str(active.get("model_id") or self.model_id) if local_selected \
+            else self.model_id
+        configured_path = Path(str(active.get("weight_path") or "")) if local_selected and active.get("weight_path") \
+            else None
 
         # 1) When attaching the adapter, its directory must exist. Done before
         #    any heavy import so a misconfigured path gives a clear message
         #    rather than a confusing torch/transformers ImportError. In base-only
         #    mode the adapter dir is irrelevant, so we skip this check.
-        if use_adapter and not self.adapter_dir.exists():
+        if use_adapter and not adapter_dir.exists():
             raise RuntimeError(
-                f"LoRA adapter 目录不存在：{self.adapter_dir}。"
+                f"LoRA adapter 目录不存在：{adapter_dir}。"
                 f"请将 yi15_6b adapter 放到该路径，或设置环境变量 LLM_ADAPTER_DIR；"
                 f"或设置 LLM_USE_ADAPTER=0 使用未微调基座模型。"
             )
@@ -178,24 +204,33 @@ class ReportModel:
         from llm.model_registry import resolve
 
         base_override = os.environ.get("LLM_BASE_ID")
-        if base_override:
+        if local_selected and configured_path and configured_path.exists():
+            try:
+                _, cfg = resolve(selected_model_id)
+            except KeyError:
+                cfg = {
+                    "trust_remote_code": bool(active.get("trust_remote_code", True)),
+                    "extra_eos_tokens": active.get("extra_eos_tokens", ["<|im_end|>"]),
+                }
+            hf_id = str(configured_path)
+        elif base_override:
             _, cfg = resolve(base_override)
             hf_id = cfg["hf_id"]
         elif use_adapter:
-            pin = self.adapter_dir / "model_id.txt"
-            key = pin.read_text(encoding="utf-8").strip() if pin.exists() else self.model_id
+            pin = adapter_dir / "model_id.txt"
+            key = pin.read_text(encoding="utf-8").strip() if pin.exists() else selected_model_id
             _, cfg = resolve(key)
             hf_id = cfg["hf_id"]
         else:
-            # Base-only: resolve directly from the configured model_id (yi15_6b).
-            _, cfg = resolve(self.model_id)
+            # Base-only: resolve directly from the configured model_id.
+            _, cfg = resolve(selected_model_id)
             hf_id = cfg["hf_id"]
 
         # 3) Heavy import + load. llm.generate pulls in torch/transformers/peft;
         #    on a non-CUDA host or without these deps this is where it fails, so
         #    wrap it with a clear, actionable error.
         load_4bit = _env_flag("LLM_LOAD_4BIT", True)
-        adapter_arg = self.adapter_dir if use_adapter else None
+        adapter_arg = adapter_dir if use_adapter else None
         try:
             from llm.generate import _load_model, _resolve_eos_ids
 
@@ -218,16 +253,28 @@ class ReportModel:
         self.tok = tok
         self.cfg = cfg
         self.eos_ids = eos_ids
+        self.loaded_key = requested_key or "|".join([selected_model_id, hf_id, str(adapter_arg or ""), str(load_4bit)])
         print(
             f"[startup] report LLM loaded: base={hf_id} "
             f"adapter={adapter_arg or '（未微调基座）'} "
             f"4bit={load_4bit} eos_ids={self.eos_ids}"
         )
 
+    def reset(self) -> None:
+        self.model = None
+        self.tok = None
+        self.cfg = {}
+        self.eos_ids = []
+        self.loaded_key = ""
+
     def ensure_loaded(self) -> None:
-        if self.loaded:
+        active = llm_settings.active_model()
+        key = _active_local_load_key(active, self.adapter_dir, self.model_id)
+        if self.loaded and (not key or key == self.loaded_key):
             return
         with self._lock:
+            if self.loaded and key and key != self.loaded_key:
+                self.reset()
             if not self.loaded:
                 self.load()
 
@@ -252,11 +299,18 @@ def _decoding_kwargs() -> Dict[str, Any]:
 def llm_provider() -> str:
     """Return the selected report-generation provider.
 
-    Empty ``LLM_PROVIDER`` preserves the original behaviour: use the custom
-    remote service when ``LLM_REMOTE_URL`` is set, otherwise use the local
-    Yi/LoRA loading path.
+    The System Management page writes ``llm_settings``. Environment variables
+    remain as fallback for older deployments.
     """
     raw = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if not llm_settings.settings_configured():
+        if raw:
+            return raw
+        return "remote" if remote_url() else "local"
+    active = llm_settings.active_model()
+    provider = str(active.get("provider") or "").strip().lower()
+    if provider:
+        return provider
     if raw:
         return raw
     return "remote" if remote_url() else "local"
@@ -264,7 +318,27 @@ def llm_provider() -> str:
 
 def remote_url() -> str:
     """Return the configured remote LLM service base URL ("" if local mode)."""
+    if not llm_settings.settings_configured():
+        return os.environ.get("LLM_REMOTE_URL", "").strip().rstrip("/")
+    active = llm_settings.active_model()
+    if str(active.get("provider") or "").lower() == "remote":
+        url = str(active.get("remote_url") or "").strip().rstrip("/")
+        if url:
+            return url
     return os.environ.get("LLM_REMOTE_URL", "").strip().rstrip("/")
+
+
+def llm_model_name() -> str:
+    """Human-readable id stored with each generated assessment."""
+    if not llm_settings.settings_configured():
+        provider = llm_provider()
+        if provider == "deepseek":
+            return os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        if provider == "remote":
+            return remote_url()
+        return os.environ.get("LLM_MODEL_ID", "")
+    active = llm_settings.active_model()
+    return str(active.get("id") or active.get("model_id") or active.get("name") or "")
 
 
 # Torch-free copy of llm.generate._strip_trailing_chat_tags so the *remote*
@@ -511,10 +585,20 @@ def _deepseek_timeout() -> "Any":
 
 
 def _deepseek_model() -> str:
+    active = llm_settings.active_model()
+    if str(active.get("provider") or "").lower() == "deepseek":
+        selected = str(active.get("model_id") or active.get("api_model") or "").strip()
+        if selected:
+            return selected
     return os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
 
 
 def _deepseek_base_url() -> str:
+    active = llm_settings.active_model()
+    if str(active.get("provider") or "").lower() == "deepseek":
+        selected = str(active.get("base_url") or active.get("remote_url") or "").strip().rstrip("/")
+        if selected:
+            return selected
     return os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
 
 

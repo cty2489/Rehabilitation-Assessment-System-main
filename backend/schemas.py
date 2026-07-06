@@ -51,6 +51,10 @@ class AuthLoginResponse(BaseModel):
     user: str
 
 
+class LlmSettingsUpdate(BaseModel):
+    active_model_id: str = Field(..., min_length=1, description="报告生成使用的大模型配置 ID")
+
+
 # --------------------------------------------------------------------------- #
 # Patient management + records + stats (SQLite-backed)                         #
 # --------------------------------------------------------------------------- #

@@ -2,6 +2,8 @@ import {
   AssessmentOverview,
   AuthLoginResponse,
   EnrollmentRequest,
+  HealthStatus,
+  LlmSettings,
   MysqlAssessmentDetail,
   MysqlAssessmentList,
   PatientDetail,
@@ -85,8 +87,24 @@ export function fetchStats(): Promise<StatsSummary> {
   return getJSON('/api/stats/summary')
 }
 
-export function fetchHealth(): Promise<{ status: string; models_loaded: string[] }> {
+export function fetchHealth(): Promise<HealthStatus> {
   return getJSON('/api/health')
+}
+
+export function fetchLlmSettings(): Promise<LlmSettings> {
+  return getJSON('/api/settings/llm')
+}
+
+export async function updateLlmSettings(activeModelId: string): Promise<LlmSettings> {
+  const res = await fetch('/api/settings/llm', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ active_model_id: activeModelId }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
 }
 
 export type AssessmentExportKind = 'json' | 'pdf' | 'zip'

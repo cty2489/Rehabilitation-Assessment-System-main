@@ -44,6 +44,9 @@ optimizer.pt
 checkpoints_llm/
 DL_model/*.pth
 
+# Runtime LLM selection written by the System Management page
+backend/config/llm_settings.json
+
 # ---- Databases ----
 *.db
 *.sqlite

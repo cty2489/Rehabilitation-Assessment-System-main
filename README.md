@@ -37,7 +37,8 @@ cloud-server-v1.0.0
 - 医院端/设备端离线 zip 数据包解析
 - FMA-UE、BI、手部肌张力、Brunnstrom 手功能分期预测
 - 26 项关键 biomarker 计算、展示和报告解读
-- 本地 Qwen2.5-7B-Instruct GGUF 服务生成康复评估报告
+- 系统管理页可选择报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
+- 本地 Qwen2.5-7B-Instruct GGUF 服务生成康复评估报告，后续可切换 HF 本地权重做基线实验
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
 - 页面内登录保护，后端使用 Bearer token 保护读写接口
@@ -199,6 +200,38 @@ MYSQL_PASSWORD=change-this-mysql-password
 MYSQL_DB=rehab_mysql
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 ```
+
+### 大模型选择配置
+
+系统管理页的“大模型设置”会调用：
+
+```text
+GET   /api/settings/llm
+PATCH /api/settings/llm
+```
+
+保存后的运行配置默认写入：
+
+```text
+backend/config/llm_settings.json
+```
+
+该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。
+
+默认候选模型包括：
+
+```text
+国产：Qwen2.5-7B-Instruct GGUF、Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、Baichuan2-7B-Chat、GLM-4-9B
+国外：Mistral-7B-Instruct-v0.3、Llama-3-8B-Instruct
+```
+
+本地 HF 权重默认查找根目录：
+
+```env
+LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
+```
+
+例如 Qwen3-8B 默认路径为 `/root/autodl-tmp/rehab_project/models/Qwen3-8B`。如果需要改配置文件位置，可设置 `LLM_SETTINGS_PATH`。
 
 不要提交真实的 `backend/.env`、数据库密码、API key、模型权重和患者数据。
 

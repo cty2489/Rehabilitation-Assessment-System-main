@@ -33,6 +33,49 @@ export interface AuthLoginResponse {
   user: string
 }
 
+export interface LlmModelHealth {
+  reachable?: boolean
+  loaded?: boolean
+  status?: string
+  error?: string
+  detail?: unknown
+}
+
+export interface LlmModelOption {
+  id: string
+  name: string
+  vendor?: string
+  origin?: string
+  provider: 'remote' | 'local' | 'deepseek' | string
+  model_id?: string
+  remote_url?: string
+  weight_path?: string
+  adapter_dir?: string
+  enabled?: boolean
+  description?: string
+  is_active?: boolean
+  configured?: boolean
+  available?: boolean
+  status?: string
+  weight_exists?: boolean
+  health?: LlmModelHealth | null
+}
+
+export interface LlmSettings {
+  schema_version: string
+  config_path: string
+  active_model_id: string
+  active_model: LlmModelOption | null
+  models: LlmModelOption[]
+}
+
+export interface HealthStatus {
+  status: string
+  models_loaded: string[]
+  report_provider?: string
+  report_model?: string
+}
+
 // Backend-mirrored persistence types --------------------------------------- //
 export interface AssessmentRecord {
   id: number
