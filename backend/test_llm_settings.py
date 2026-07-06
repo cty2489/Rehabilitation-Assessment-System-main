@@ -82,8 +82,14 @@ def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
     qwen_data = tmp_path / "Qwen_data"
     qwen3 = qwen_data / "Qwen3-8B"
     deepseek = qwen_data / "DeepSeek-R1-Distill-Qwen-7B"
+    baichuan = qwen_data / "Baichuan2-7B-Chat"
+    glm = qwen_data / "GLM-4-9B-Chat"
+    mistral = qwen_data / "Mistral-7B-Instruct-v0.3"
     qwen3.mkdir(parents=True)
     deepseek.mkdir(parents=True)
+    baichuan.mkdir(parents=True)
+    glm.mkdir(parents=True)
+    mistral.mkdir(parents=True)
     monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
     monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
 
@@ -92,10 +98,44 @@ def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
 
     assert by_id["qwen3_8b_hf"]["weight_exists"] is True
     assert by_id["deepseek_r1_distill_qwen7b"]["weight_exists"] is True
+    assert by_id["baichuan2_7b_chat"]["weight_exists"] is True
+    assert by_id["glm4_9b"]["weight_exists"] is True
+    assert by_id["mistral7b_v03"]["weight_exists"] is True
     assert by_id["qwen3_8b_hf"]["available"] is True
     assert by_id["deepseek_r1_distill_qwen7b"]["report_ready"] is False
     assert by_id["deepseek_r1_distill_qwen7b"]["available"] is False
     assert by_id["deepseek_r1_distill_qwen7b"]["status"] == "candidate"
+    assert by_id["baichuan2_7b_chat"]["status"] == "candidate"
+    assert by_id["glm4_9b"]["status"] == "candidate"
+    assert by_id["mistral7b_v03"]["status"] == "candidate"
+
+
+def test_saved_missing_weight_path_heals_to_existing_default(tmp_path, monkeypatch):
+    config_path = tmp_path / "llm_settings.json"
+    qwen_data = tmp_path / "Qwen_data"
+    (qwen_data / "Baichuan2-7B-Chat").mkdir(parents=True)
+    monkeypatch.setattr(llm_settings, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
+    monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
+    config_path.write_text(
+        json.dumps({
+            "schema_version": "rehab.llm_settings.v1",
+            "active_model_id": "qwen25_7b_gguf",
+            "models": [
+                {
+                    "id": "baichuan2_7b_chat",
+                    "weight_path": str(tmp_path / "models" / "Baichuan2-7B-Chat"),
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    payload = llm_settings.settings_payload(probe=False)
+    baichuan = next(model for model in payload["models"] if model["id"] == "baichuan2_7b_chat")
+
+    assert baichuan["weight_path"] == str(qwen_data / "Baichuan2-7B-Chat")
+    assert baichuan["weight_exists"] is True
 
 
 def test_update_active_model_rejects_unverified_candidate(tmp_path, monkeypatch):

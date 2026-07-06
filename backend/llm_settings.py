@@ -115,7 +115,10 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国产",
             "provider": "local",
             "model_id": "baichuan2_7b_chat",
-            "weight_path": _default_model_path("Baichuan2-7B-Chat"),
+            "weight_path": _default_model_path(
+                "Baichuan2-7B-Chat",
+                extra_candidates=[_original_model_path("Baichuan2-7B-Chat")],
+            ),
             "enabled": True,
             "description": "百川中文对话模型候选，用于国产模型横向比较。",
             "report_ready": False,
@@ -127,7 +130,13 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国产",
             "provider": "local",
             "model_id": "glm4_9b",
-            "weight_path": _default_model_path("GLM-4-9B-0414"),
+            "weight_path": _default_model_path(
+                "GLM-4-9B-0414",
+                extra_candidates=[
+                    _original_model_path("GLM-4-9B-0414"),
+                    _original_model_path("GLM-4-9B-Chat"),
+                ],
+            ),
             "enabled": True,
             "description": "智谱 GLM 系列候选，用于国产模型横向比较。",
             "report_ready": False,
@@ -139,7 +148,10 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国外",
             "provider": "local",
             "model_id": "mistral7b_v03",
-            "weight_path": _default_model_path("Mistral-7B-Instruct-v0.3"),
+            "weight_path": _default_model_path(
+                "Mistral-7B-Instruct-v0.3",
+                extra_candidates=[_original_model_path("Mistral-7B-Instruct-v0.3")],
+            ),
             "enabled": True,
             "description": "国外通用指令模型候选，可作为英文/国际基线。",
             "report_ready": False,
@@ -151,7 +163,13 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国外",
             "provider": "local",
             "model_id": "llama3_8b_instruct",
-            "weight_path": _default_model_path("Meta-Llama-3-8B-Instruct"),
+            "weight_path": _default_model_path(
+                "Meta-Llama-3-8B-Instruct",
+                extra_candidates=[
+                    _original_model_path("Meta-Llama-3-8B-Instruct"),
+                    _original_model_path("Llama-3-8B-Instruct"),
+                ],
+            ),
             "enabled": True,
             "description": "国外通用指令模型候选，可作为国际基线。",
             "report_ready": False,
@@ -179,7 +197,19 @@ def _merge_with_defaults(raw: Dict[str, Any]) -> Dict[str, Any]:
         if not mid:
             continue
         if mid in by_id:
-            by_id[mid].update(item)
+            default_item = by_id[mid]
+            saved_item = dict(item)
+            # Old servers may have persisted a weight_path before a model was
+            # downloaded. If that stale path does not exist but the current
+            # default path does, heal the runtime config automatically so newly
+            # added weights are detected without exposing paths in the UI.
+            if (
+                str(default_item.get("provider") or "").lower() == "local"
+                and not _path_exists(saved_item.get("weight_path"))
+                and _path_exists(default_item.get("weight_path"))
+            ):
+                saved_item.pop("weight_path", None)
+            default_item.update(saved_item)
         else:
             merged["models"].append(item)
             by_id[mid] = item

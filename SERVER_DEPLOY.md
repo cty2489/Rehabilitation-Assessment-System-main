@@ -47,7 +47,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.5
+git checkout cloud-server-v1.1.6
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -213,11 +213,17 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 
 本地权重路径、远程服务地址、adapter 目录等属于部署配置，由 `.env`、`LLM_MODEL_ROOT`、`LLM_ORIGINAL_MODEL_ROOT` 或上述运行态配置文件管理。权重不存在的本地模型会显示为未就绪；权重存在但端到端报告 JSON 结构尚未验证通过的模型会显示为候选待验证，不能设为当前线上报告模型。
 
-可微调的原版 HF 模型默认按 `LLM_ORIGINAL_MODEL_ROOT` 优先查找。目前已准备：
+可微调的原版 HF 模型默认按 `LLM_ORIGINAL_MODEL_ROOT` 优先查找。推荐放置示例：
 
 ```text
 /root/autodl-tmp/Qwen_data/Qwen3-8B
 /root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
+/root/autodl-tmp/Qwen_data/Baichuan2-7B-Chat
+/root/autodl-tmp/Qwen_data/GLM-4-9B-0414
+/root/autodl-tmp/Qwen_data/GLM-4-9B-Chat
+/root/autodl-tmp/Qwen_data/Mistral-7B-Instruct-v0.3
+/root/autodl-tmp/Qwen_data/Meta-Llama-3-8B-Instruct
+/root/autodl-tmp/Qwen_data/Llama-3-8B-Instruct
 ```
 
 当前云端验证结论：
@@ -228,7 +234,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 | `deepseek_r1_distill_qwen7b` | 权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型 |
 | `qwen25_7b_gguf` | 保留为可用回退/对照 |
 
-其它本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
+如果不放在 `LLM_ORIGINAL_MODEL_ROOT`，其它本地 HF 权重也会按 `LLM_MODEL_ROOT` 查找，例如：
 
 ```text
 /root/autodl-tmp/rehab_project/models/Baichuan2-7B-Chat

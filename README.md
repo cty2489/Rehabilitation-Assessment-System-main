@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.5
+cloud-server-v1.1.6
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -97,7 +97,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.5
+git checkout cloud-server-v1.1.6
 ```
 
 2. 准备外部文件：
@@ -108,6 +108,9 @@ git checkout cloud-server-v1.1.5
 DL_model/*.pth                                           # 康复评分模型权重
 /root/autodl-tmp/Qwen_data/Qwen3-8B                      # 当前推荐报告模型，HF 原版格式
 /root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B   # 候选对照模型，HF 原版格式
+/root/autodl-tmp/Qwen_data/Baichuan2-7B-Chat             # 可选候选 baseline
+/root/autodl-tmp/Qwen_data/GLM-4-9B-Chat                 # 可选候选 baseline
+/root/autodl-tmp/Qwen_data/Mistral-7B-Instruct-v0.3      # 可选候选 baseline
 /root/autodl-tmp/rehab_project/models/.../*.gguf         # 可选 GGUF 回退/对照模型
 backend/.env                                            # 后端环境变量
 MySQL 数据目录或初始化 SQL
@@ -240,11 +243,17 @@ backend/config/llm_settings.json
 LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 ```
 
-当前已使用的两个原版模型目录：
+可自动识别的 HF 原版权重目录示例：
 
 ```text
 /root/autodl-tmp/Qwen_data/Qwen3-8B
 /root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
+/root/autodl-tmp/Qwen_data/Baichuan2-7B-Chat
+/root/autodl-tmp/Qwen_data/GLM-4-9B-0414
+/root/autodl-tmp/Qwen_data/GLM-4-9B-Chat
+/root/autodl-tmp/Qwen_data/Mistral-7B-Instruct-v0.3
+/root/autodl-tmp/Qwen_data/Meta-Llama-3-8B-Instruct
+/root/autodl-tmp/Qwen_data/Llama-3-8B-Instruct
 ```
 
 当前云端验证结论：
@@ -291,7 +300,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.5
+稳定演示/复现实验：使用 cloud-server-v1.1.6
 日常继续开发：使用 main
 ```
 
