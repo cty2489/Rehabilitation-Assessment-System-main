@@ -23,7 +23,7 @@ const BRUNNSTROM_DESC: Record<number, string> = {
 }
 
 export default function ResultsPanel({ results }: Props) {
-  const entries: TaskKey[] = ['FMA_UE', 'BI', 'hand_tone', 'hand_function']
+  const entries: TaskKey[] = ['FMA_UE', 'hand_tone', 'hand_function']
   const visible = entries.filter((k) => results[k] !== undefined)
   if (visible.length === 0) return null
 
@@ -54,21 +54,6 @@ function ResultCard({ entry }: { entry: PredictionEntry }) {
         </div>
         <div className="progress-bar">
           <div style={{ width: `${(v / 20) * 100}%` }} />
-        </div>
-      </div>
-    )
-  }
-  if (entry.task === 'BI') {
-    const v = typeof entry.value === 'number' ? entry.value : parseFloat(String(entry.value))
-    return (
-      <div className="result-card">
-        <div className="label">{entry.label}</div>
-        <div className="value">
-          {v.toFixed(0)}
-          <span className="unit">/ 100 分</span>
-        </div>
-        <div className="progress-bar">
-          <div style={{ width: `${v}%` }} />
         </div>
       </div>
     )

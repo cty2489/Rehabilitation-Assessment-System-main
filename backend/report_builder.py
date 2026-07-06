@@ -74,7 +74,7 @@ def build_context(
     """Build the deterministic report context (numbers + structure, no prose).
 
     ``history`` (optional) is the previous assessment for the same patient:
-    ``{"fma_ue","bi","hand_tone","hand_function"}`` — used for the 变化趋势
+    ``{"fma_ue","hand_tone","hand_function"}`` — used for the 变化趋势
     column. Pass ``None`` for a first visit.
     """
     stage = int(predictions.hand_function)
@@ -97,8 +97,8 @@ def build_context(
             "value": f"{int(round(predictions.FMA_UE))}/20",
             "trend": _trend(predictions.FMA_UE, prev.get("fma_ue"), fmt="{:.0f}", unit="分"),
         },
-        # Barthel指数（BI）已从报告中剔除：不在「总体分期及状态」表展示，也不传给大模型。
-        # DL 模型仍预测 BI、数据库仍存储 BI、前端结果卡仍展示——此处仅控制报告/大模型层面。
+        # BI/改良 Barthel 指数偏向 ADL 独立性评估；当前系统聚焦上肢/手功能、
+        # EEG/EMG/IMU biomarker 与训练处方，因此不再进入在线报告。
     ]
 
     return {

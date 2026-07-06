@@ -363,7 +363,9 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
 
         predictions = PredictionResult(
             FMA_UE=float(predictions_raw["FMA_UE"]),
-            BI=float(predictions_raw["BI"]),
+            # BI is no longer served as a user-facing online model. Keep a
+            # compatibility value for legacy DB columns/schemas.
+            BI=float(predictions_raw.get("BI", 0.0)),
             hand_tone=str(predictions_raw["hand_tone"]),
             hand_function=int(predictions_raw["hand_function"]),
         )
@@ -411,7 +413,6 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             prediction_json = json.dumps(
                 {
                     "FMA_UE": predictions.FMA_UE,
-                    "BI": predictions.BI,
                     "hand_tone": predictions.hand_tone,
                     "hand_function": predictions.hand_function,
                 },
@@ -1286,7 +1287,7 @@ def _assessment_export_bundle(assessment_id: int, force: bool = False):
 
 @app.post("/api/mysql/enroll")
 async def mysql_enroll(payload: EnrollmentRequest, _admin: None = Depends(_require_admin)):
-    """医院入组：写入患者基本信息 + 可选的第一次评估记录（手工分数）。"""
+    """医院入组：写入患者基本信息 + 可选的第一次上肢/手功能评估记录。"""
     basic = {
         "patient_id": payload.patient_id,
         "name": payload.name,
@@ -1297,10 +1298,14 @@ async def mysql_enroll(payload: EnrollmentRequest, _admin: None = Depends(_requi
         "disease_days": payload.disease_days,
     }
     first = None
-    if None not in (payload.fma_ue, payload.bi, payload.hand_tone, payload.hand_function):
+    if None not in (payload.fma_ue, payload.hand_tone, payload.hand_function):
         first = {
             "FMA_UE": payload.fma_ue,
-            "BI": payload.bi,
+            # The legacy assessments table keeps a NOT NULL BI column. BI is no
+            # longer user-facing, so new manual enrollments store a neutral
+            # compatibility value rather than asking users for an unrelated ADL
+            # score.
+            "BI": 0.0,
             "hand_tone": payload.hand_tone,
             "hand_function": payload.hand_function,
             "assessment_time": payload.assessment_time,

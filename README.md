@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.4
+cloud-server-v1.1.5
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -15,11 +15,11 @@ cloud-server-v1.1.4
 - Nginx 生产入口，不再依赖 Vite dev server
 - FastAPI 后端、MySQL、Qwen3-8B HF 本地报告模型联动，GGUF 服务保留为回退/对照
 - 页面登录和 Bearer token 业务接口保护
-- 26 项 biomarker 计算和报告兜底
+- 26 项 biomarker 计算、报告解读和缺失项标记
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
-- 系统管理页可切换报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
-- 左侧菜单和右上角用户菜单提供“模型设置”入口，可直接进入大模型选择区域
-- 系统管理页可保存本地权重路径/远程服务地址，未就绪模型不能被设为当前报告模型
+- 独立“模型设置”页可切换已验证的报告大模型，默认内置 5 个国产和 2 个国外候选模型
+- 模型权重路径属于服务器部署配置，不在业务页面暴露；未通过报告结构校验的候选模型不能设为当前线上模型
+- BI/改良 Barthel 指数已从当前上肢手功能在线推理、页面展示、统计和导出报告中移除，数据库字段仅保留旧记录兼容
 - 云服务器启动、验证、常见问题和本地开发文档
 
 后续模型优化、设备接入和论文实验建议都从该标签或其后的 `main` 分支继续开发。
@@ -39,9 +39,9 @@ cloud-server-v1.1.4
 
 - 患者档案和评估记录管理
 - 医院端/设备端离线 zip 数据包解析
-- FMA-UE、BI、手部肌张力、Brunnstrom 手功能分期预测
+- FMA-UE、手部肌张力、Brunnstrom 手功能分期预测
 - 26 项关键 biomarker 计算、展示和报告解读
-- 系统管理页可选择报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
+- 独立“模型设置”页可选择报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
 - 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；Qwen2.5-7B-Instruct GGUF 保留为回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
@@ -97,7 +97,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.4
+git checkout cloud-server-v1.1.5
 ```
 
 2. 准备外部文件：
@@ -209,7 +209,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 
 ### 大模型选择配置
 
-系统管理页的“大模型设置”会调用：
+左侧“模型设置”页会调用：
 
 ```text
 GET   /api/settings/llm
@@ -223,7 +223,9 @@ PATCH /api/settings/llm/models/{model_id}
 backend/config/llm_settings.json
 ```
 
-该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。模型表格中的本地权重路径或远程服务地址可以在页面直接保存，权重路径不存在的本地模型不会被允许设为当前报告模型。
+该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。
+
+业务页面只做“选择哪个已验证模型出报告”，不展示也不编辑权重路径。本地权重路径、远程服务地址、adapter 目录等属于部署配置，建议由运维/开发人员通过 `.env`、`LLM_MODEL_ROOT`、`LLM_ORIGINAL_MODEL_ROOT` 或 `backend/config/llm_settings.json` 管理。权重存在但端到端报告 JSON 结构未验证通过的模型会显示为候选待验证，不能设为当前线上报告模型。
 
 默认候选模型包括：
 
@@ -249,7 +251,7 @@ LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 
 ```text
 qwen3_8b_hf：已通过端到端报告链路测试，可作为当前线上默认报告模型。
-deepseek_r1_distill_qwen7b：权重可加载、可生成，但会输出推理过程且报告 JSON 结构不稳定，暂不建议设为默认。
+deepseek_r1_distill_qwen7b：权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型。
 qwen25_7b_gguf：保留为可用回退/对照，不再作为当前云端默认报告模型。
 ```
 
@@ -289,7 +291,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.4
+稳定演示/复现实验：使用 cloud-server-v1.1.5
 日常继续开发：使用 main
 ```
 

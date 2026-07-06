@@ -93,7 +93,7 @@ function Meta({ label, value, title }: { label: string; value: React.ReactNode; 
   )
 }
 
-// Renders provenance, 4 indicators, biomarker coverage, and the report for one
+// Renders provenance, core motor indicators, biomarker coverage, and the report for one
 // persisted assessment record in a patient history timeline.
 export default function RecordDetail({ record }: { record: AssessmentRecord }) {
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -249,16 +249,6 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
           </div>
           <div className="progress-bar">
             <div style={{ width: `${(record.fma_ue / 20) * 100}%` }} />
-          </div>
-        </div>
-        <div className="result-card">
-          <div className="label">Barthel 指数</div>
-          <div className="value">
-            {Math.round(record.bi)}
-            <span className="unit">/ 100 分</span>
-          </div>
-          <div className="progress-bar">
-            <div style={{ width: `${record.bi}%` }} />
           </div>
         </div>
         <div className="result-card">

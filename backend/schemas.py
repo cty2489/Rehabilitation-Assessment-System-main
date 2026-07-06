@@ -18,7 +18,7 @@ class PatientInfo(BaseModel):
 
 class PredictionResult(BaseModel):
     FMA_UE: float = Field(..., ge=0.0, le=20.0, description="FMA手部分数")
-    BI: float = Field(..., ge=0.0, le=100.0, description="Barthel指数")
+    BI: float = Field(..., ge=0.0, le=100.0, description="旧记录兼容字段；当前在线报告不展示")
     hand_tone: str = Field(..., description='手部肌张力："0"/"1"/"1+"/"2"/"3"/"4"')
     hand_function: int = Field(..., ge=1, le=6, description="Brunnstrom分期 1–6")
 
@@ -93,7 +93,6 @@ class AssessmentRecord(BaseModel):
     created_at: str
     assessment_time: Optional[str] = None
     fma_ue: float
-    bi: float
     hand_tone: str
     hand_function: int
     report: Optional[str] = None
@@ -138,7 +137,6 @@ class AssessmentOverviewItem(BaseModel):
     patient_id: str
     name: str
     fma_ue: float
-    bi: float
     hand_tone: str
     hand_function: int
     report_status: str
@@ -156,7 +154,6 @@ class StatsSummary(BaseModel):
     diagnosis_distribution: Dict[str, int]
     hand_function_distribution: Dict[str, int]
     avg_fma_ue: Optional[float] = None
-    avg_bi: Optional[float] = None
     assessments_by_day: List[Dict[str, Union[str, int]]]
 
 
@@ -164,7 +161,7 @@ class StatsSummary(BaseModel):
 # Device-end (task-interface) MySQL store                                      #
 # --------------------------------------------------------------------------- #
 class EnrollmentRequest(BaseModel):
-    """医院入组：患者基本信息（最小集）+ 可选的第一次评估记录（手工分数）。"""
+    """医院入组：患者基本信息（最小集）+ 可选的第一次上肢/手功能评估记录。"""
 
     # 基本信息（最小集，后续可扩展）
     patient_id: str = Field(..., description="患者编号（业务主键）")
@@ -177,7 +174,6 @@ class EnrollmentRequest(BaseModel):
 
     # 第一次评估记录（医院给出，手工录入；可全空表示仅入组基本信息）
     fma_ue: Optional[float] = Field(None, ge=0.0, le=20.0)
-    bi: Optional[float] = Field(None, ge=0.0, le=100.0)
     hand_tone: Optional[str] = None
     hand_function: Optional[int] = Field(None, ge=1, le=6)
     assessment_time: Optional[str] = None
@@ -199,7 +195,6 @@ class MysqlAssessmentItem(BaseModel):
     package_hash: Optional[str] = None
     assessment_time: Optional[str] = None
     fma_ue: float
-    bi: float
     hand_tone: str
     hand_function: int
     report_status: str

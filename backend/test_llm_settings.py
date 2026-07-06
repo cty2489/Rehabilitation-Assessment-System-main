@@ -93,7 +93,20 @@ def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
     assert by_id["qwen3_8b_hf"]["weight_exists"] is True
     assert by_id["deepseek_r1_distill_qwen7b"]["weight_exists"] is True
     assert by_id["qwen3_8b_hf"]["available"] is True
-    assert by_id["deepseek_r1_distill_qwen7b"]["available"] is True
+    assert by_id["deepseek_r1_distill_qwen7b"]["report_ready"] is False
+    assert by_id["deepseek_r1_distill_qwen7b"]["available"] is False
+    assert by_id["deepseek_r1_distill_qwen7b"]["status"] == "candidate"
+
+
+def test_update_active_model_rejects_unverified_candidate(tmp_path, monkeypatch):
+    config_path = tmp_path / "llm_settings.json"
+    qwen_data = tmp_path / "Qwen_data"
+    (qwen_data / "DeepSeek-R1-Distill-Qwen-7B").mkdir(parents=True)
+    monkeypatch.setattr(llm_settings, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
+
+    with pytest.raises(ValueError):
+        llm_settings.update_active_model("deepseek_r1_distill_qwen7b")
 
 
 def test_settings_candidates_match_model_registry():

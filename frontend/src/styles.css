@@ -477,6 +477,83 @@ body::before {
   box-shadow: 0 0 0 2px rgba(14, 124, 138, 0.16), 0 14px 28px -24px rgba(14, 124, 138, 0.55);
 }
 
+.model-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(320px, 1.25fr);
+  gap: 16px;
+}
+
+.model-current-card,
+.model-switch-card {
+  min-height: 190px;
+}
+
+.model-current-name {
+  margin-top: 18px;
+  color: var(--ink-900);
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.model-current-meta {
+  margin-top: 8px;
+  color: var(--ink-400);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.model-current-status,
+.model-switch-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  color: var(--ink-500);
+  font-size: 13px;
+}
+
+.model-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.model-candidate {
+  min-height: 132px;
+  padding: 13px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: #fbfdfe;
+}
+
+.model-candidate.active {
+  border-color: rgba(14, 124, 138, 0.42);
+  background: rgba(14, 124, 138, 0.05);
+}
+
+.model-candidate-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.model-candidate-head strong {
+  color: var(--ink-900);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.model-candidate p {
+  margin: 10px 0 0;
+  color: var(--ink-500);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .llm-settings-head {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(220px, 0.8fr) auto;

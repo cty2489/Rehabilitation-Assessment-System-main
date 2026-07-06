@@ -7,8 +7,9 @@ The report pipeline can call several kinds of LLM backends:
 * ``deepseek`` - OpenAI-compatible DeepSeek API
 
 Only one model is active for report generation at a time. The settings are
-stored outside source control so researchers can switch baseline models from the
-System Management page without editing ``.env`` or restarting the full stack.
+stored outside source control so researchers can switch verified baseline
+models from the Model Settings page without editing ``.env`` or restarting the
+full stack.
 """
 from __future__ import annotations
 
@@ -75,6 +76,7 @@ def _default_models() -> List[Dict[str, Any]]:
             ),
             "enabled": True,
             "description": "GGUF 回退/对照报告模型，通过本机 HTTP 服务调用。",
+            "report_ready": True,
         },
         {
             "id": "qwen3_8b_hf",
@@ -89,6 +91,7 @@ def _default_models() -> List[Dict[str, Any]]:
             ),
             "enabled": True,
             "description": "当前云端推荐报告模型，HF 原版格式，可作为中文基线和后续微调基座。",
+            "report_ready": True,
         },
         {
             "id": "deepseek_r1_distill_qwen7b",
@@ -102,7 +105,8 @@ def _default_models() -> List[Dict[str, Any]]:
                 extra_candidates=[_original_model_path("DeepSeek-R1-Distill-Qwen-7B")],
             ),
             "enabled": True,
-            "description": "DeepSeek 蒸馏模型候选；报告任务需关闭或约束思考输出。",
+            "description": "DeepSeek 蒸馏模型候选；当前端到端报告 JSON 结构校验未通过，暂不用于线上报告。",
+            "report_ready": False,
         },
         {
             "id": "baichuan2_7b_chat",
@@ -114,6 +118,7 @@ def _default_models() -> List[Dict[str, Any]]:
             "weight_path": _default_model_path("Baichuan2-7B-Chat"),
             "enabled": True,
             "description": "百川中文对话模型候选，用于国产模型横向比较。",
+            "report_ready": False,
         },
         {
             "id": "glm4_9b",
@@ -125,6 +130,7 @@ def _default_models() -> List[Dict[str, Any]]:
             "weight_path": _default_model_path("GLM-4-9B-0414"),
             "enabled": True,
             "description": "智谱 GLM 系列候选，用于国产模型横向比较。",
+            "report_ready": False,
         },
         {
             "id": "mistral7b_v03",
@@ -136,6 +142,7 @@ def _default_models() -> List[Dict[str, Any]]:
             "weight_path": _default_model_path("Mistral-7B-Instruct-v0.3"),
             "enabled": True,
             "description": "国外通用指令模型候选，可作为英文/国际基线。",
+            "report_ready": False,
         },
         {
             "id": "llama3_8b_instruct",
@@ -147,6 +154,7 @@ def _default_models() -> List[Dict[str, Any]]:
             "weight_path": _default_model_path("Meta-Llama-3-8B-Instruct"),
             "enabled": True,
             "description": "国外通用指令模型候选，可作为国际基线。",
+            "report_ready": False,
         },
     ]
 
@@ -236,7 +244,7 @@ def update_active_model(model_id: str) -> Dict[str, Any]:
     if not decorated.get("available"):
         raise ValueError(
             f"LLM model is not ready: {model_id}. "
-            "请先配置可用的远程服务地址或本地权重路径。"
+            "请先配置可用的服务/权重，并确认该模型已通过端到端报告结构校验。"
         )
     settings["active_model_id"] = model_id
     write_settings(settings)
@@ -288,6 +296,7 @@ def decorate_model(model: Dict[str, Any], active_id: str, probe: bool = True) ->
     provider = str(out.get("provider") or "").lower()
     out["is_active"] = out.get("id") == active_id
     out["configured"] = bool(out.get("enabled", True))
+    out["report_ready"] = bool(out.get("report_ready", True))
     out["health"] = None
 
     if provider == "remote":
@@ -298,17 +307,25 @@ def decorate_model(model: Dict[str, Any], active_id: str, probe: bool = True) ->
             available = bool(out["health"].get("reachable") and out["health"].get("loaded"))
         else:
             available = out["configured"]
+        available = bool(available and out["report_ready"])
     elif provider == "deepseek":
         out["configured"] = out["configured"] and bool(os.environ.get("DEEPSEEK_API_KEY", "").strip())
-        available = out["configured"]
+        available = bool(out["configured"] and out["report_ready"])
     elif provider == "local":
         out["weight_exists"] = _path_exists(out.get("weight_path"))
-        available = bool(out["configured"] and out["weight_exists"])
+        available = bool(out["configured"] and out["weight_exists"] and out["report_ready"])
     else:
         available = False
 
     out["available"] = available
-    out["status"] = "active" if out["is_active"] else ("ready" if available else "not_ready")
+    if out["is_active"]:
+        out["status"] = "active"
+    elif available:
+        out["status"] = "ready"
+    elif out["configured"] and not out["report_ready"]:
+        out["status"] = "candidate"
+    else:
+        out["status"] = "not_ready"
     return out
 
 

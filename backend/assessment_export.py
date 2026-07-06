@@ -353,14 +353,6 @@ def _clinical_scores(assessment: Dict[str, Any]) -> List[Dict[str, Any]]:
             "display_value": _value_text(assessment.get("fma_ue"), "分"),
         },
         {
-            "key": "BI",
-            "indicator_name": "Barthel 指数",
-            "value": assessment.get("bi"),
-            "unit": "分",
-            "scale": "0-100",
-            "display_value": _value_text(assessment.get("bi"), "分"),
-        },
-        {
             "key": "hand_tone",
             "indicator_name": "手部肌张力（MAS）",
             "value": assessment.get("hand_tone"),

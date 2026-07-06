@@ -54,7 +54,7 @@ export default function DashboardPage() {
           ) : (
             <table className="data-table compact">
               <thead>
-                <tr><th>时间</th><th>患者</th><th>FMA</th><th>BI</th></tr>
+                <tr><th>时间</th><th>患者</th><th>FMA</th><th>Brunnstrom</th></tr>
               </thead>
               <tbody>
                 {recent.map((r) => (
@@ -66,7 +66,7 @@ export default function DashboardPage() {
                     <td>{fmtDateTime(r.created_at)}</td>
                     <td>{r.name}</td>
                     <td>{Math.round(r.fma_ue)}</td>
-                    <td>{Math.round(r.bi)}</td>
+                    <td>{r.hand_function} 期</td>
                   </tr>
                 ))}
               </tbody>

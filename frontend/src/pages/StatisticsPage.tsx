@@ -48,7 +48,7 @@ export default function StatisticsPage() {
         <div className="stat-card"><div className="stat-value">{stats?.patient_count ?? '—'}</div><div className="stat-label">患者总数</div></div>
         <div className="stat-card"><div className="stat-value">{stats?.assessment_count ?? '—'}</div><div className="stat-label">评估次数</div></div>
         <div className="stat-card"><div className="stat-value">{stats?.avg_fma_ue ?? '—'}</div><div className="stat-label">平均 FMA-UE</div></div>
-        <div className="stat-card"><div className="stat-value">{stats?.avg_bi ?? '—'}</div><div className="stat-label">平均 Barthel</div></div>
+        <div className="stat-card"><div className="stat-value">{Object.values(handFn).reduce((a, b) => a + b, 0) || '—'}</div><div className="stat-label">Brunnstrom 样本数</div></div>
       </div>
 
       <div className="grid-2-cards">

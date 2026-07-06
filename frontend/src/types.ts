@@ -59,6 +59,7 @@ export interface LlmModelOption {
   available?: boolean
   status?: string
   weight_exists?: boolean
+  report_ready?: boolean
   health?: LlmModelHealth | null
 }
 
@@ -98,7 +99,6 @@ export interface AssessmentRecord {
   created_at: string
   assessment_time?: string | null
   fma_ue: number
-  bi: number
   hand_tone: string
   hand_function: number
   report: string | null
@@ -186,7 +186,6 @@ export interface AssessmentOverviewItem {
   patient_id: string
   name: string
   fma_ue: number
-  bi: number
   hand_tone: string
   hand_function: number
   report_status: ReportStatus
@@ -204,7 +203,6 @@ export interface StatsSummary {
   diagnosis_distribution: Record<string, number>
   hand_function_distribution: Record<string, number>
   avg_fma_ue: number | null
-  avg_bi: number | null
   assessments_by_day: { date: string; count: number }[]
 }
 
@@ -219,7 +217,6 @@ export interface EnrollmentRequest {
   disease_days?: number | null
   // 第一次评估记录（医院手工录入，可全空表示仅入组基本信息）
   fma_ue?: number | null
-  bi?: number | null
   hand_tone?: string | null
   hand_function?: number | null
   assessment_time?: string | null
@@ -241,7 +238,6 @@ export interface MysqlAssessmentItem {
   package_hash: string | null
   assessment_time: string | null
   fma_ue: number
-  bi: number
   hand_tone: string
   hand_function: number
   report_status: string
@@ -287,7 +283,7 @@ export interface StepState {
   details: string[]
 }
 
-export type TaskKey = 'FMA_UE' | 'BI' | 'hand_tone' | 'hand_function'
+export type TaskKey = 'FMA_UE' | 'hand_tone' | 'hand_function'
 
 export interface PredictionEntry {
   task: TaskKey

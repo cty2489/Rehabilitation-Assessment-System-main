@@ -771,8 +771,13 @@ def insert_assessment(
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
 ) -> int:
-    """Insert one assessment row. ``predictions`` exposes FMA_UE / BI / hand_tone
-    / hand_function (PredictionResult or a dict). Returns the new row id."""
+    """Insert one assessment row.
+
+    The database still has a NOT NULL ``bi`` column for legacy records. Current
+    online inference no longer serves BI, so callers may pass a compatibility
+    placeholder while user-facing output remains focused on FMA-UE, hand tone
+    and Brunnstrom hand function.
+    """
     conn = get_conn()
     try:
         with conn.cursor() as cur:

@@ -1,6 +1,6 @@
 """Inference pipeline driver — wraps Deeplearning/ into an SSE-friendly flow.
 
-Loads the four pretrained CMK-AGN models once at startup, then for every
+Loads the served pretrained CMK-AGN models once at startup, then for every
 session runs the 6 processing steps (parse → preprocess → alignment →
 feature_extract → graph_fusion → inference) on a thread pool, pushing
 fine-grained progress events onto a `queue.Queue` consumed by the SSE endpoint.
@@ -52,12 +52,13 @@ from task_config import (  # noqa: E402
 )
 
 
-# 4 tasks served by this platform (subset of the 5 trained tasks).
-SERVED_TASKS: Tuple[str, ...] = ("FMA_UE", "BI", "hand_tone", "hand_function")
+# Served clinical tasks. Barthel Index (BI) is intentionally excluded from the
+# online flow: it measures ADL independence, while this system focuses on upper
+# limb/hand motor assessment from EEG/EMG/IMU signals.
+SERVED_TASKS: Tuple[str, ...] = ("FMA_UE", "hand_tone", "hand_function")
 
 CHECKPOINTS: Dict[str, Path] = {
     "FMA_UE": DL_MODEL_DIR / "FMA_UE_fold1.pth",
-    "BI": DL_MODEL_DIR / "BI_fold1.pth",
     "hand_tone": DL_MODEL_DIR / "hand_tone_fold2.pth",
     "hand_function": DL_MODEL_DIR / "hand_function_fold3.pth",
 }
@@ -67,7 +68,6 @@ CHECKPOINTS: Dict[str, Path] = {
 # the trained checkpoints; clinically they are Hand MAS and Brunnstrom (hand).
 PREDICTION_LABELS: Dict[str, Dict[str, Any]] = {
     "FMA_UE": {"label": "FMA手部分数", "range": "0–20"},
-    "BI": {"label": "Barthel指数", "range": "0–100"},
     "hand_tone": {"label": "手部肌张力 (Hand MAS)"},
     "hand_function": {"label": "Brunnstrom 分期 (手)"},
 }
@@ -119,22 +119,6 @@ def _fma_reading(value: float) -> str:
     return f"FMA手部评分 {v:.0f}/20 分，提示{band}"
 
 
-def _bi_reading(value: float) -> str:
-    """Barthel Index (0–100) → activities-of-daily-living dependence band."""
-    v = float(value)
-    if v < 20:
-        band = "日常生活完全依赖他人照护"
-    elif v < 40:
-        band = "日常生活重度依赖，多数自理活动需他人协助"
-    elif v < 60:
-        band = "日常生活中度依赖，部分自理活动需协助"
-    elif v < 100:
-        band = "日常生活轻度依赖，多数自理活动可独立完成"
-    else:
-        band = "日常生活基本自理"
-    return f"Barthel指数 {v:.0f}/100 分，提示{band}"
-
-
 def clinical_reasoning(task: str, value: Any) -> str:
     """Render a one-line physician-readable reading of a predicted score.
 
@@ -143,8 +127,6 @@ def clinical_reasoning(task: str, value: Any) -> str:
     """
     if task == "FMA_UE":
         return "临床推理 · " + _fma_reading(value)
-    if task == "BI":
-        return "临床推理 · " + _bi_reading(value)
     if task == "hand_tone":
         reading = _HAND_TONE_READING.get(str(value), "肌张力分级结果")
         return f"临床推理 · 手部肌张力 Hand MAS {value} 级，{reading}"
@@ -358,7 +340,7 @@ def run_pipeline(
     affected hemisphere for the EEG biomarkers. ``institution`` ("hospital" |
     "device") selects the per-trial signal loader + column validators so the
     same pipeline serves both data formats. Returns a dict {task:
-    prediction_value} for the four served tasks.
+    prediction_value} for the served tasks.
     """
     try:
         return _run_pipeline_inner(eeg_paths, emg_paths, registry, q, affected_side, institution)
@@ -477,7 +459,6 @@ def _run_pipeline_inner(
     results: Dict[str, Any] = {}
     task_detail = {
         "FMA_UE": "正在评估 FMA 手部运动功能评分...",
-        "BI": "正在评估 Barthel 日常生活活动能力指数...",
         "hand_tone": "正在评估手部肌张力 (Hand MAS) 分级...",
         "hand_function": "正在评估手功能 Brunnstrom 分期...",
     }

@@ -7,6 +7,7 @@ import AssessmentPage from '../pages/AssessmentPage'
 import RecordsOverviewPage from '../pages/RecordsOverviewPage'
 import StatisticsPage from '../pages/StatisticsPage'
 import SystemManagementPage from '../pages/SystemManagementPage'
+import ModelSettingsPage from '../pages/ModelSettingsPage'
 import TaskInterfacePage from '../pages/TaskInterfacePage'
 
 export default function AppShell() {
@@ -25,7 +26,7 @@ export default function AppShell() {
           {route === 'stats' && <StatisticsPage />}
           {route === 'task-interface' && <TaskInterfacePage />}
           {route === 'system' && <SystemManagementPage />}
-          {route === 'llm-settings' && <SystemManagementPage focusLlm />}
+          {route === 'llm-settings' && <ModelSettingsPage />}
         </main>
       </div>
     </div>

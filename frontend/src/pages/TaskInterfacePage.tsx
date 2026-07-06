@@ -368,7 +368,6 @@ interface EnrollForm {
   paralysis_side: ParalysisSide
   disease_days: string
   fma_ue: string
-  bi: string
   hand_tone: string
   hand_function: string
 }
@@ -382,7 +381,6 @@ const INITIAL_ENROLL: EnrollForm = {
   paralysis_side: '左',
   disease_days: '',
   fma_ue: '',
-  bi: '',
   hand_tone: '',
   hand_function: '',
 }
@@ -418,7 +416,6 @@ function EnrollmentPanel({ onEnrolled }: { onEnrolled: () => void }) {
       paralysis_side: form.paralysis_side || null,
       disease_days: num(form.disease_days),
       fma_ue: num(form.fma_ue),
-      bi: num(form.bi),
       hand_tone: form.hand_tone || null,
       hand_function: num(form.hand_function),
     }
@@ -501,10 +498,6 @@ function EnrollmentPanel({ onEnrolled }: { onEnrolled: () => void }) {
             <div className="field">
               <label>FMA-UE (0–20)</label>
               <input type="number" value={form.fma_ue ?? ''} onChange={(e) => set('fma_ue', e.target.value)} />
-            </div>
-            <div className="field">
-              <label>Barthel 指数 (0–100)</label>
-              <input type="number" value={form.bi ?? ''} onChange={(e) => set('bi', e.target.value)} />
             </div>
             <div className="field">
               <label>手部肌张力</label>
@@ -634,7 +627,6 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
                 <th>来源</th>
                 <th>Trials</th>
                 <th>FMA-UE</th>
-                <th>BI</th>
                 <th>肌张力</th>
                 <th>Brunnstrom</th>
                 <th>Model</th>
@@ -659,7 +651,6 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
                   </td>
                   <td>{r.n_trials ?? '-'}</td>
                   <td>{r.fma_ue}</td>
-                  <td>{r.bi}</td>
                   <td>{r.hand_tone}</td>
                   <td>{r.hand_function}</td>
                   <td style={{ fontSize: 12, color: '#6b7280' }}>{r.llm_provider || '-'} / {r.llm_model || '-'}</td>
