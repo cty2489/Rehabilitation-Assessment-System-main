@@ -74,7 +74,7 @@ def _default_models() -> List[Dict[str, Any]]:
                 "qwen2.5-7b-instruct-gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
             ),
             "enabled": True,
-            "description": "当前云端默认报告模型，通过本机 GGUF 服务调用。",
+            "description": "GGUF 回退/对照报告模型，通过本机 HTTP 服务调用。",
         },
         {
             "id": "qwen3_8b_hf",
@@ -88,7 +88,7 @@ def _default_models() -> List[Dict[str, Any]]:
                 extra_candidates=[_original_model_path("Qwen3-8B")],
             ),
             "enabled": True,
-            "description": "用户已准备的 HF 格式候选模型，可作为中文基线。",
+            "description": "当前云端推荐报告模型，HF 原版格式，可作为中文基线和后续微调基座。",
         },
         {
             "id": "deepseek_r1_distill_qwen7b",

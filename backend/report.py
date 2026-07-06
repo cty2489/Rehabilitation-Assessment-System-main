@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import sys
 import threading
 from pathlib import Path
@@ -128,6 +129,12 @@ def _parse_clinical_json(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
     s = text.strip()
+    # Qwen3 / DeepSeek-R1 style models may emit a private reasoning block before
+    # the final JSON. Drop it before locating the outer JSON object.
+    s = re.sub(r"<think>.*?</think>", "", s, flags=re.IGNORECASE | re.DOTALL).strip()
+    think_end = s.lower().rfind("</think>")
+    if think_end != -1:
+        s = s[think_end + len("</think>"):].strip()
     # Strip accidental code fences.
     if s.startswith("```"):
         s = s.strip("`")
@@ -358,6 +365,23 @@ def _strip_trailing_chat_tags(text: str) -> str:
         if idx != -1 and idx < cut:
             cut = idx
     return text[:cut].rstrip()
+
+
+def _apply_chat_template(tok, messages: "Any") -> str:
+    """Render chat prompt, disabling reasoner thinking when the tokenizer supports it."""
+    try:
+        return tok.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    except TypeError:
+        return tok.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
 
 def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = None) -> Dict[str, Any]:
@@ -688,7 +712,7 @@ def _reason_local(
     device = next(model.parameters()).device
 
     messages = build_clinical_messages(context)
-    prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt = _apply_chat_template(tok, messages)
     inputs = tok(prompt, return_tensors="pt").to(device)
     eos = rm.eos_ids
     sampling = {"do_sample": True, "temperature": 0.7, "top_p": 0.9} if sample \

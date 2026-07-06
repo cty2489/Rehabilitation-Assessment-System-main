@@ -171,21 +171,20 @@ async def lifespan(app: FastAPI):
     print(f"[startup] loaded {len(registry.models)} models: {list(registry.models.keys())}")
     app.state.registry = registry
 
-    # Report generation: either call a remote cloud-GPU LLM service
-    # (LLM_REMOTE_URL set — nothing to load locally) or load the QLoRA model
-    # in-process. In-process load failures (e.g. no CUDA / missing deps) don't
-    # crash startup — DL predictions still serve, and report generation
-    # surfaces a clear per-session error.
+    # Report generation follows the saved System Management selection when it
+    # exists; .env remains a fallback for older deployments. In-process load
+    # failures (e.g. no CUDA / missing deps) don't crash startup — DL predictions
+    # still serve, and report generation surfaces a clear per-session error.
     app.state.report_model = REPORT_MODEL
     _provider = llm_provider()
-    _remote = remote_url()
     if _provider == "deepseek":
         print("[startup] report: DeepSeek API mode (no local LLM load)")
-    elif _remote:
+    elif _provider == "remote":
+        _remote = remote_url()
         print(f"[startup] report: remote mode → {_remote} (no local LLM load)")
     else:
         try:
-            print(f"[startup] loading report LLM from {REPORT_MODEL.adapter_dir}...")
+            print(f"[startup] report: local mode selected, loading active report LLM...")
             REPORT_MODEL.load()
         except Exception as exc:  # noqa: BLE001
             print(f"[startup][warn] report LLM not loaded: {exc}")

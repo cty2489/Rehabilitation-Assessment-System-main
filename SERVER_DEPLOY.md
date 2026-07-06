@@ -1,6 +1,6 @@
 # 云服务器部署说明
 
-本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，GGUF LLM 和 MySQL 均只监听本机。
+本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，MySQL 只监听本机；报告大模型当前推荐使用 FastAPI 进程内加载的 Qwen3-8B HF 原版权重，GGUF 服务保留为回退/对照。
 
 ## 1. 服务拓扑
 
@@ -12,7 +12,8 @@
        |-- /api/*          -> 127.0.0.1:8000/api/*
   -> FastAPI 127.0.0.1:8000
        |-- MySQL 127.0.0.1:3306
-       |-- GGUF LLM 127.0.0.1:6007
+       |-- Qwen3-8B HF 本地报告模型（默认）
+       |-- GGUF LLM 127.0.0.1:6007（可选回退/对照）
        |-- PyTorch 评分模型 DL_model/*.pth
 ```
 
@@ -23,6 +24,8 @@
 ```text
 /root/autodl-tmp/rehab_project
 ├── Rehabilitation-Assessment-System-main      # 项目源码
+├── ../Qwen_data/Qwen3-8B                      # 当前推荐报告模型，HF 原版格式
+├── ../Qwen_data/DeepSeek-R1-Distill-Qwen-7B   # 候选对照模型，HF 原版格式
 ├── models/qwen2.5-7b-instruct-gguf            # GGUF 模型分卷
 ├── mysql_conf/my.cnf                          # MySQL 配置
 ├── mysql_data                                 # MySQL 数据目录
@@ -44,7 +47,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.2
+git checkout cloud-server-v1.1.3
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -54,7 +57,7 @@ git checkout main
 git pull
 ```
 
-仓库不包含真实密钥、患者数据、MySQL 数据目录、GGUF 大模型文件和康复评分 `.pth` 权重。这些文件需要按本机实际路径单独准备。
+仓库不包含真实密钥、患者数据、MySQL 数据目录、HF/GGUF 大模型文件和康复评分 `.pth` 权重。这些文件需要按本机实际路径单独准备。
 
 ## 3. 系统依赖
 
@@ -63,7 +66,7 @@ git pull
 | 环境 | 路径示例 | 用途 |
 |---|---|---|
 | 后端环境 | `/root/autodl-tmp/envs/rehab_backend` | FastAPI、PyTorch、biomarker、MySQL client |
-| LLM 环境 | `/root/autodl-tmp/envs/llm_env` | llama-cpp-python / GGUF 服务 |
+| LLM 环境 | `/root/autodl-tmp/envs/llm_env` | 可选 llama-cpp-python / GGUF 回退服务 |
 | Node 环境 | `/root/autodl-tmp/envs/node_env` | 前端构建 |
 
 后端依赖：
@@ -74,7 +77,19 @@ source /root/autodl-tmp/envs/rehab_backend/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-GGUF 服务依赖：
+如果要使用 Qwen3-8B / DeepSeek-R1-Distill-Qwen-7B 这类 HF 原版权重在后端进程内出报告，还需要在后端环境安装已验证的本地推理依赖。当前云端验证组合如下，没有升级服务器原有 PyTorch：
+
+```bash
+source /root/autodl-tmp/envs/rehab_backend/bin/activate
+pip install \
+  transformers==4.52.4 \
+  accelerate==0.30.1 \
+  bitsandbytes==0.43.3 \
+  peft==0.11.1 \
+  sentencepiece==0.2.1
+```
+
+GGUF 回退服务依赖：
 
 ```bash
 source /root/autodl-tmp/envs/llm_env/bin/activate
@@ -203,6 +218,14 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 /root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
 ```
 
+当前云端验证结论：
+
+| 模型 ID | 结论 |
+|---|---|
+| `qwen3_8b_hf` | 已通过端到端报告链路测试，可作为当前线上默认报告模型 |
+| `deepseek_r1_distill_qwen7b` | 权重可加载、可生成，但会输出推理过程且报告 JSON 结构不稳定，暂不建议设为默认 |
+| `qwen25_7b_gguf` | 保留为可用回退/对照 |
+
 其它本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
 
 ```text
@@ -282,7 +305,7 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 它会依次处理：
 
 1. 启动 MySQL `127.0.0.1:3306`
-2. 启动 GGUF LLM `127.0.0.1:6007`
+2. 启动 GGUF LLM `127.0.0.1:6007`（用于回退/对照；如果只使用 Qwen3-HF，可保持但不设为当前模型）
 3. 启动 FastAPI `127.0.0.1:8000`
 4. 确认 `frontend/dist/index.html` 存在，必要时构建
 5. 启动或重载 Nginx `0.0.0.0:6006`
@@ -437,7 +460,24 @@ source /root/autodl-tmp/envs/rehab_backend/bin/activate
 pip install -r /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/requirements.txt
 ```
 
-### GGUF 报告生成失败
+### 报告大模型生成失败
+
+如果当前设置页选择的是 `qwen3_8b_hf`，先检查权重目录和后端本地推理依赖：
+
+```bash
+test -d /root/autodl-tmp/Qwen_data/Qwen3-8B && echo OK
+source /root/autodl-tmp/envs/rehab_backend/bin/activate
+python - <<'PY'
+import torch, transformers, accelerate, bitsandbytes
+print("torch", torch.__version__, "cuda", torch.cuda.is_available())
+print("transformers", transformers.__version__)
+print("accelerate", accelerate.__version__)
+print("bitsandbytes", bitsandbytes.__version__)
+PY
+tail -n 120 /root/autodl-tmp/rehab_project/backend_run.log
+```
+
+如果当前设置页选择的是 `qwen25_7b_gguf`，检查 GGUF 回退服务：
 
 检查：
 

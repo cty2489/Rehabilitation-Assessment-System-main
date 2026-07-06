@@ -38,6 +38,20 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(d["days_post"], 90)
         self.assertEqual(d["affected_side"], "右")
 
+    def test_parse_clinical_json_strips_think_block(self) -> None:
+        text = '<think>{"draft":"不要解析这里"}</think>\n{"overall_interpretation":"ok"}'
+        self.assertEqual(
+            report._parse_clinical_json(text),
+            {"overall_interpretation": "ok"},
+        )
+
+    def test_parse_clinical_json_strips_orphan_think_end(self) -> None:
+        text = '推理过程里可能有 {"draft":"不要解析"}\n</think>\n```json\n{"overall_interpretation":"ok"}\n```'
+        self.assertEqual(
+            report._parse_clinical_json(text),
+            {"overall_interpretation": "ok"},
+        )
+
 
 class LoadErrorTests(unittest.TestCase):
     def test_missing_adapter_dir_raises_clear_error(self) -> None:

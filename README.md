@@ -7,13 +7,13 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.2
+cloud-server-v1.1.3
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
 
 - Nginx 生产入口，不再依赖 Vite dev server
-- FastAPI 后端、MySQL、GGUF 本地大模型服务联动
+- FastAPI 后端、MySQL、Qwen3-8B HF 本地报告模型联动，GGUF 服务保留为回退/对照
 - 页面登录和 Bearer token 业务接口保护
 - 26 项 biomarker 计算和报告兜底
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
@@ -30,7 +30,8 @@ cloud-server-v1.1.2
   -> 公网 HTTPS 地址（云平台端口映射）
   -> Nginx 6006，服务 frontend/dist 并反向代理 /api
   -> FastAPI 8000
-  -> MySQL 3306 + PyTorch 评分模型 + GGUF LLM 6007
+  -> MySQL 3306 + PyTorch 评分模型 + Qwen3-8B HF 报告模型
+  -> 可选 GGUF LLM 6007 回退/对照服务
 ```
 
 ## 功能概览
@@ -40,7 +41,7 @@ cloud-server-v1.1.2
 - FMA-UE、BI、手部肌张力、Brunnstrom 手功能分期预测
 - 26 项关键 biomarker 计算、展示和报告解读
 - 系统管理页可选择报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
-- 本地 Qwen2.5-7B-Instruct GGUF 服务生成康复评估报告，后续可切换 HF 本地权重做基线实验
+- 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；Qwen2.5-7B-Instruct GGUF 保留为回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
 - 页面内登录保护，后端使用 Bearer token 保护读写接口
@@ -52,7 +53,7 @@ cloud-server-v1.1.2
 |---|---|---|
 | Nginx | `0.0.0.0:6006` | 生产入口，服务前端静态文件并代理 `/api` |
 | FastAPI 后端 | `127.0.0.1:8000` | 业务接口、推理编排、报告生成、数据库接口 |
-| GGUF LLM | `127.0.0.1:6007` | Qwen2.5-7B-Instruct 报告生成服务 |
+| GGUF LLM | `127.0.0.1:6007` | 可选回退/对照：Qwen2.5-7B-Instruct 报告生成服务 |
 | MySQL | `127.0.0.1:3306` | 业务数据库 |
 | Vite dev | `5173` | 仅本地开发使用，生产部署不启动 |
 
@@ -95,7 +96,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.2
+git checkout cloud-server-v1.1.3
 ```
 
 2. 准备外部文件：
@@ -103,9 +104,11 @@ git checkout cloud-server-v1.1.2
 仓库不包含真实模型权重、数据库、患者数据和 `.env` 密钥。部署前需要准备：
 
 ```text
-DL_model/*.pth                                      # 康复评分模型权重
-/root/autodl-tmp/rehab_project/models/.../*.gguf   # GGUF 大模型文件
-backend/.env                                       # 后端环境变量
+DL_model/*.pth                                           # 康复评分模型权重
+/root/autodl-tmp/Qwen_data/Qwen3-8B                      # 当前推荐报告模型，HF 原版格式
+/root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B   # 候选对照模型，HF 原版格式
+/root/autodl-tmp/rehab_project/models/.../*.gguf         # 可选 GGUF 回退/对照模型
+backend/.env                                            # 后端环境变量
 MySQL 数据目录或初始化 SQL
 ```
 
@@ -241,6 +244,14 @@ LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 /root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
 ```
 
+当前云端验证结论：
+
+```text
+qwen3_8b_hf：已通过端到端报告链路测试，可作为当前线上默认报告模型。
+deepseek_r1_distill_qwen7b：权重可加载、可生成，但会输出推理过程且报告 JSON 结构不稳定，暂不建议设为默认。
+qwen25_7b_gguf：保留为可用回退/对照，不再作为当前云端默认报告模型。
+```
+
 其它本地 HF 权重默认查找根目录：
 
 ```env
@@ -277,7 +288,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.2
+稳定演示/复现实验：使用 cloud-server-v1.1.3
 日常继续开发：使用 main
 ```
 

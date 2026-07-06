@@ -1,5 +1,15 @@
 # Changelog
 
+## cloud-server-v1.1.3 - 2026-07-06
+
+### 改进
+
+- 当前云端报告模型从 `qwen25_7b_gguf` 切换为 `qwen3_8b_hf`，后者已通过端到端报告链路测试。
+- 本地 HF 报告模型生成时会尽量关闭 Qwen3/DeepSeek-R1 风格的 thinking 输出，并在解析 JSON 前剥离 `<think>...</think>` 或孤立 `</think>` 前缀。
+- 文档补充 HF 原版权重推理依赖的已验证版本组合，避免部署时误升级服务器现有 PyTorch/CUDA 环境。
+- 明确 `deepseek_r1_distill_qwen7b` 当前仅作为候选对照：权重可加载、可生成，但报告 JSON 结构尚不稳定，不建议设为默认。
+- `qwen25_7b_gguf` 保留为可用回退/对照服务。
+
 ## cloud-server-v1.1.2 - 2026-07-06
 
 ### 改进

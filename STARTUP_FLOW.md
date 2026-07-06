@@ -14,7 +14,8 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 
 ```text
 MySQL      127.0.0.1:3306
-GGUF LLM   127.0.0.1:6007
+Qwen3 HF   由 FastAPI 启动时尝试加载，用于当前报告生成
+GGUF LLM   127.0.0.1:6007（可选回退/对照）
 FastAPI    127.0.0.1:8000
 Nginx      0.0.0.0:6006 -> frontend/dist + /api proxy
 ```
@@ -26,7 +27,7 @@ Nginx      0.0.0.0:6006 -> frontend/dist + /api proxy
 ```bash
 curl -I http://127.0.0.1:6006/
 curl http://127.0.0.1:8000/api/health
-curl http://127.0.0.1:6007/health
+curl http://127.0.0.1:6007/health   # 仅检查 GGUF 回退服务
 ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 ```
 
@@ -146,7 +147,14 @@ grep '^APP_ADMIN_USER\\|^APP_ADMIN_PASSWORD\\|^APP_AUTH_TOKEN' backend/.env
 
 ### 报告生成慢
 
-报告生成依赖 GGUF LLM。检查：
+当前云端默认使用 Qwen3-8B HF 原版权重，FastAPI 启动时会尝试加载报告模型，因此启动耗时会比 remote/GGUF 模式更长。检查：
+
+```bash
+curl http://127.0.0.1:8000/api/health
+tail -n 120 /root/autodl-tmp/rehab_project/backend_run.log
+```
+
+如果设置页切回了 `qwen25_7b_gguf`，再检查 GGUF 回退服务：
 
 ```bash
 curl http://127.0.0.1:6007/health
