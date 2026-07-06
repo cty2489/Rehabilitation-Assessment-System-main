@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
@@ -320,6 +320,31 @@ def _save_uploads(files: List[UploadFile], destdir: Path, prefix: str) -> List[P
     return out
 
 
+def _read_saved_zip(zip_path: Path, work: Path, institution: str):
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            members = [info for info in zf.infolist() if not info.is_dir()]
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=422, detail="压缩包不是有效的 zip 文件") from exc
+
+    total_uncompressed = sum(info.file_size for info in members)
+    if len(members) > MAX_ZIP_MEMBERS:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=413, detail=f"压缩包内文件数超过限制 {MAX_ZIP_MEMBERS}")
+    if total_uncompressed > MAX_ZIP_EXTRACTED_BYTES:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(
+            status_code=413,
+            detail=f"压缩包解压后超过限制 {_human_bytes(MAX_ZIP_EXTRACTED_BYTES)}",
+        )
+    try:
+        root = safe_extract_zip(zip_path, work / "extracted")
+        pkg = read_eval_package(root, institution=institution)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return root, pkg
+
+
 def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
     """Run the full pipeline + report generation on a worker thread."""
     try:
@@ -572,28 +597,54 @@ def _save_and_extract_zip(upload: UploadFile, institution: str) -> "tuple[Path, 
             digest.update(chunk)
             fh.write(chunk)
 
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            members = [info for info in zf.infolist() if not info.is_dir()]
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=422, detail="压缩包不是有效的 zip 文件") from exc
-
-    total_uncompressed = sum(info.file_size for info in members)
-    if len(members) > MAX_ZIP_MEMBERS:
-        shutil.rmtree(work, ignore_errors=True)
-        raise HTTPException(status_code=413, detail=f"压缩包内文件数超过限制 {MAX_ZIP_MEMBERS}")
-    if total_uncompressed > MAX_ZIP_EXTRACTED_BYTES:
-        shutil.rmtree(work, ignore_errors=True)
-        raise HTTPException(
-            status_code=413,
-            detail=f"压缩包解压后超过限制 {_human_bytes(MAX_ZIP_EXTRACTED_BYTES)}",
-        )
-    try:
-        root = safe_extract_zip(zip_path, work / "extracted")
-        pkg = read_eval_package(root, institution=institution)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    root, pkg = _read_saved_zip(zip_path, work, institution)
     return root, pkg, digest.hexdigest()
+
+
+async def _save_and_extract_raw_zip(
+    request: Request,
+    institution: str,
+    filename: Optional[str] = None,
+) -> "tuple[Path, Any, str, str]":
+    """Persist a raw ``application/zip`` request body and parse it.
+
+    This is a compatibility path for embedded clients that cannot easily send a
+    multipart form. Patient metadata can be supplied through query parameters or
+    headers; the zip itself is still validated exactly like multipart uploads.
+    """
+    if institution not in INSTITUTIONS:
+        raise HTTPException(status_code=422, detail=f"未知机构类型：{institution}")
+
+    clean_name = Path(filename or "device_upload.zip").name
+    if not clean_name.lower().endswith(".zip"):
+        clean_name = f"{clean_name}.zip"
+
+    _cleanup_old_sessions()
+    work = SESSION_ROOT / f"pkg_{uuid.uuid4().hex[:12]}"
+    work.mkdir(parents=True, exist_ok=True)
+    zip_path = work / "bundle.zip"
+    digest = hashlib.sha256()
+    written = 0
+    with zip_path.open("wb") as fh:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            written += len(chunk)
+            if written > MAX_ZIP_BYTES:
+                fh.close()
+                shutil.rmtree(work, ignore_errors=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"{clean_name} 超过压缩包限制 {_human_bytes(MAX_ZIP_BYTES)}",
+                )
+            digest.update(chunk)
+            fh.write(chunk)
+    if written == 0:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=422, detail="请求体为空，请上传 zip 二进制内容")
+
+    root, pkg = _read_saved_zip(zip_path, work, institution)
+    return root, pkg, digest.hexdigest(), clean_name
 
 
 @app.post("/api/task-interface/parse")
@@ -773,25 +824,31 @@ def _completed_device_assessment_id(job: Dict[str, Any]) -> int:
     return int(assessment_db_id)
 
 
-@app.post("/api/device/v1/assessments")
-async def device_create_assessment(
-    package: UploadFile = File(...),
-    institution: str = Form("device"),
-    device_id: Optional[str] = Form(None),
-    patient_id: Optional[str] = Form(None),
-    name: Optional[str] = Form(None),
-    sex: Optional[str] = Form(None),
-    age: Optional[int] = Form(None),
-    diagnosis: Optional[str] = Form(None),
-    disease_days: Optional[int] = Form(None),
-    paralysis_side: Optional[str] = Form(None),
-    _device: None = Depends(_require_device),
-):
-    """Device-side machine API: upload one active-assessment zip and start a
-    background analysis job. The device polls ``/jobs/{job_id}`` and downloads
-    the generated export files when the job reaches ``completed``."""
-    institution = (institution or "device").strip().lower()
-    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
+def _request_text(request: Request, key: str, default: Optional[str] = None) -> Optional[str]:
+    """Read raw-upload metadata from query params first, then X-* headers."""
+    value = request.query_params.get(key)
+    if value not in (None, ""):
+        return str(value)
+    header = request.headers.get(f"X-{key.replace('_', '-')}")
+    if header not in (None, ""):
+        return str(header)
+    return default
+
+
+def _create_device_assessment_job(
+    *,
+    package_name: Optional[str],
+    pkg: Any,
+    package_hash: str,
+    device_id: Optional[str] = None,
+    patient_id: Optional[str] = None,
+    name: Optional[str] = None,
+    sex: Optional[str] = None,
+    age: Optional[int] = None,
+    diagnosis: Optional[str] = None,
+    disease_days: Optional[int] = None,
+    paralysis_side: Optional[str] = None,
+) -> Dict[str, Any]:
     if pkg.n_trials == 0:
         detail = "数据包中没有可用的 active trial。" + ("；".join(pkg.warnings) if pkg.warnings else "")
         raise HTTPException(status_code=422, detail=detail)
@@ -799,9 +856,8 @@ async def device_create_assessment(
     prefill = dict(pkg.patient_prefill)
     business_pid = _nonblank(patient_id, prefill.get("patient_id"))
     if not business_pid:
-        raise HTTPException(status_code=422, detail="缺少 patient_id，表单或 manifest.json 至少提供一个")
+        raise HTTPException(status_code=422, detail="缺少 patient_id，表单、查询参数或 manifest.json 至少提供一个")
 
-    enrolled: Dict[str, Any] = {}
     try:
         enrolled = mysql_db.get_patient_by_business_id(business_pid) or {}
     except mysql_db.MySQLUnavailable as exc:
@@ -830,7 +886,7 @@ async def device_create_assessment(
         session_id, patient, pkg.eeg_paths, pkg.emg_paths,
         institution=pkg.institution,
         persist_target="mysql",
-        package_name=package.filename,
+        package_name=package_name,
         assessment_id=pkg.manifest_summary.get("assessment_id"),
         assessment_time=pkg.manifest_summary.get("assessment_time"),
         n_trials=pkg.n_trials,
@@ -848,7 +904,7 @@ async def device_create_assessment(
             session_id=session_id,
             assessment_id=pkg.manifest_summary.get("assessment_id"),
             patient_id=patient.patient_id,
-            package_name=package.filename,
+            package_name=package_name,
             package_hash=package_hash,
         )
     except mysql_db.MySQLUnavailable as exc:
@@ -861,6 +917,110 @@ async def device_create_assessment(
     response["n_trials"] = pkg.n_trials
     response["parse_warnings"] = pkg.warnings
     return response
+
+
+@app.post("/api/device/v1/assessments")
+async def device_create_assessment(
+    request: Request,
+    package: Optional[UploadFile] = File(None),
+    institution: str = Form("device"),
+    device_id: Optional[str] = Form(None),
+    patient_id: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    sex: Optional[str] = Form(None),
+    age: Optional[int] = Form(None),
+    diagnosis: Optional[str] = Form(None),
+    disease_days: Optional[int] = Form(None),
+    paralysis_side: Optional[str] = Form(None),
+    _device: None = Depends(_require_device),
+):
+    """Device-side machine API: upload one active-assessment zip and start a
+    background analysis job. The device polls ``/jobs/{job_id}`` and downloads
+    the generated export files when the job reaches ``completed``."""
+    institution = (institution or "device").strip().lower()
+    if package is not None:
+        _root, pkg, package_hash = _save_and_extract_zip(package, institution)
+        return _create_device_assessment_job(
+            package_name=package.filename,
+            pkg=pkg,
+            package_hash=package_hash,
+            device_id=device_id,
+            patient_id=patient_id,
+            name=name,
+            sex=sex,
+            age=age,
+            diagnosis=diagnosis,
+            disease_days=disease_days,
+            paralysis_side=paralysis_side,
+        )
+
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/zip" in content_type or "application/octet-stream" in content_type:
+        raw_institution = (_request_text(request, "institution", institution) or "device").strip().lower()
+        filename = _request_text(request, "filename") or request.headers.get("X-Filename")
+        _root, pkg, package_hash, package_name = await _save_and_extract_raw_zip(
+            request, raw_institution, filename=filename,
+        )
+        return _create_device_assessment_job(
+            package_name=package_name,
+            pkg=pkg,
+            package_hash=package_hash,
+            device_id=_request_text(request, "device_id"),
+            patient_id=_request_text(request, "patient_id"),
+            name=_request_text(request, "name"),
+            sex=_request_text(request, "sex"),
+            age=int(_request_text(request, "age")) if (_request_text(request, "age") or "").isdigit() else None,
+            diagnosis=_request_text(request, "diagnosis"),
+            disease_days=(
+                int(_request_text(request, "disease_days"))
+                if (_request_text(request, "disease_days") or "").isdigit()
+                else None
+            ),
+            paralysis_side=_request_text(request, "paralysis_side"),
+        )
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "上传格式不正确：请使用 multipart/form-data，文件字段名为 package；"
+            "或使用 Content-Type: application/zip 直接上传 zip 二进制。"
+        ),
+    )
+
+
+@app.post("/api/device/v1/assessments/raw")
+async def device_create_assessment_raw(
+    request: Request,
+    _device: None = Depends(_require_device),
+):
+    """Raw zip upload variant for embedded clients.
+
+    Send ``Content-Type: application/zip`` and put patient/device metadata in
+    query parameters or X-* headers, for example ``?patient_id=P001`` or
+    ``X-Device-ID: device_001``.
+    """
+    raw_institution = (_request_text(request, "institution", "device") or "device").strip().lower()
+    filename = _request_text(request, "filename") or request.headers.get("X-Filename")
+    _root, pkg, package_hash, package_name = await _save_and_extract_raw_zip(
+        request, raw_institution, filename=filename,
+    )
+    return _create_device_assessment_job(
+        package_name=package_name,
+        pkg=pkg,
+        package_hash=package_hash,
+        device_id=_request_text(request, "device_id"),
+        patient_id=_request_text(request, "patient_id"),
+        name=_request_text(request, "name"),
+        sex=_request_text(request, "sex"),
+        age=int(_request_text(request, "age")) if (_request_text(request, "age") or "").isdigit() else None,
+        diagnosis=_request_text(request, "diagnosis"),
+        disease_days=(
+            int(_request_text(request, "disease_days"))
+            if (_request_text(request, "disease_days") or "").isdigit()
+            else None
+        ),
+        paralysis_side=_request_text(request, "paralysis_side"),
+    )
 
 
 @app.get("/api/device/v1/jobs/{job_id}")

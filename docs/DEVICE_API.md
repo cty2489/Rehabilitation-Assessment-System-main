@@ -95,6 +95,18 @@ IMU采样时间点,IMU加速度计X/Y/Z,IMU陀螺仪X/Y/Z,IMU预留1/2/3
 
 ## 3. 上传评估数据包
 
+云端支持两种上传方式：
+
+```text
+推荐方式：multipart/form-data，文件字段名 package
+兼容方式：application/zip，直接把 zip 二进制作为请求体
+```
+
+如果设备端是 Python、Qt、浏览器或普通 HTTP client，优先用 `multipart/form-data`。
+如果嵌入式程序只方便直传文件流，可以用 `application/zip`。
+
+### 3.1 multipart/form-data 上传
+
 ```http
 POST /api/device/v1/assessments
 Content-Type: multipart/form-data
@@ -131,6 +143,104 @@ curl -X POST "https://<cloud-host>/api/device/v1/assessments" \
   -F "diagnosis=脑卒中" \
   -F "disease_days=120" \
   -F "paralysis_side=左"
+```
+
+Python 示例：
+
+```python
+import requests
+
+CLOUD_URL = "https://<cloud-host>"
+DEVICE_API_TOKEN = "设备端token"
+
+headers = {
+    "Authorization": f"Bearer {DEVICE_API_TOKEN}",
+}
+data = {
+    "institution": "device",
+    "device_id": "device_001",
+    "patient_id": "P001",
+    "name": "张三",
+    "sex": "男",
+    "age": "62",
+    "diagnosis": "脑卒中",
+    "disease_days": "120",
+    "paralysis_side": "左",
+}
+with open("patient_P001_eval_20260629.zip", "rb") as f:
+    files = {"package": ("patient_P001_eval_20260629.zip", f, "application/zip")}
+    r = requests.post(
+        f"{CLOUD_URL}/api/device/v1/assessments",
+        headers=headers,
+        data=data,
+        files=files,
+        timeout=300,
+    )
+r.raise_for_status()
+print(r.json())
+```
+
+注意：使用 `requests` 的 `files=` 参数时，不要手动设置 `Content-Type`，让 `requests`
+自动生成带 boundary 的 `multipart/form-data`。
+
+### 3.2 application/zip raw 上传
+
+如果设备端选择 `application/zip`，请求体就是 zip 文件本身，不再有 `package`
+这个表单字段。元数据放在 query 参数或 `X-*` 请求头中。
+
+```http
+POST /api/device/v1/assessments/raw?patient_id=P001&name=张三&sex=男&age=62&diagnosis=脑卒中&disease_days=120&paralysis_side=左
+Content-Type: application/zip
+Authorization: Bearer <DEVICE_API_TOKEN>
+X-Device-ID: device_001
+X-Filename: patient_P001_eval_20260629.zip
+```
+
+curl 示例：
+
+```bash
+curl -X POST \
+  "https://<cloud-host>/api/device/v1/assessments/raw?patient_id=P001&name=张三&sex=男&age=62&diagnosis=脑卒中&disease_days=120&paralysis_side=左" \
+  -H "Authorization: Bearer ${DEVICE_API_TOKEN}" \
+  -H "Content-Type: application/zip" \
+  -H "X-Device-ID: device_001" \
+  -H "X-Filename: patient_P001_eval_20260629.zip" \
+  --data-binary "@patient_P001_eval_20260629.zip"
+```
+
+Python 示例：
+
+```python
+import requests
+
+CLOUD_URL = "https://<cloud-host>"
+DEVICE_API_TOKEN = "设备端token"
+
+headers = {
+    "Authorization": f"Bearer {DEVICE_API_TOKEN}",
+    "Content-Type": "application/zip",
+    "X-Device-ID": "device_001",
+    "X-Filename": "patient_P001_eval_20260629.zip",
+}
+params = {
+    "patient_id": "P001",
+    "name": "张三",
+    "sex": "男",
+    "age": "62",
+    "diagnosis": "脑卒中",
+    "disease_days": "120",
+    "paralysis_side": "左",
+}
+with open("patient_P001_eval_20260629.zip", "rb") as f:
+    r = requests.post(
+        f"{CLOUD_URL}/api/device/v1/assessments/raw",
+        headers=headers,
+        params=params,
+        data=f,
+        timeout=300,
+    )
+r.raise_for_status()
+print(r.json())
 ```
 
 返回：

@@ -288,6 +288,7 @@ DEVICE_API_TOKEN=generate-a-different-long-random-token
 
 ```text
 POST /api/device/v1/assessments          上传 active 评估 zip 并获取 job_id
+POST /api/device/v1/assessments/raw      application/zip 直传 zip 的兼容接口
 GET  /api/device/v1/jobs/{job_id}        查询 queued/running/completed/failed
 GET  /api/device/v1/jobs/{job_id}/export.zip
 POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
