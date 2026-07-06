@@ -78,6 +78,24 @@ def test_update_model_settings_persists_weight_path(tmp_path, monkeypatch):
     assert qwen3["available"] is True
 
 
+def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
+    qwen_data = tmp_path / "Qwen_data"
+    qwen3 = qwen_data / "Qwen3-8B"
+    deepseek = qwen_data / "DeepSeek-R1-Distill-Qwen-7B"
+    qwen3.mkdir(parents=True)
+    deepseek.mkdir(parents=True)
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
+    monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
+
+    payload = llm_settings.settings_payload(probe=False)
+    by_id = {model["id"]: model for model in payload["models"]}
+
+    assert by_id["qwen3_8b_hf"]["weight_exists"] is True
+    assert by_id["deepseek_r1_distill_qwen7b"]["weight_exists"] is True
+    assert by_id["qwen3_8b_hf"]["available"] is True
+    assert by_id["deepseek_r1_distill_qwen7b"]["available"] is True
+
+
 def test_settings_candidates_match_model_registry():
     payload = llm_settings.settings_payload(probe=False)
     for model in payload["models"]:

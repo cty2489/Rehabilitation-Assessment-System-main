@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.1
+cloud-server-v1.1.2
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -95,7 +95,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.1
+git checkout cloud-server-v1.1.2
 ```
 
 2. 准备外部文件：
@@ -228,13 +228,26 @@ backend/config/llm_settings.json
 国外：Mistral-7B-Instruct-v0.3、Llama-3-8B-Instruct
 ```
 
-本地 HF 权重默认查找根目录：
+本地 HF 原版权重用于 baseline 和后续微调，默认优先查找：
+
+```env
+LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
+```
+
+当前已使用的两个原版模型目录：
+
+```text
+/root/autodl-tmp/Qwen_data/Qwen3-8B
+/root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
+```
+
+其它本地 HF 权重默认查找根目录：
 
 ```env
 LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
 ```
 
-例如 Qwen3-8B 默认路径为 `/root/autodl-tmp/rehab_project/models/Qwen3-8B`。如果需要改配置文件位置，可设置 `LLM_SETTINGS_PATH`。
+如果需要改配置文件位置，可设置 `LLM_SETTINGS_PATH`。
 
 不要提交真实的 `backend/.env`、数据库密码、API key、模型权重和患者数据。
 
@@ -264,7 +277,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.1
+稳定演示/复现实验：使用 cloud-server-v1.1.2
 日常继续开发：使用 main
 ```
 

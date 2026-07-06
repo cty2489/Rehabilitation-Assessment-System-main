@@ -1,5 +1,13 @@
 # Changelog
 
+## cloud-server-v1.1.2 - 2026-07-06
+
+### 改进
+
+- Qwen3-8B 和 DeepSeek-R1-Distill-Qwen-7B 默认优先识别 `/root/autodl-tmp/Qwen_data` 下的原版 HF 权重目录。
+- 新增 `LLM_ORIGINAL_MODEL_ROOT` 配置项，用于存放后续 baseline 和微调使用的原版模型。
+- 文档明确区分：GGUF 用于当前远程报告服务，HF 原版目录用于模型对比和后续微调。
+
 ## cloud-server-v1.1.1 - 2026-07-06
 
 ### 改进

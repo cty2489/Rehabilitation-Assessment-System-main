@@ -34,6 +34,14 @@ def _default_remote_url() -> str:
     return os.environ.get("LLM_REMOTE_URL", "http://127.0.0.1:6007").strip().rstrip("/")
 
 
+def _original_model_path(filename: str) -> str:
+    root = os.environ.get(
+        "LLM_ORIGINAL_MODEL_ROOT",
+        "/root/autodl-tmp/Qwen_data",
+    ).rstrip("/")
+    return f"{root}/{filename}"
+
+
 def _first_existing_path(paths: List[str]) -> str:
     for item in paths:
         if item and Path(item).exists():
@@ -77,7 +85,7 @@ def _default_models() -> List[Dict[str, Any]]:
             "model_id": "qwen3_8b",
             "weight_path": _default_model_path(
                 "Qwen3-8B",
-                extra_candidates=["/root/autodl-tmp/Qwen_data/Qwen3-8B"],
+                extra_candidates=[_original_model_path("Qwen3-8B")],
             ),
             "enabled": True,
             "description": "用户已准备的 HF 格式候选模型，可作为中文基线。",
@@ -89,7 +97,10 @@ def _default_models() -> List[Dict[str, Any]]:
             "origin": "国产",
             "provider": "local",
             "model_id": "deepseek_r1_distill_qwen7b",
-            "weight_path": _default_model_path("DeepSeek-R1-Distill-Qwen-7B"),
+            "weight_path": _default_model_path(
+                "DeepSeek-R1-Distill-Qwen-7B",
+                extra_candidates=[_original_model_path("DeepSeek-R1-Distill-Qwen-7B")],
+            ),
             "enabled": True,
             "description": "DeepSeek 蒸馏模型候选；报告任务需关闭或约束思考输出。",
         },

@@ -44,7 +44,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.1
+git checkout cloud-server-v1.1.2
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -149,6 +149,7 @@ LLM_PROVIDER=remote
 LLM_REMOTE_URL=http://127.0.0.1:6007
 LLM_REMOTE_TIMEOUT=300
 LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
+LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
@@ -195,11 +196,16 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 
 该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置，便于兼容老部署。权重路径不存在的本地模型会显示为未就绪，不能设为当前报告模型。
 
-本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
+可微调的原版 HF 模型默认按 `LLM_ORIGINAL_MODEL_ROOT` 优先查找。目前已准备：
 
 ```text
-/root/autodl-tmp/rehab_project/models/Qwen3-8B
-/root/autodl-tmp/rehab_project/models/DeepSeek-R1-Distill-Qwen-7B
+/root/autodl-tmp/Qwen_data/Qwen3-8B
+/root/autodl-tmp/Qwen_data/DeepSeek-R1-Distill-Qwen-7B
+```
+
+其它本地 HF 权重默认按 `LLM_MODEL_ROOT` 查找，例如：
+
+```text
 /root/autodl-tmp/rehab_project/models/Baichuan2-7B-Chat
 /root/autodl-tmp/rehab_project/models/GLM-4-9B-0414
 /root/autodl-tmp/rehab_project/models/Mistral-7B-Instruct-v0.3
@@ -209,6 +215,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 如果模型放在其他位置，可以通过环境变量修改根目录或配置文件路径：
 
 ```env
+LLM_ORIGINAL_MODEL_ROOT=/data/original_hf_models
 LLM_MODEL_ROOT=/data/models
 LLM_SETTINGS_PATH=/data/rehab_config/llm_settings.json
 ```
