@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.0
+cloud-server-v1.1.1
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -18,6 +18,7 @@ cloud-server-v1.1.0
 - 26 项 biomarker 计算和报告兜底
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
 - 系统管理页可切换报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
+- 系统管理页可保存本地权重路径/远程服务地址，未就绪模型不能被设为当前报告模型
 - 云服务器启动、验证、常见问题和本地开发文档
 
 后续模型优化、设备接入和论文实验建议都从该标签或其后的 `main` 分支继续开发。
@@ -94,7 +95,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.0
+git checkout cloud-server-v1.1.1
 ```
 
 2. 准备外部文件：
@@ -263,7 +264,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.0
+稳定演示/复现实验：使用 cloud-server-v1.1.1
 日常继续开发：使用 main
 ```
 

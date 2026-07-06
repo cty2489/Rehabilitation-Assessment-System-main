@@ -1,5 +1,15 @@
 # Changelog
 
+## cloud-server-v1.1.1 - 2026-07-06
+
+### 改进
+
+- 系统管理页支持直接保存每个报告模型的本地权重路径或远程服务地址。
+- Qwen3-8B 自动识别服务器已有路径 `/root/autodl-tmp/Qwen_data/Qwen3-8B`。
+- 未放置权重或服务不可用的模型会显示为未就绪，后端拒绝将其设为当前报告模型。
+- `llm/model_registry.py` 补齐 7 个 baseline 候选模型短名，训练、生成和页面配置使用同一套 `model_id`。
+- `llm/README.md` 更新为 7 候选 baseline 说明。
+
 ## cloud-server-v1.1.0 - 2026-07-06
 
 ### 新增
