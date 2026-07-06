@@ -1,5 +1,20 @@
 # Changelog
 
+## cloud-server-v1.1.0 - 2026-07-06
+
+### 新增
+
+- 系统管理页新增“大模型设置”，可选择报告生成使用的大模型。
+- 默认内置 7 个报告模型候选：Qwen2.5-7B-Instruct GGUF、Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、Baichuan2-7B-Chat、GLM-4-9B、Mistral-7B-Instruct-v0.3、Llama-3-8B-Instruct。
+- 后端新增 `GET /api/settings/llm` 和 `PATCH /api/settings/llm`，使用页面登录后的 Bearer token 保护。
+- 运行态模型选择保存到 `backend/config/llm_settings.json`，不随 Git 提交。
+
+### 改进
+
+- 未保存页面配置前，报告生成仍兼容 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧部署方式。
+- 本地 HF 候选模型会显示权重路径是否存在；权重未放置时标记为 `not_ready`。
+- `README.md`、`SERVER_DEPLOY.md` 和 `backend/.env.example` 补充大模型候选、权重根目录和设置文件说明。
+
 ## device-api-v0.3 - 2026-07-06
 
 ### 改进
