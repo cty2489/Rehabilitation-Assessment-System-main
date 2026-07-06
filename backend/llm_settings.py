@@ -253,12 +253,8 @@ def decorate_model(model: Dict[str, Any], active_id: str, probe: bool = True) ->
         out["configured"] = out["configured"] and bool(os.environ.get("DEEPSEEK_API_KEY", "").strip())
         available = out["configured"]
     elif provider == "local":
-        # A registered HF id can still be downloaded by transformers when the
-        # local cache/path is absent. We surface path existence separately but do
-        # not block selection here; the actual report call will raise if loading
-        # is impossible on this host.
         out["weight_exists"] = _path_exists(out.get("weight_path"))
-        available = out["configured"]
+        available = bool(out["configured"] and out["weight_exists"])
     else:
         available = False
 

@@ -40,6 +40,17 @@ def test_update_active_model_rejects_unknown_id(tmp_path, monkeypatch):
         llm_settings.update_active_model("not-a-model")
 
 
+def test_local_candidate_without_weight_path_is_not_ready(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
+
+    payload = llm_settings.settings_payload(probe=False)
+    qwen3 = next(model for model in payload["models"] if model["id"] == "qwen3_8b_hf")
+
+    assert qwen3["weight_exists"] is False
+    assert qwen3["available"] is False
+    assert qwen3["status"] == "not_ready"
+
+
 def test_report_provider_uses_env_until_ui_config_is_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_settings, "CONFIG_PATH", tmp_path / "llm_settings.json")
     monkeypatch.delenv("LLM_ACTIVE_MODEL_ID", raising=False)
