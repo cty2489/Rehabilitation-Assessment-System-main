@@ -23,6 +23,7 @@ export type Route =
   | 'records'
   | 'stats'
   | 'system'
+  | 'llm-settings'
   | 'task-interface'
 
 export type ReportStatus = 'generated' | 'failed' | 'manual'

@@ -43,10 +43,10 @@ export default function TopBar() {
               className="user-menu-item"
               onClick={() => {
                 setOpen(false)
-                navigate('system')
+                navigate('llm-settings')
               }}
             >
-              个人设置
+              模型设置
             </button>
             <div className="user-menu-sep" />
             <button className="user-menu-item danger" onClick={logout}>

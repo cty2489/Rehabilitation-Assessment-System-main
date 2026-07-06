@@ -25,6 +25,7 @@ export default function AppShell() {
           {route === 'stats' && <StatisticsPage />}
           {route === 'task-interface' && <TaskInterfacePage />}
           {route === 'system' && <SystemManagementPage />}
+          {route === 'llm-settings' && <SystemManagementPage focusLlm />}
         </main>
       </div>
     </div>

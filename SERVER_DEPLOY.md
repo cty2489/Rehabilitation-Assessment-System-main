@@ -47,7 +47,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.3
+git checkout cloud-server-v1.1.4
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchHealth, fetchLlmSettings, updateLlmModelSettings, updateLlmSettings } from '../api'
 import { useAuth } from '../app/AppContext'
 import { HealthStatus, LlmModelOption, LlmSettings } from '../types'
@@ -21,8 +21,9 @@ function modelLocation(model: LlmModelOption): string {
   return model.weight_path || model.model_id || '—'
 }
 
-export default function SystemManagementPage() {
+export default function SystemManagementPage({ focusLlm = false }: { focusLlm?: boolean }) {
   const { user, logout } = useAuth()
+  const llmCardRef = useRef<HTMLDivElement | null>(null)
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [llmSettings, setLlmSettings] = useState<LlmSettings | null>(null)
   const [selectedModelId, setSelectedModelId] = useState('')
@@ -52,6 +53,14 @@ export default function SystemManagementPage() {
       })
       .catch((e) => setError(String(e.message || e)))
   }, [])
+
+  useEffect(() => {
+    if (!focusLlm) return
+    const timer = window.setTimeout(() => {
+      llmCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [focusLlm, llmSettings])
 
   const activeModel = llmSettings?.active_model || null
   const selectedModel = llmSettings?.models.find((model) => model.id === selectedModelId) || activeModel
@@ -157,7 +166,7 @@ export default function SystemManagementPage() {
         </div>
       </div>
 
-      <div className="card settings-wide-card">
+      <div ref={llmCardRef} className={`card settings-wide-card ${focusLlm ? 'settings-focus-card' : ''}`}>
         <h2>大模型设置<span className="h2-suffix">LLM</span></h2>
 
         <div className="llm-settings-head">
