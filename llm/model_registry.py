@@ -116,9 +116,9 @@ MODEL_REGISTRY: dict[str, dict] = {
         "max_new_tokens": 4096,
     },
     "baichuan2_7b_chat": {
-        # Some Baichuan2 checkpoints do not expose tokenizer.chat_template.
-        # apply_tokenizer_overrides injects a minimal user/assistant template so
-        # SFT and local report inference fail less mysteriously.
+        # Baichuan2 checkpoints do not expose tokenizer.chat_template, and the
+        # 4096 context window is too small for the full 26-biomarker prompt.
+        # Inject a minimal template and use segmented clinical JSON generation.
         "hf_id": "baichuan-inc/Baichuan2-7B-Chat",
         "response_template": "<reserved_107>",
         "target_modules": list(_BAICHUAN2_TARGETS),
@@ -126,6 +126,15 @@ MODEL_REGISTRY: dict[str, dict] = {
         "trust_remote_code": True,
         "extra_eos_tokens": ["</s>"],
         "chat_template": _BAICHUAN2_CHAT_TEMPLATE,
+        "generation_mode": "segmented_clinical_json",
+        "segment_marker_chunk_size": 1,
+        "segment_marker_max_new_tokens": 512,
+        "segment_summary_max_new_tokens": 1024,
+        "segment_marker_prefill": "",
+        "segment_single_marker_prefill_prefix": "{\"marker_text\":{",
+        "segment_summary_prefill": "",
+        "segment_stop_on_json": False,
+        "max_new_tokens": 3072,
     },
     "mistral7b_v03": {
         # Replaces deepseek_r1_distill_qwen_7b: R1-Distill is a think-then-answer
@@ -143,7 +152,8 @@ MODEL_REGISTRY: dict[str, dict] = {
         "max_seq_length": 1024,
         "trust_remote_code": False,
         "tokenizer_use_fast": False,
-        "extra_eos_tokens": [],
+        "extra_eos_tokens": ["</s>"],
+        "max_new_tokens": 3072,
     },
     "glm4_9b": {
         # Pre-quantized bnb-NF4 variant (~5 GB) of GLM-4-9B-0414, which uses
@@ -169,6 +179,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "segment_marker_max_new_tokens": 1024,
         "segment_summary_prefill": "{\"overall_interpretation\":",
         "segment_summary_max_new_tokens": 1024,
+        "repetition_penalty": 1.2,
         "max_new_tokens": 4096,
     },
     "llama3_8b_instruct": {

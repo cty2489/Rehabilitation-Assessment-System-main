@@ -1,5 +1,15 @@
 # Changelog
 
+## cloud-server-v1.1.10 - 2026-07-07
+
+### 改进
+
+- `mistral7b_v03` 已通过真实 26 biomarker 报告 JSON 结构校验，可在“模型设置”页切换为国外 baseline 对照。
+- `baichuan2_7b_chat` 接入更保守的单 biomarker 分段结构化报告生成，修复分号数组分隔、单字符串 marker 解读、未闭合单 marker 字符串和复制输入行等低质量输出的结构兼容问题；已通过真实 `mysql_assessment_33`、VI 期、26 biomarker 报告 JSON 结构校验。
+- Mistral 真实输出中出现的 `treatation_advice` 拼写漂移会规范化为 `treatment_advice`，治疗策略对象列表也会规范化为报告可渲染的字符串列表。
+- `glm4_9b` 增加模型专属 `repetition_penalty=1.2`，避免 summary 分段在当前真实样例上重复输出 `group_subtypes/overall_subtype` 而不生成治疗策略。
+- 保持 `qwen3_8b_hf` 为默认线上报告模型；Mistral/GLM 可作为 baseline 对照，Baichuan2 仅作为低阶国产 baseline 开放，当前临床文本存在模板化、占位化和复制输入行倾向，不推荐作为默认报告模型。
+
 ## cloud-server-v1.1.9 - 2026-07-07
 
 ### 改进

@@ -116,6 +116,22 @@ class AdaptationTests(unittest.TestCase):
             {"marker_text": {"m1": ["解读1", "建议1"], "m2": ["解读2", "建议2"]}},
         )
 
+    def test_segment_json_repairs_baichuan_semicolon_arrays(self) -> None:
+        text = '{"marker_text":{"m1":["解读1"; "建议1"],"m2":["解读2"; "建议2"]}}'
+        obj = report._parse_segment_json(text, required_marker_keys=["m1", "m2"])
+        self.assertEqual(
+            obj,
+            {"marker_text": {"m1": ["解读1", "建议1"], "m2": ["解读2", "建议2"]}},
+        )
+
+    def test_segment_json_repairs_unterminated_single_marker_array(self) -> None:
+        text = '{"marker_text":{"emg_burst_duration":["肌电爆发持续时间偏长，提示募集控制不足。'
+        obj = report._parse_segment_json(text, required_marker_keys=["emg_burst_duration"])
+        self.assertEqual(
+            obj,
+            {"marker_text": {"emg_burst_duration": ["肌电爆发持续时间偏长，提示募集控制不足。"]}},
+        )
+
 
 class LoadErrorTests(unittest.TestCase):
     def test_missing_adapter_dir_raises_clear_error(self) -> None:

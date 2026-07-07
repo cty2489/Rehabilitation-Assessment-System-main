@@ -316,7 +316,8 @@ def _decoding_kwargs(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     default_max_new = str(cfg.get("max_new_tokens") or "1536")
     max_new = int(os.environ.get("LLM_MAX_NEW_TOKENS", default_max_new))
     num_beams = int(os.environ.get("LLM_NUM_BEAMS", "1"))
-    rep = float(os.environ.get("LLM_REPETITION_PENALTY", "1.05"))
+    default_rep = str(cfg.get("repetition_penalty") or "1.05")
+    rep = float(os.environ.get("LLM_REPETITION_PENALTY", default_rep))
     return {"max_new_tokens": max_new, "num_beams": num_beams, "repetition_penalty": rep}
 
 
@@ -814,14 +815,61 @@ def _parse_segment_marker_arrays(text: str, required_marker_keys: list[str]) -> 
     return {"marker_text": marker_text}
 
 
+def _repair_segment_json_text(text: str) -> str:
+    """Repair narrow JSON syntax issues in short segmented model outputs."""
+    if not text:
+        return text
+    s = text.strip()
+    # Baichuan occasionally uses semicolons as array separators.
+    s = re.sub(r'";\s*"', '", "', s)
+    s = re.sub(r'"\s*;\s*"', '", "', s)
+    # Normalise common placeholder ellipses so the JSON parser can continue.
+    s = re.sub(r'"((?:[IVX]+期)?-[.。…]+)"', r'"\1待补充"', s)
+    # Remove trailing commas before closers.
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+    return s
+
+
+def _repair_unterminated_single_marker_array(text: str, required_marker_keys: Optional[list[str]]) -> str:
+    """Close Baichuan-style single-marker arrays that stop inside the first string."""
+    if not text or not required_marker_keys or len(required_marker_keys) != 1:
+        return text
+    s = text.rstrip()
+    key_pat = re.escape(json.dumps(str(required_marker_keys[0]), ensure_ascii=False)[1:-1])
+    pattern = rf'"{key_pat}"\s*:\s*\[\s*"((?:\\.|[^"\\])*)$'
+    if re.search(pattern, s, flags=re.S):
+        return s + '"]}}'
+    return text
+
+
 def _parse_segment_json(text: str, required_marker_keys: Optional[list[str]] = None) -> Optional[Dict[str, Any]]:
     obj = _parse_clinical_json(text)
     if isinstance(obj, dict):
+        if required_marker_keys and not _marker_payload_has_keys(obj.get("marker_text"), required_marker_keys):
+            return None
         return obj
     if required_marker_keys:
         recovered = _parse_segment_marker_arrays(text, required_marker_keys)
         if isinstance(recovered, dict):
             return recovered
+    repaired_text = _repair_segment_json_text(text)
+    if repaired_text != text:
+        obj = _parse_clinical_json(repaired_text)
+        if isinstance(obj, dict):
+            if required_marker_keys and not _marker_payload_has_keys(obj.get("marker_text"), required_marker_keys):
+                return None
+            return obj
+        if required_marker_keys:
+            recovered = _parse_segment_marker_arrays(repaired_text, required_marker_keys)
+            if isinstance(recovered, dict):
+                return recovered
+    single_repaired = _repair_unterminated_single_marker_array(repaired_text, required_marker_keys)
+    if single_repaired != repaired_text:
+        obj = _parse_clinical_json(single_repaired)
+        if isinstance(obj, dict):
+            if required_marker_keys and not _marker_payload_has_keys(obj.get("marker_text"), required_marker_keys):
+                return None
+            return obj
     repaired = _append_missing_json_closers(text)
     if repaired == text:
         return None
@@ -984,15 +1032,20 @@ def _reason_local_segmented_clinical_json(
     marker_text: Dict[str, Any] = {}
     chunk_size = int(rm.cfg.get("segment_marker_chunk_size") or 5)
     marker_tokens = int(rm.cfg.get("segment_marker_max_new_tokens") or 768)
+    stop_json = bool(rm.cfg.get("segment_stop_on_json", True))
     for group in _available_groups(context):
         for markers in _chunked(group["markers"], chunk_size):
             required_keys = [str(m["key"]) for m in markers]
-            marker_prefill = str(rm.cfg.get("segment_marker_prefill") or "</think>\n{\"marker_text\":{")
+            marker_prefill_raw = rm.cfg.get("segment_marker_prefill")
+            if marker_prefill_raw is not None:
+                marker_prefill = str(marker_prefill_raw)
+            else:
+                marker_prefill = "</think>\n{\"marker_text\":{"
             if len(required_keys) == 1:
                 single_prefix = rm.cfg.get("segment_single_marker_prefill_prefix")
                 if single_prefix is not None:
                     marker_prefill = f"{single_prefix}\"{required_keys[0]}\":"
-                elif "segment_marker_prefill" not in rm.cfg:
+                elif marker_prefill_raw is None:
                     marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
             text = _generate_local_text(
                 rm,
@@ -1000,7 +1053,7 @@ def _reason_local_segmented_clinical_json(
                 sample=sample,
                 generation_prefill=marker_prefill,
                 max_new_tokens=marker_tokens,
-                stop_on_json=True,
+                stop_on_json=stop_json,
                 required_marker_keys=required_keys,
             )
             clinical = _parse_segment_json(text, required_marker_keys=required_keys)
@@ -1016,14 +1069,19 @@ def _reason_local_segmented_clinical_json(
                 )
             marker_text.update(chunk_text)
 
-    summary_prefill = str(rm.cfg.get("segment_summary_prefill") or "</think>\n{\"overall_interpretation\":")
+    summary_prefill_raw = rm.cfg.get("segment_summary_prefill")
+    summary_prefill = (
+        str(summary_prefill_raw)
+        if summary_prefill_raw is not None
+        else "</think>\n{\"overall_interpretation\":"
+    )
     summary_text = _generate_local_text(
         rm,
         _segment_summary_messages(context),
         sample=sample,
         generation_prefill=summary_prefill,
         max_new_tokens=int(rm.cfg.get("segment_summary_max_new_tokens") or 1024),
-        stop_on_json=True,
+        stop_on_json=stop_json,
         required_top_keys=["overall_interpretation", "group_subtypes", "overall_subtype", "treatment_strategy"],
     )
     summary = _parse_segment_json(summary_text)

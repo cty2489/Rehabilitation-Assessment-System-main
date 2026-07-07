@@ -120,8 +120,8 @@ def _default_models() -> List[Dict[str, Any]]:
                 extra_candidates=[_original_model_path("Baichuan2-7B-Chat")],
             ),
             "enabled": True,
-            "description": "百川中文对话模型候选，用于国产模型横向比较。",
-            "report_ready": False,
+            "description": "百川中文对话模型；已通过报告 JSON 结构校验，但临床文本存在模板化/占位化问题，仅建议作为低阶对照 baseline。",
+            "report_ready": True,
         },
         {
             "id": "glm4_9b",
@@ -153,8 +153,8 @@ def _default_models() -> List[Dict[str, Any]]:
                 extra_candidates=[_original_model_path("Mistral-7B-Instruct-v0.3")],
             ),
             "enabled": True,
-            "description": "国外通用指令模型候选，可作为英文/国际基线。",
-            "report_ready": False,
+            "description": "国外通用指令模型，已通过 26-biomarker 端到端报告结构校验，可作为国外 baseline。",
+            "report_ready": True,
         },
         {
             "id": "llama3_8b_instruct",

@@ -98,6 +98,47 @@ class ValidateClinicalTests(unittest.TestCase):
         c = report_builder.validate_clinical(_context(6), clinical)
         self.assertEqual(c["marker_text"]["m_emg"]["treatment_advice"], "增加伸肌主动募集与慢速回中训练。")
 
+    def test_single_marker_array_is_normalized_with_default_advice(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["m_emg"] = ["屈伸肌比偏高，提示屈肌参与偏多。"]
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["marker_text"]["m_emg"]["interpretation"], "屈伸肌比偏高，提示屈肌参与偏多。")
+        self.assertIn("复测趋势", c["marker_text"]["m_emg"]["treatment_advice"])
+
+    def test_single_marker_array_splits_baichuan_advice_label(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["m_emg"] = ["【解释】屈伸肌比偏高，提示屈肌参与偏多。【建议】增加伸肌主动募集训练。"]
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["marker_text"]["m_emg"]["interpretation"], "【解释】屈伸肌比偏高，提示屈肌参与偏多")
+        self.assertEqual(c["marker_text"]["m_emg"]["treatment_advice"], "增加伸肌主动募集训练。")
+
+    def test_marker_array_with_copied_input_row_uses_default_advice(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["m_emg"] = [
+            "肌电标志物（基于患侧被动评估）",
+            ["屈/伸肌 IEMG 比", 1.2, "比值", "设备特异量"],
+        ]
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["marker_text"]["m_emg"]["interpretation"], "肌电标志物（基于患侧被动评估）")
+        self.assertIn("复测趋势", c["marker_text"]["m_emg"]["treatment_advice"])
+
+    def test_common_treatment_advice_typo_is_normalized(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["m_emg"] = {
+            "interpretation": "屈伸肌比偏高，提示屈肌参与偏多。",
+            "treatation_advice": "增加伸肌主动募集训练。",
+        }
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["marker_text"]["m_emg"]["treatment_advice"], "增加伸肌主动募集训练。")
+
+    def test_strategy_dict_items_are_normalized(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["treatment_strategy"] = [
+            {"method": "物理治疗", "description": "进行针对性的等速训练。"},
+        ]
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["treatment_strategy"], ["物理治疗：进行针对性的等速训练。"])
+
     def test_none_raises(self) -> None:
         with self.assertRaises(ClinicalUnavailable):
             report_builder.validate_clinical(_context(6), None)

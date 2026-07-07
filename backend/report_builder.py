@@ -197,6 +197,7 @@ def _normalize_marker_text_entry(v: Any) -> Optional[Dict[str, str]]:
         advice = (
             v.get("treatment_advice")
             or v.get("treatmentAdvice")
+            or v.get("treatation_advice")  # tolerate a common model typo
             or v.get("治疗建议")
             or v.get("建议")
         )
@@ -213,6 +214,33 @@ def _normalize_marker_text_entry(v: Any) -> Optional[Dict[str, str]]:
                 "interpretation": str(interpretation).strip(),
                 "treatment_advice": str(advice).strip(),
             }
+    if isinstance(v, (list, tuple)) and len(v) >= 1 and _nonempty_str(v[0]):
+        combined = str(v[0]).strip()
+        for delim in ("治疗建议：", "治疗建议:", "建议：", "建议:", "【建议】", "。治疗建议", "\n治疗建议"):
+            idx = combined.find(delim)
+            if idx > 0:
+                return {
+                    "interpretation": combined[:idx].strip().rstrip("。."),
+                    "treatment_advice": combined[idx + len(delim):].strip(),
+                }
+        return {
+            "interpretation": combined,
+            "treatment_advice": "建议结合临床评估与复测趋势调整训练方案。",
+        }
+    return None
+
+
+def _normalize_strategy_item(v: Any) -> Optional[str]:
+    if _nonempty_str(v):
+        return str(v).strip()
+    if isinstance(v, dict):
+        method = v.get("method") or v.get("strategy") or v.get("name") or v.get("策略")
+        desc = v.get("description") or v.get("content") or v.get("detail") or v.get("说明")
+        if _nonempty_str(method) and _nonempty_str(desc):
+            return f"{str(method).strip()}：{str(desc).strip()}"
+        values = [str(item).strip() for item in v.values() if _nonempty_str(item)]
+        if values:
+            return "；".join(values)
     return None
 
 
@@ -330,7 +358,7 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     strat_src = clinical.get("treatment_strategy")
     if not isinstance(strat_src, list):
         raise ClinicalUnavailable("缺少治疗策略要点（treatment_strategy）")
-    treatment_strategy = [s.strip() for s in strat_src if _nonempty_str(s)]
+    treatment_strategy = [s for s in (_normalize_strategy_item(item) for item in strat_src) if s]
     if not treatment_strategy:
         raise ClinicalUnavailable("治疗策略要点为空")
 
