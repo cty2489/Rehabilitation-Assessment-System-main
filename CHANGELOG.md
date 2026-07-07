@@ -1,5 +1,14 @@
 # Changelog
 
+## cloud-server-v1.1.9 - 2026-07-07
+
+### 改进
+
+- `glm4_9b` 接入通用分段结构化报告生成，避免 GLM-4-9B-Chat 一次性输出 26 biomarker 大 JSON 时截断。
+- 分段 JSON 解析新增 GLM 近似 JSON 修复：可从 `["解读","建议"]"]` 这类多余括号/重复代码块输出中提取 required marker key，并继续交由最终临床 schema 严格校验。
+- GLM-4-9B-Chat 已在云服务器真实 `mysql_assessment_27`、VI 期、26 biomarker 数据上通过端到端报告 JSON 结构校验，可在“模型设置”页切换为 baseline 对照。
+- 当前默认报告模型仍推荐 `qwen3_8b_hf`；GLM 原版权重生成约 4 分钟/份，临床文本偏模板化，仍需后续知识库增强或微调优化。
+
 ## cloud-server-v1.1.8 - 2026-07-07
 
 ### 改进

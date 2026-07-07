@@ -158,6 +158,18 @@ MODEL_REGISTRY: dict[str, dict] = {
         "max_seq_length": 768,
         "trust_remote_code": True,
         "extra_eos_tokens": [],
+        # GLM can load and starts valid JSON, but a full 26-biomarker report is
+        # too verbose in one pass. Use the same segmented clinical JSON path as
+        # DeepSeek, without the R1-specific </think> prefix.
+        "prompt_profile": "compact_clinical_json",
+        "generation_mode": "segmented_clinical_json",
+        "segment_marker_chunk_size": 5,
+        "segment_marker_prefill": "{\"marker_text\":{",
+        "segment_single_marker_prefill_prefix": "{\"marker_text\":{",
+        "segment_marker_max_new_tokens": 1024,
+        "segment_summary_prefill": "{\"overall_interpretation\":",
+        "segment_summary_max_new_tokens": 1024,
+        "max_new_tokens": 4096,
     },
     "llama3_8b_instruct": {
         # Requires accepted Meta license and a Hugging Face token if the weights

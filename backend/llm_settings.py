@@ -138,8 +138,8 @@ def _default_models() -> List[Dict[str, Any]]:
                 ],
             ),
             "enabled": True,
-            "description": "智谱 GLM 系列候选，用于国产模型横向比较。",
-            "report_ready": False,
+            "description": "智谱 GLM 系列候选；使用分段结构化生成通过端到端报告 JSON 校验，生成较慢且文本偏模板化，适合作 baseline 对照。",
+            "report_ready": True,
         },
         {
             "id": "mistral7b_v03",

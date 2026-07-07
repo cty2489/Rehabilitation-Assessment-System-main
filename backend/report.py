@@ -787,10 +787,41 @@ def _append_missing_json_closers(text: str) -> str:
     return s + closers
 
 
+def _parse_segment_marker_arrays(text: str, required_marker_keys: list[str]) -> Optional[Dict[str, Any]]:
+    """Recover marker arrays from GLM-style near-JSON segment output.
+
+    GLM sometimes emits valid-looking marker arrays followed by an extra bracket
+    quote (``["解读","建议"]"]``) and then repeats the fenced block. Extract only
+    the required canonical keys and leave final clinical validation unchanged.
+    """
+    marker_text: Dict[str, Any] = {}
+    for key in required_marker_keys:
+        key_pat = re.escape(json.dumps(key, ensure_ascii=False)[1:-1])
+        pattern = (
+            rf'"{key_pat}"\s*:\s*'
+            r'(\[\s*"(?:\\.|[^"\\])*"\s*,\s*"(?:\\.|[^"\\])*"\s*\])'
+        )
+        match = re.search(pattern, text)
+        if not match:
+            return None
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+        if not (isinstance(value, list) and len(value) >= 2):
+            return None
+        marker_text[key] = value[:2]
+    return {"marker_text": marker_text}
+
+
 def _parse_segment_json(text: str, required_marker_keys: Optional[list[str]] = None) -> Optional[Dict[str, Any]]:
     obj = _parse_clinical_json(text)
     if isinstance(obj, dict):
         return obj
+    if required_marker_keys:
+        recovered = _parse_segment_marker_arrays(text, required_marker_keys)
+        if isinstance(recovered, dict):
+            return recovered
     repaired = _append_missing_json_closers(text)
     if repaired == text:
         return None
@@ -802,7 +833,7 @@ def _parse_segment_json(text: str, required_marker_keys: Optional[list[str]] = N
     return obj
 
 
-def _deepseek_marker_messages(
+def _segment_marker_messages(
     context: Dict[str, Any],
     group: Dict[str, Any],
     markers: list[Dict[str, Any]],
@@ -837,7 +868,7 @@ def _deepseek_marker_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def _deepseek_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
+def _segment_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
     stage = str(context.get("stage_roman", ""))
     groups = _available_groups(context)
     modality_keys = [str(g.get("key")) for g in groups if g.get("key")]
@@ -944,12 +975,12 @@ def _generate_local_text(
     return _strip_trailing_chat_tags(text)
 
 
-def _reason_local_segmented_deepseek(
+def _reason_local_segmented_clinical_json(
     context: Dict[str, Any],
     rm: ReportModel,
     sample: bool = False,
 ) -> str:
-    """Generate DeepSeek clinical JSON in small parseable chunks."""
+    """Generate clinical JSON in small parseable chunks for verbose base models."""
     marker_text: Dict[str, Any] = {}
     chunk_size = int(rm.cfg.get("segment_marker_chunk_size") or 5)
     marker_tokens = int(rm.cfg.get("segment_marker_max_new_tokens") or 768)
@@ -957,11 +988,15 @@ def _reason_local_segmented_deepseek(
         for markers in _chunked(group["markers"], chunk_size):
             required_keys = [str(m["key"]) for m in markers]
             marker_prefill = str(rm.cfg.get("segment_marker_prefill") or "</think>\n{\"marker_text\":{")
-            if len(required_keys) == 1 and "segment_marker_prefill" not in rm.cfg:
-                marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
+            if len(required_keys) == 1:
+                single_prefix = rm.cfg.get("segment_single_marker_prefill_prefix")
+                if single_prefix is not None:
+                    marker_prefill = f"{single_prefix}\"{required_keys[0]}\":"
+                elif "segment_marker_prefill" not in rm.cfg:
+                    marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
             text = _generate_local_text(
                 rm,
-                _deepseek_marker_messages(context, group, markers),
+                _segment_marker_messages(context, group, markers),
                 sample=sample,
                 generation_prefill=marker_prefill,
                 max_new_tokens=marker_tokens,
@@ -971,20 +1006,20 @@ def _reason_local_segmented_deepseek(
             clinical = _parse_segment_json(text, required_marker_keys=required_keys)
             if not isinstance(clinical, dict):
                 raise report_builder.ClinicalUnavailable(
-                    f"DeepSeek 分段 marker_text 未返回 JSON；keys={required_keys}"
+                    f"分段 marker_text 未返回 JSON；keys={required_keys}"
                 )
             chunk_text = _coerce_marker_text_payload(clinical.get("marker_text"), markers)
             missing = [key for key in required_keys if key not in chunk_text]
             if missing:
                 raise report_builder.ClinicalUnavailable(
-                    f"DeepSeek 分段 marker_text 缺少字段：{', '.join(missing)}"
+                    f"分段 marker_text 缺少字段：{', '.join(missing)}"
                 )
             marker_text.update(chunk_text)
 
     summary_prefill = str(rm.cfg.get("segment_summary_prefill") or "</think>\n{\"overall_interpretation\":")
     summary_text = _generate_local_text(
         rm,
-        _deepseek_summary_messages(context),
+        _segment_summary_messages(context),
         sample=sample,
         generation_prefill=summary_prefill,
         max_new_tokens=int(rm.cfg.get("segment_summary_max_new_tokens") or 1024),
@@ -993,7 +1028,7 @@ def _reason_local_segmented_deepseek(
     )
     summary = _parse_segment_json(summary_text)
     if not isinstance(summary, dict):
-        raise report_builder.ClinicalUnavailable("DeepSeek 分段 summary 未返回 JSON")
+        raise report_builder.ClinicalUnavailable("分段 summary 未返回 JSON")
     summary["marker_text"] = marker_text
     return json.dumps(summary, ensure_ascii=False)
 
@@ -1012,7 +1047,7 @@ def _reason_local(
     rm.ensure_loaded()
     assert rm.model is not None and rm.tok is not None
     if rm.cfg.get("generation_mode") == "segmented_clinical_json":
-        return _reason_local_segmented_deepseek(context, rm, sample=sample)
+        return _reason_local_segmented_clinical_json(context, rm, sample=sample)
 
     prompt_profile = str(rm.cfg.get("prompt_profile") or "")
     messages = build_clinical_messages(context, prompt_profile=prompt_profile)

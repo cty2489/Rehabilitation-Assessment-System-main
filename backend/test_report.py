@@ -104,6 +104,18 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(obj, {"marker_text": {"m1": ["解读", "建议"]}})
         self.assertIsNone(report._parse_clinical_json(text))
 
+    def test_segment_json_recovers_glm_extra_array_bracket(self) -> None:
+        text = (
+            '{"marker_text":{"m1":["解读1","建议1"]"],'
+            '"m2":["解读2","建议2"]"]}}'
+            '\n```json\n{"marker_text":{"m1":["重复","重复"]"]}}\n```'
+        )
+        obj = report._parse_segment_json(text, required_marker_keys=["m1", "m2"])
+        self.assertEqual(
+            obj,
+            {"marker_text": {"m1": ["解读1", "建议1"], "m2": ["解读2", "建议2"]}},
+        )
+
 
 class LoadErrorTests(unittest.TestCase):
     def test_missing_adapter_dir_raises_clear_error(self) -> None:
