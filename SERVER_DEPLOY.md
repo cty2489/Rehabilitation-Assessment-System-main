@@ -47,7 +47,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.6
+git checkout cloud-server-v1.1.7
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -232,6 +232,9 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 |---|---|
 | `qwen3_8b_hf` | 已通过端到端报告链路测试，可作为当前线上默认报告模型 |
 | `deepseek_r1_distill_qwen7b` | 权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型 |
+| `glm4_9b` | GLM-4-9B-Chat 可加载，小样例 JSON 可通过；真实 26 biomarker 报告在当前 token 预算内输出截断，暂不允许切为线上报告模型 |
+| `baichuan2_7b_chat` | 当前本地权重加载触发 PyTorch 2.6 torch.load 安全限制，暂不允许切为线上报告模型 |
+| `mistral7b_v03` | 当前云服务器目录缺少 tokenizer 文件，已按空间策略删除，暂不允许切为线上报告模型 |
 | `qwen25_7b_gguf` | 保留为可用回退/对照 |
 
 如果不放在 `LLM_ORIGINAL_MODEL_ROOT`，其它本地 HF 权重也会按 `LLM_MODEL_ROOT` 查找，例如：

@@ -1,5 +1,14 @@
 # Changelog
 
+## cloud-server-v1.1.7 - 2026-07-07
+
+### 改进
+
+- 停止补下载 Mistral，按当前服务器空间策略删除 `/root/autodl-tmp/Qwen_data/Mistral-7B-Instruct-v0.3`，释放约 13G 数据盘空间。
+- 报告 JSON 解析器改为读取第一个完整的顶层临床 JSON 对象，避免 GLM 等模型重复输出代码块或输出截断时误解析内层 biomarker 小对象。
+- 新增 Mistral tokenizer 慢速加载配置；但当前云服务器 Mistral 目录缺少 tokenizer 文件且已删除，因此仍不作为可切换模型。
+- 验证结论更新：GLM-4-9B-Chat 能加载，小样例 JSON 可通过；但真实 26 biomarker 报告在当前 1536 token 预算内输出截断，暂不开放线上切换。Baichuan2 当前受 PyTorch 2.6 `torch.load` 安全限制影响，暂不能加载。
+
 ## cloud-server-v1.1.6 - 2026-07-07
 
 ### 改进

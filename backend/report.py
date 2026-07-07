@@ -135,22 +135,30 @@ def _parse_clinical_json(text: str) -> Optional[Dict[str, Any]]:
     think_end = s.lower().rfind("</think>")
     if think_end != -1:
         s = s[think_end + len("</think>"):].strip()
-    # Strip accidental code fences.
-    if s.startswith("```"):
-        s = s.strip("`")
-        nl = s.find("\n")
-        if nl != -1:
-            s = s[nl + 1:]
-    # Grab the outermost {...}.
+    # Strip accidental fence markers without assuming there is only one fenced
+    # block. Some base models repeat the same JSON object twice; in that case
+    # grabbing from the first "{" to the last "}" creates invalid JSON, so parse
+    # the first balanced object instead.
+    s = re.sub(r"```(?:json|JSON)?", "", s).replace("```", "").strip()
+    decoder = json.JSONDecoder()
     start = s.find("{")
-    end = s.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        obj = json.loads(s[start:end + 1])
-        return obj if isinstance(obj, dict) else None
-    except (ValueError, TypeError):
-        return None
+    while start != -1:
+        try:
+            obj, _ = decoder.raw_decode(s[start:])
+            if isinstance(obj, dict):
+                schema_keys = {
+                    "overall_interpretation",
+                    "marker_text",
+                    "group_subtypes",
+                    "overall_subtype",
+                    "treatment_strategy",
+                }
+                if schema_keys.intersection(obj):
+                    return obj
+        except (ValueError, TypeError):
+            pass
+        start = s.find("{", start + 1)
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -247,6 +255,7 @@ class ReportModel:
                 load_4bit=load_4bit,
                 bf16=True,
                 trust_remote_code=cfg["trust_remote_code"],
+                tokenizer_use_fast=cfg.get("tokenizer_use_fast"),
             )
             eos_ids = _resolve_eos_ids(tok, cfg)
             apply_tokenizer_overrides(tok, cfg)

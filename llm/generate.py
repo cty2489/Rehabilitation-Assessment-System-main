@@ -60,7 +60,7 @@ def _resolve_subjects(
 
 
 def _load_model(base: str, adapter: Optional[Path], load_4bit: bool, bf16: bool,
-                trust_remote_code: bool):
+                trust_remote_code: bool, tokenizer_use_fast: Optional[bool] = None):
     """Load the base model, optionally attaching a LoRA adapter.
 
     Pass ``adapter=None`` to use the *un-fine-tuned base* model directly (the
@@ -68,7 +68,10 @@ def _load_model(base: str, adapter: Optional[Path], load_4bit: bool, bf16: bool,
     ``backend/report.py``'s ``LLM_USE_ADAPTER`` switch). When ``adapter`` is a
     path, the LoRA weights are attached as before.
     """
-    tok = AutoTokenizer.from_pretrained(base, trust_remote_code=trust_remote_code)
+    tok_kwargs = {"trust_remote_code": trust_remote_code}
+    if tokenizer_use_fast is not None:
+        tok_kwargs["use_fast"] = bool(tokenizer_use_fast)
+    tok = AutoTokenizer.from_pretrained(base, **tok_kwargs)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
 

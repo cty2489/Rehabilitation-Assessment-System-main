@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.6
+cloud-server-v1.1.7
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -97,7 +97,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.6
+git checkout cloud-server-v1.1.7
 ```
 
 2. 准备外部文件：
@@ -261,6 +261,9 @@ LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 ```text
 qwen3_8b_hf：已通过端到端报告链路测试，可作为当前线上默认报告模型。
 deepseek_r1_distill_qwen7b：权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型。
+glm4_9b：GLM-4-9B-Chat 可加载，小样例 JSON 可通过；真实 26 biomarker 报告在当前 token 预算内输出截断，暂不允许切为线上报告模型。
+baichuan2_7b_chat：当前本地权重加载触发 PyTorch 2.6 torch.load 安全限制，暂不允许切为线上报告模型。
+mistral7b_v03：当前云服务器目录缺少 tokenizer 文件，且已按空间策略删除，暂不允许切为线上报告模型。
 qwen25_7b_gguf：保留为可用回退/对照，不再作为当前云端默认报告模型。
 ```
 
@@ -300,7 +303,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.6
+稳定演示/复现实验：使用 cloud-server-v1.1.7
 日常继续开发：使用 main
 ```
 

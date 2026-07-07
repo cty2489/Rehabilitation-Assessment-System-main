@@ -134,6 +134,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "target_modules": list(_LLAMA_STYLE_TARGETS),
         "max_seq_length": 1024,
         "trust_remote_code": False,
+        "tokenizer_use_fast": False,
         "extra_eos_tokens": [],
     },
     "glm4_9b": {

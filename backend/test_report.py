@@ -52,6 +52,17 @@ class AdaptationTests(unittest.TestCase):
             {"overall_interpretation": "ok"},
         )
 
+    def test_parse_clinical_json_uses_first_complete_schema_object(self) -> None:
+        text = '```json\n{"overall_interpretation":"first"}\n```\n```json\n{"overall_interpretation":"second"}\n```'
+        self.assertEqual(
+            report._parse_clinical_json(text),
+            {"overall_interpretation": "first"},
+        )
+
+    def test_parse_clinical_json_ignores_nested_partial_objects(self) -> None:
+        text = '{"overall_interpretation":"truncated", "marker_text": {"m1": {"interpretation":"i", "treatment_advice":"t"}'
+        self.assertIsNone(report._parse_clinical_json(text))
+
 
 class LoadErrorTests(unittest.TestCase):
     def test_missing_adapter_dir_raises_clear_error(self) -> None:
