@@ -158,6 +158,45 @@ _CLINICAL_NO_GESTURE_NOTE = (
 )
 
 
+COMPACT_CLINICAL_SYSTEM_PROMPT = (
+    "你是一名资深康复医学医师。任务：根据脑卒中偏瘫患者的多模态评估数值，"
+    "只返回一个可被程序解析的 JSON 对象；不要输出推理过程、解释前言、Markdown 或代码块。\n"
+    "核心原则：所有判断必须来自输入数值；不得修改数值；Brunnstrom 分期必须严格使用"
+    "输入的 stage_roman；marker_text 只能覆盖 marker_keys 中列出的生物标志物，禁止加入"
+    "FMA_UE、hand_tone、hand_function 等临床预测项。\n"
+    "重要：多数 EMG/EEG/IMU 生物标志物是设备/协议特异量，文献没有标准绝对阈值；"
+    "写作时应说明方向、趋势和随访意义，不要硬判“正常/超标”。\n"
+    "字段规则：\n"
+    "1) overall_interpretation：1 句，80 字内。\n"
+    "2) marker_text：对象；每个 key 的值必须是二元数组 [interpretation, treatment_advice]，"
+    "两段均为短中文句，每段 70 字内；禁止把值写成普通字符串。\n"
+    "3) group_subtypes：至少覆盖有数据的 emg/eeg；每个值必须以「{stage_roman}期-」开头。\n"
+    "4) overall_subtype：1 句，必须以「{stage_roman}期-」开头，并包含运动模式、中枢驱动、"
+    "协同分离、关节活动度状态。\n"
+    "5) treatment_strategy：3-5 条，每条 100 字内，包含方法、剂量、反馈/调整、安全注意。\n"
+    "6) warnings：1-3 条；next_assessment 固定为「7天后执行下一次居家评估。」\n"
+)
+
+
+def _filter_available_biomarkers(context: Dict[str, object]) -> tuple[object, int, list[str], list[str]]:
+    """Return biomarker payload, dropped count, marker keys, and modality keys."""
+    biomarkers_in = context.get("biomarkers") or {}
+    n_dropped = 0
+    marker_keys: list[str] = []
+    modality_keys: list[str] = []
+    if isinstance(biomarkers_in, dict) and biomarkers_in.get("groups"):
+        filtered_groups = []
+        for g in biomarkers_in["groups"]:
+            kept = [m for m in g.get("markers", []) if m.get("available", True)]
+            n_dropped += len(g.get("markers", [])) - len(kept)
+            if kept:
+                filtered_groups.append({**g, "markers": kept})
+                modality_keys.append(str(g.get("key", "")))
+                marker_keys.extend(str(m.get("key", "")) for m in kept if m.get("key"))
+        return {**biomarkers_in, "groups": filtered_groups}, n_dropped, marker_keys, modality_keys
+    return biomarkers_in, n_dropped, marker_keys, modality_keys
+
+
 def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[str, str]]:
     """Build chat messages for the structured clinical-reasoning report.
 
@@ -186,18 +225,7 @@ def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[s
     # bundles can't compute every marker; unavailable ones are dropped from the
     # payload (and back-filled with a "数据不足" note during rendering) so the
     # model never fabricates a reading for a missing value.
-    biomarkers_in = context.get("biomarkers") or {}
-    n_dropped = 0
-    if isinstance(biomarkers_in, dict) and biomarkers_in.get("groups"):
-        filtered_groups = []
-        for g in biomarkers_in["groups"]:
-            kept = [m for m in g.get("markers", []) if m.get("available", True)]
-            n_dropped += len(g.get("markers", [])) - len(kept)
-            if kept:
-                filtered_groups.append({**g, "markers": kept})
-        biomarkers_payload = {**biomarkers_in, "groups": filtered_groups}
-    else:
-        biomarkers_payload = biomarkers_in
+    biomarkers_payload, n_dropped, _, _ = _filter_available_biomarkers(context)
 
     payload = {
         "patient": context.get("patient"),
@@ -234,6 +262,69 @@ def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[s
     ]
 
 
+def build_compact_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[str, str]]:
+    """Build a shorter schema prompt for reasoner-style local baselines.
+
+    DeepSeek-R1-Distill-Qwen tends to spend too many tokens on reasoning and can
+    drift into verbose marker prose. This compact schema keeps the same final
+    clinical contract while making the emitted JSON smaller and easier to parse.
+    """
+    gesture_ready = bool(context.get("gesture_ready"))
+    biomarkers_payload, n_dropped, marker_keys, modality_keys = _filter_available_biomarkers(context)
+    stage = str(context.get("stage_roman", ""))
+    system = COMPACT_CLINICAL_SYSTEM_PROMPT.replace("{stage_roman}", stage)
+    if gesture_ready:
+        system += (
+            "本次提供了候选手势库时，还需输出 gesture_plan 和 weekly_plan；gesture_plan "
+            "只能选候选库中的名称，weekly_plan 覆盖周一至周日。\n"
+        )
+    else:
+        system += "本次未提供康复手势库，不要输出 gesture_plan 与 weekly_plan。\n"
+
+    payload = {
+        "patient": context.get("patient"),
+        "predictions": context.get("predictions"),
+        "stage": context.get("stage"),
+        "stage_roman": context.get("stage_roman"),
+        "marker_keys": marker_keys,
+        "required_modalities": [m for m in ("emg", "eeg") if m in modality_keys],
+        "biomarkers": biomarkers_payload,
+    }
+    if gesture_ready:
+        payload["gesture_library"] = context.get("gesture_library")
+
+    compact_schema = {
+        "overall_interpretation": "string",
+        "marker_text": {key: ["interpretation", "treatment_advice"] for key in marker_keys},
+        "group_subtypes": {m: f"{stage}期-..." for m in payload["required_modalities"]},
+        "overall_subtype": f"{stage}期-...",
+        "treatment_strategy": ["string", "string", "string"],
+        "warnings": ["string"],
+        "next_assessment": "7天后执行下一次居家评估。",
+    }
+    if gesture_ready:
+        compact_schema["gesture_plan"] = [{"name": "候选手势名", "purpose": "目的", "force": "辅助力度", "reps": "次数"}]
+        compact_schema["weekly_plan"] = [{"day": "周一", "content": "训练内容", "duration": "预计时长"}]
+
+    dropped_note = (
+        f"\n本次已剔除 {n_dropped} 项数据不足/该采集格式暂不支持的标志物；不要为剔除项生成 marker_text。\n"
+        if n_dropped else ""
+    )
+    user = (
+        "【输入 JSON】\n"
+        + _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + dropped_note
+        + "\n【输出 JSON 形状】\n"
+        + _json.dumps(compact_schema, ensure_ascii=False, separators=(",", ":"))
+        + "\n\n只返回上述形状的 JSON 对象。marker_text 必须完整覆盖 marker_keys，"
+        "每个值必须是 [解读, 治疗建议] 二元数组。"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 __all__ = [
     "REPORT_TEMPLATE",
     "SYSTEM_PROMPT",
@@ -241,4 +332,6 @@ __all__ = [
     "build_chat_messages",
     "CLINICAL_SYSTEM_PROMPT",
     "build_clinical_reasoning_messages",
+    "COMPACT_CLINICAL_SYSTEM_PROMPT",
+    "build_compact_clinical_reasoning_messages",
 ]

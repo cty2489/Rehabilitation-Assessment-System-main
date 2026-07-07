@@ -63,13 +63,55 @@ class AdaptationTests(unittest.TestCase):
         text = '{"overall_interpretation":"truncated", "marker_text": {"m1": {"interpretation":"i", "treatment_advice":"t"}'
         self.assertIsNone(report._parse_clinical_json(text))
 
+    def test_parse_clinical_json_accepts_deepseek_closed_think_prefill(self) -> None:
+        text = '</think>\n{"overall_interpretation":"ok"}'
+        self.assertEqual(
+            report._parse_clinical_json(text),
+            {"overall_interpretation": "ok"},
+        )
+
+    def test_coerce_ordered_marker_text_list_to_key_map(self) -> None:
+        markers = [{"key": "m1"}, {"key": "m2"}]
+        raw = [["解读1", "建议1"], ["解读2", "建议2"]]
+        self.assertEqual(
+            report._coerce_marker_text_payload(raw, markers),
+            {"m1": ["解读1", "建议1"], "m2": ["解读2", "建议2"]},
+        )
+
+    def test_coerce_wrong_marker_keys_by_order(self) -> None:
+        markers = [{"key": "movement_mu_power_change"}, {"key": "movement_beta_power_change"}]
+        raw = {
+            "mu_power": ["解读1", "建议1"],
+            "beta_power": ["解读2", "建议2"],
+        }
+        self.assertEqual(
+            report._coerce_marker_text_payload(raw, markers),
+            {
+                "movement_mu_power_change": ["解读1", "建议1"],
+                "movement_beta_power_change": ["解读2", "建议2"],
+            },
+        )
+
+    def test_marker_payload_has_all_required_keys(self) -> None:
+        self.assertTrue(report._marker_payload_has_keys({"m1": [], "m2": []}, ["m1", "m2"]))
+        self.assertFalse(report._marker_payload_has_keys({"m1": []}, ["m1", "m2"]))
+        self.assertTrue(report._marker_payload_has_keys([[], []], ["m1", "m2"]))
+        self.assertFalse(report._marker_payload_has_keys([[]], ["m1", "m2"]))
+
+    def test_segment_json_repairs_missing_outer_brace(self) -> None:
+        text = '</think>\n{"marker_text":{"m1":["解读","建议"]}'
+        obj = report._parse_segment_json(text, required_marker_keys=["m1"])
+        self.assertEqual(obj, {"marker_text": {"m1": ["解读", "建议"]}})
+        self.assertIsNone(report._parse_clinical_json(text))
+
 
 class LoadErrorTests(unittest.TestCase):
     def test_missing_adapter_dir_raises_clear_error(self) -> None:
         rm = report.ReportModel()
         rm.adapter_dir = Path("/nonexistent/checkpoints_llm/yi15_6b")
-        with self.assertRaises(RuntimeError) as ctx:
-            rm.load()
+        with patch.dict("os.environ", {"LLM_USE_ADAPTER": "1"}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                rm.load()
         self.assertIn("adapter", str(ctx.exception).lower())
 
 

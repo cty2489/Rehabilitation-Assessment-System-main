@@ -105,8 +105,8 @@ def _default_models() -> List[Dict[str, Any]]:
                 extra_candidates=[_original_model_path("DeepSeek-R1-Distill-Qwen-7B")],
             ),
             "enabled": True,
-            "description": "DeepSeek 蒸馏模型候选；当前端到端报告 JSON 结构校验未通过，暂不用于线上报告。",
-            "report_ready": False,
+            "description": "DeepSeek-R1 蒸馏模型，使用分段结构化生成通过端到端报告 JSON 校验；速度和临床文本质量弱于 Qwen3，适合作 baseline 对照。",
+            "report_ready": True,
         },
         {
             "id": "baichuan2_7b_chat",

@@ -1,5 +1,14 @@
 # Changelog
 
+## cloud-server-v1.1.8 - 2026-07-07
+
+### 改进
+
+- `deepseek_r1_distill_qwen7b` 采用分段结构化生成：关闭 R1 `<think>` 输出后，将 26 项 biomarker 拆成小段生成，再合并为统一临床 JSON。
+- 新增 DeepSeek 分段 JSON 修复与校验逻辑：支持紧凑 `[解读, 建议]` marker 输出、长 key 顺序映射、单段缺失外层闭括号修复，并保持最终 `report_builder.validate_clinical` 严格校验。
+- DeepSeek-R1-Distill-Qwen-7B 已在云服务器真实 `mysql_assessment_21`、VI 期、26 biomarker 数据上通过端到端报告 JSON 结构校验，可在“模型设置”页切换为 baseline 对照。
+- 当前默认报告模型仍推荐 `qwen3_8b_hf`；DeepSeek 原版权重生成约 2 分钟/份，临床文本质量仍需后续知识库增强或微调优化。
+
 ## cloud-server-v1.1.7 - 2026-07-07
 
 ### 改进

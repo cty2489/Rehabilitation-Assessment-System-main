@@ -97,15 +97,23 @@ MODEL_REGISTRY: dict[str, dict] = {
     },
     "deepseek_r1_distill_qwen7b": {
         # Kept as a report-model candidate for the professor's baseline sweep.
-        # It is reasoner-style and can spend output budget on <think>; use a
-        # stricter prompt / post-processing before treating it as final clinical
-        # prose. Architecture follows Qwen/Llama-style projection names.
+        # It is reasoner-style and its tokenizer appends "<think>\n" before
+        # generation. For report JSON, close that block and use the compact
+        # clinical schema so the model spends its budget on parseable fields
+        # rather than exposed chain-of-thought or a copied input payload.
         "hf_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
         "response_template": "<｜Assistant｜>",
         "target_modules": list(_LLAMA_STYLE_TARGETS),
         "max_seq_length": 1024,
         "trust_remote_code": True,
         "extra_eos_tokens": ["<｜end▁of▁sentence｜>", "<|im_end|>"],
+        "generation_prefill": "</think>\n{\"overall_interpretation\":",
+        "prompt_profile": "compact_clinical_json",
+        "generation_mode": "segmented_clinical_json",
+        "segment_marker_chunk_size": 5,
+        "segment_marker_max_new_tokens": 1024,
+        "segment_summary_max_new_tokens": 1024,
+        "max_new_tokens": 4096,
     },
     "baichuan2_7b_chat": {
         # Some Baichuan2 checkpoints do not expose tokenizer.chat_template.

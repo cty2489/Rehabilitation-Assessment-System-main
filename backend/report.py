@@ -106,14 +106,17 @@ def to_demographics(patient: PatientInfo) -> Dict[str, Any]:
     }
 
 
-def build_clinical_messages(context: Dict[str, Any]):
+def build_clinical_messages(context: Dict[str, Any], prompt_profile: str = ""):
     """Build the structured clinical-reasoning ChatML messages from a report context.
 
     ``context`` is ``report_builder.build_context(...)`` augmented with the JSON
     schema hint under ``schema_hint``; the model must reply with a single JSON
     object of clinical text only (numbers stay code-owned).
     """
-    from llm.prompts import build_clinical_reasoning_messages  # local import
+    from llm.prompts import (  # local import
+        build_clinical_reasoning_messages,
+        build_compact_clinical_reasoning_messages,
+    )
     import gestures  # local import (backend on sys.path)
 
     ctx = dict(context)
@@ -121,6 +124,8 @@ def build_clinical_messages(context: Dict[str, Any]):
     # Tell the prompt whether to ask for gestures: only once the clinical team's
     # 26-gesture library is configured (avoids a base model inventing names).
     ctx["gesture_ready"] = gestures.library_ready()
+    if prompt_profile == "compact_clinical_json":
+        return build_compact_clinical_reasoning_messages(ctx)
     return build_clinical_reasoning_messages(ctx)
 
 
@@ -304,10 +309,12 @@ REPORT_MODEL = ReportModel()
 # --------------------------------------------------------------------------- #
 # Streaming generation                                                        #
 # --------------------------------------------------------------------------- #
-def _decoding_kwargs() -> Dict[str, Any]:
+def _decoding_kwargs(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     # Clinical-reasoning JSON is larger than the legacy one-paragraph report, so
     # default to a higher new-token budget (override via LLM_MAX_NEW_TOKENS).
-    max_new = int(os.environ.get("LLM_MAX_NEW_TOKENS", "1536"))
+    cfg = cfg or {}
+    default_max_new = str(cfg.get("max_new_tokens") or "1536")
+    max_new = int(os.environ.get("LLM_MAX_NEW_TOKENS", default_max_new))
     num_beams = int(os.environ.get("LLM_NUM_BEAMS", "1"))
     rep = float(os.environ.get("LLM_REPETITION_PENALTY", "1.05"))
     return {"max_new_tokens": max_new, "num_beams": num_beams, "repetition_penalty": rep}
@@ -702,6 +709,295 @@ def _reason_remote(base_url: str, context: Dict[str, Any]) -> str:
     return _strip_trailing_chat_tags(str(data.get("text", "")))
 
 
+def _chunked(items: list[Dict[str, Any]], size: int) -> list[list[Dict[str, Any]]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _available_groups(context: Dict[str, Any]) -> list[Dict[str, Any]]:
+    groups = []
+    for group in (context.get("biomarkers") or {}).get("groups", []) or []:
+        markers = [m for m in group.get("markers", []) if m.get("available", True)]
+        if markers:
+            groups.append({**group, "markers": markers})
+    return groups
+
+
+def _coerce_marker_text_payload(raw: Any, markers: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """Coerce a marker_text object, or an ordered compact list, to a key map."""
+    if isinstance(raw, dict):
+        required = [str(marker.get("key") or "") for marker in markers]
+        if all(key in raw for key in required):
+            return raw
+        if len(raw) >= len(required):
+            # Some base models paraphrase long snake_case keys. The prompt and
+            # schema list markers in a fixed order, so preserve the model's text
+            # while mapping values back to canonical keys for downstream export.
+            return {key: item for key, item in zip(required, raw.values()) if key}
+        return raw
+    if isinstance(raw, list):
+        out: Dict[str, Any] = {}
+        for marker, item in zip(markers, raw):
+            key = str(marker.get("key") or "")
+            if key:
+                out[key] = item
+        return out
+    return {}
+
+
+def _marker_payload_has_keys(raw: Any, keys: list[str]) -> bool:
+    if isinstance(raw, dict):
+        return all(key in raw for key in keys) or len(raw) >= len(keys)
+    if isinstance(raw, list):
+        return len(raw) >= len(keys)
+    return False
+
+
+def _append_missing_json_closers(text: str) -> str:
+    """Append missing closing braces/brackets for short segmented JSON only."""
+    s = text.rstrip()
+    start = s.find("{")
+    if start == -1:
+        return text
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in s[start:]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if not stack:
+                return text
+            opener = stack[-1]
+            if (opener, ch) not in {("{", "}"), ("[", "]")}:
+                return text
+            stack.pop()
+    if in_string or not stack:
+        return text
+    closers = "".join("}" if ch == "{" else "]" for ch in reversed(stack))
+    return s + closers
+
+
+def _parse_segment_json(text: str, required_marker_keys: Optional[list[str]] = None) -> Optional[Dict[str, Any]]:
+    obj = _parse_clinical_json(text)
+    if isinstance(obj, dict):
+        return obj
+    repaired = _append_missing_json_closers(text)
+    if repaired == text:
+        return None
+    obj = _parse_clinical_json(repaired)
+    if not isinstance(obj, dict):
+        return None
+    if required_marker_keys and not _marker_payload_has_keys(obj.get("marker_text"), required_marker_keys):
+        return None
+    return obj
+
+
+def _deepseek_marker_messages(
+    context: Dict[str, Any],
+    group: Dict[str, Any],
+    markers: list[Dict[str, Any]],
+) -> list[Dict[str, str]]:
+    stage = str(context.get("stage_roman", ""))
+    payload = {
+        "patient": context.get("patient"),
+        "predictions": context.get("predictions"),
+        "stage": context.get("stage"),
+        "stage_roman": stage,
+        "biomarker_group": {
+            "key": group.get("key"),
+            "label": group.get("label"),
+            "markers": markers,
+        },
+    }
+    schema = {"marker_text": {str(m["key"]): ["interpretation", "treatment_advice"] for m in markers}}
+    system = (
+        "你是一名康复医学医师。只为输入中的 biomarker_group 生成 marker_text JSON，"
+        "不要输出推理过程、Markdown 或额外字段。每个 marker key 必须完整出现一次；"
+        "每个值必须是 [解读, 治疗建议] 二元数组，两段均为短中文句，分别不超过70字。"
+        "不得加入 FMA_UE、hand_tone、hand_function。"
+        f"所有分期相关表述只能使用 {stage}期。"
+    )
+    user = (
+        "【输入 JSON】\n"
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\n【输出 JSON 形状】\n"
+        + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        + "\n只返回 JSON。"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _deepseek_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
+    stage = str(context.get("stage_roman", ""))
+    groups = _available_groups(context)
+    modality_keys = [str(g.get("key")) for g in groups if g.get("key")]
+    payload = {
+        "patient": context.get("patient"),
+        "predictions": context.get("predictions"),
+        "stage": context.get("stage"),
+        "stage_roman": stage,
+        "biomarkers": {"groups": groups},
+        "required_modalities": [m for m in ("emg", "eeg") if m in modality_keys],
+    }
+    schema = {
+        "overall_interpretation": "一句话总体临床解读，80字内",
+        "group_subtypes": {m: f"{stage}期-..." for m in payload["required_modalities"]},
+        "overall_subtype": f"{stage}期-...",
+        "treatment_strategy": ["3-5条，每条100字内"],
+        "warnings": ["1-3条"],
+        "next_assessment": report_builder.NEXT_ASSESSMENT_TEXT,
+    }
+    system = (
+        "你是一名康复医学医师。只根据输入数值生成报告的总结字段 JSON，"
+        "不要生成 marker_text，不要输出推理过程、Markdown 或代码块。"
+        f"group_subtypes 与 overall_subtype 必须以「{stage}期-」开头；"
+        "overall_subtype 需包含运动模式、中枢驱动、协同分离、关节活动度状态。"
+        "treatment_strategy 每条包含方法、剂量、反馈/调整、安全注意。"
+    )
+    user = (
+        "【输入 JSON】\n"
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\n【输出 JSON 形状】\n"
+        + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        + "\n只返回 JSON。"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _generate_local_text(
+    rm: ReportModel,
+    messages: list[Dict[str, str]],
+    *,
+    sample: bool = False,
+    generation_prefill: str = "",
+    max_new_tokens: Optional[int] = None,
+    stop_on_json: bool = False,
+    required_marker_keys: Optional[list[str]] = None,
+    required_top_keys: Optional[list[str]] = None,
+) -> str:
+    import torch  # local import: heavy dep
+
+    assert rm.model is not None and rm.tok is not None
+    tok, model = rm.tok, rm.model
+    device = next(model.parameters()).device
+    prompt = _apply_chat_template(tok, messages)
+    if generation_prefill:
+        prompt += generation_prefill
+    inputs = tok(prompt, return_tensors="pt").to(device)
+    eos = rm.eos_ids
+    sampling = {"do_sample": True, "temperature": 0.7, "top_p": 0.9} if sample \
+        else {"do_sample": False}
+    decode_kwargs = _decoding_kwargs(rm.cfg)
+    if max_new_tokens is not None:
+        decode_kwargs["max_new_tokens"] = int(max_new_tokens)
+    gen_kwargs = dict(
+        **inputs,
+        **decode_kwargs,
+        **sampling,
+        pad_token_id=tok.pad_token_id,
+        eos_token_id=(eos if len(eos) > 1 else (eos[0] if eos else None)),
+    )
+
+    if stop_on_json:
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        class _JsonStop(StoppingCriteria):
+            def __init__(self, start_len: int) -> None:
+                self.start_len = start_len
+
+            def __call__(self, input_ids, scores, **kwargs) -> bool:  # type: ignore[no-untyped-def]
+                gen_ids = input_ids[0][self.start_len:]
+                if gen_ids.numel() < 4:
+                    return False
+                text = generation_prefill + tok.decode(gen_ids, skip_special_tokens=True)
+                obj = _parse_clinical_json(_strip_trailing_chat_tags(text))
+                if not isinstance(obj, dict):
+                    return False
+                if required_top_keys and not all(key in obj for key in required_top_keys):
+                    return False
+                if required_marker_keys and not _marker_payload_has_keys(
+                    obj.get("marker_text"), required_marker_keys
+                ):
+                    return False
+                return True
+
+        gen_kwargs["stopping_criteria"] = StoppingCriteriaList([
+            _JsonStop(inputs["input_ids"].shape[1])
+        ])
+
+    with torch.no_grad():
+        out = model.generate(**gen_kwargs)
+    gen_ids = out[0][inputs["input_ids"].shape[1]:]
+    text = tok.decode(gen_ids, skip_special_tokens=True)
+    if generation_prefill:
+        text = generation_prefill + text
+    return _strip_trailing_chat_tags(text)
+
+
+def _reason_local_segmented_deepseek(
+    context: Dict[str, Any],
+    rm: ReportModel,
+    sample: bool = False,
+) -> str:
+    """Generate DeepSeek clinical JSON in small parseable chunks."""
+    marker_text: Dict[str, Any] = {}
+    chunk_size = int(rm.cfg.get("segment_marker_chunk_size") or 5)
+    marker_tokens = int(rm.cfg.get("segment_marker_max_new_tokens") or 768)
+    for group in _available_groups(context):
+        for markers in _chunked(group["markers"], chunk_size):
+            required_keys = [str(m["key"]) for m in markers]
+            marker_prefill = str(rm.cfg.get("segment_marker_prefill") or "</think>\n{\"marker_text\":{")
+            if len(required_keys) == 1 and "segment_marker_prefill" not in rm.cfg:
+                marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
+            text = _generate_local_text(
+                rm,
+                _deepseek_marker_messages(context, group, markers),
+                sample=sample,
+                generation_prefill=marker_prefill,
+                max_new_tokens=marker_tokens,
+                stop_on_json=True,
+                required_marker_keys=required_keys,
+            )
+            clinical = _parse_segment_json(text, required_marker_keys=required_keys)
+            if not isinstance(clinical, dict):
+                raise report_builder.ClinicalUnavailable(
+                    f"DeepSeek 分段 marker_text 未返回 JSON；keys={required_keys}"
+                )
+            chunk_text = _coerce_marker_text_payload(clinical.get("marker_text"), markers)
+            missing = [key for key in required_keys if key not in chunk_text]
+            if missing:
+                raise report_builder.ClinicalUnavailable(
+                    f"DeepSeek 分段 marker_text 缺少字段：{', '.join(missing)}"
+                )
+            marker_text.update(chunk_text)
+
+    summary_prefill = str(rm.cfg.get("segment_summary_prefill") or "</think>\n{\"overall_interpretation\":")
+    summary_text = _generate_local_text(
+        rm,
+        _deepseek_summary_messages(context),
+        sample=sample,
+        generation_prefill=summary_prefill,
+        max_new_tokens=int(rm.cfg.get("segment_summary_max_new_tokens") or 1024),
+        stop_on_json=True,
+        required_top_keys=["overall_interpretation", "group_subtypes", "overall_subtype", "treatment_strategy"],
+    )
+    summary = _parse_segment_json(summary_text)
+    if not isinstance(summary, dict):
+        raise report_builder.ClinicalUnavailable("DeepSeek 分段 summary 未返回 JSON")
+    summary["marker_text"] = marker_text
+    return json.dumps(summary, ensure_ascii=False)
+
+
 def _reason_local(
     context: Dict[str, Any],
     report_model: Optional[ReportModel] = None,
@@ -712,30 +1008,19 @@ def _reason_local(
     ``sample=True`` (used on the retry) switches greedy decoding to low-temp
     sampling so the second attempt produces a different draft.
     """
-    import torch  # local import: heavy dep
-
     rm = report_model or REPORT_MODEL
     rm.ensure_loaded()
     assert rm.model is not None and rm.tok is not None
-    tok, model = rm.tok, rm.model
-    device = next(model.parameters()).device
+    if rm.cfg.get("generation_mode") == "segmented_clinical_json":
+        return _reason_local_segmented_deepseek(context, rm, sample=sample)
 
-    messages = build_clinical_messages(context)
-    prompt = _apply_chat_template(tok, messages)
-    inputs = tok(prompt, return_tensors="pt").to(device)
-    eos = rm.eos_ids
-    sampling = {"do_sample": True, "temperature": 0.7, "top_p": 0.9} if sample \
-        else {"do_sample": False}
-    gen_kwargs = dict(
-        **inputs,
-        **_decoding_kwargs(),
-        **sampling,
-        pad_token_id=tok.pad_token_id,
-        eos_token_id=(eos if len(eos) > 1 else (eos[0] if eos else None)),
+    prompt_profile = str(rm.cfg.get("prompt_profile") or "")
+    messages = build_clinical_messages(context, prompt_profile=prompt_profile)
+    generation_prefill = str(rm.cfg.get("generation_prefill") or "")
+    return _generate_local_text(
+        rm,
+        messages,
+        sample=sample,
+        generation_prefill=generation_prefill,
+        stop_on_json=bool(rm.cfg.get("stop_on_json")),
     )
-    with torch.no_grad():
-        out = model.generate(**gen_kwargs)
-    # Decode only the newly generated tokens (skip the prompt).
-    gen_ids = out[0][inputs["input_ids"].shape[1]:]
-    text = tok.decode(gen_ids, skip_special_tokens=True)
-    return _strip_trailing_chat_tags(text)

@@ -181,6 +181,41 @@ def _nonempty_str(v: Any) -> bool:
     return isinstance(v, str) and v.strip() != ""
 
 
+def _normalize_marker_text_entry(v: Any) -> Optional[Dict[str, str]]:
+    """Accept the canonical marker object and compact LLM-friendly aliases.
+
+    DeepSeek-R1-Distill is much more reliable when asked to emit compact JSON,
+    so the prompt may use ``["解读", "建议"]`` per biomarker and this validator
+    expands it back to the canonical shape used by rendering/export.
+    """
+    if isinstance(v, dict):
+        interpretation = (
+            v.get("interpretation")
+            or v.get("interpretion")  # tolerate a common model typo
+            or v.get("解读")
+        )
+        advice = (
+            v.get("treatment_advice")
+            or v.get("treatmentAdvice")
+            or v.get("治疗建议")
+            or v.get("建议")
+        )
+        if _nonempty_str(interpretation) and _nonempty_str(advice):
+            return {
+                "interpretation": str(interpretation).strip(),
+                "treatment_advice": str(advice).strip(),
+            }
+        return None
+    if isinstance(v, (list, tuple)) and len(v) >= 2:
+        interpretation, advice = v[0], v[1]
+        if _nonempty_str(interpretation) and _nonempty_str(advice):
+            return {
+                "interpretation": str(interpretation).strip(),
+                "treatment_advice": str(advice).strip(),
+            }
+    return None
+
+
 def _normalize_weekly_plan(
     llm_plan: Optional[List[Dict[str, Any]]],
     gesture_plan: List[Dict[str, Any]],
@@ -256,9 +291,8 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
                 }
                 continue
             groups_avail[group["key"]] += 1
-            txt = src_mt.get(key)
-            if not isinstance(txt, dict) or not _nonempty_str(txt.get("interpretation")) \
-                    or not _nonempty_str(txt.get("treatment_advice")):
+            txt = _normalize_marker_text_entry(src_mt.get(key))
+            if txt is None:
                 raise ClinicalUnavailable(f"生物标志物 {m['name']}（{key}）缺少解读或治疗建议")
             marker_text[key] = {
                 "interpretation": txt["interpretation"].strip(),

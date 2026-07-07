@@ -88,6 +88,16 @@ class ValidateClinicalTests(unittest.TestCase):
         self.assertEqual(c["gesture_plan"], [])
         self.assertEqual(c["next_assessment"], report_builder.NEXT_ASSESSMENT_TEXT)
 
+    def test_compact_marker_arrays_are_normalized(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"] = {
+            "m_emg": ["屈伸肌比偏高，提示屈肌参与偏多。", "增加伸肌主动募集与慢速回中训练。"],
+            "m_emg2": ["共收缩指数偏高，分离控制不足。", "降低快速抓放比例，先做分离控制。"],
+            "m_eeg": ["相干偏低，中枢-外周耦合需观察。", "加入运动想象和视觉反馈配对训练。"],
+        }
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertEqual(c["marker_text"]["m_emg"]["treatment_advice"], "增加伸肌主动募集与慢速回中训练。")
+
     def test_none_raises(self) -> None:
         with self.assertRaises(ClinicalUnavailable):
             report_builder.validate_clinical(_context(6), None)
@@ -139,6 +149,17 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("III期-屈肌优势伴中枢驱动不足亚型，协同开始解离", sys_txt)
         # Gesture library not ready → prompt tells the model to omit gesture fields.
         self.assertIn("gesture_plan", sys_txt)
+
+    def test_compact_prompt_lists_marker_keys_and_schema(self) -> None:
+        from llm.prompts import build_compact_clinical_reasoning_messages
+        ctx = dict(_context(6))
+        ctx["gesture_ready"] = False
+        msgs = build_compact_clinical_reasoning_messages(ctx)
+        joined = "\n".join(m["content"] for m in msgs)
+        self.assertIn('"marker_keys":["m_emg","m_emg2","m_eeg"]', joined)
+        self.assertIn('"m_emg":["interpretation","treatment_advice"]', joined)
+        self.assertIn("每个值必须是 [解读, 治疗建议] 二元数组", joined)
+        self.assertIn("VI期-", joined)
 
 
 if __name__ == "__main__":

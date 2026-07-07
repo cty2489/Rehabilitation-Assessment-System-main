@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.7
+cloud-server-v1.1.8
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -17,7 +17,7 @@ cloud-server-v1.1.7
 - 页面登录和 Bearer token 业务接口保护
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
-- 独立“模型设置”页可切换已验证的报告大模型，默认内置 5 个国产和 2 个国外候选模型
+- 独立“模型设置”页可切换已验证的报告大模型，默认内置 5 个国产和 2 个国外候选模型；Qwen3-8B 与 DeepSeek-R1-Distill-Qwen-7B 已通过端到端报告结构校验
 - 模型权重路径属于服务器部署配置，不在业务页面暴露；未通过报告结构校验的候选模型不能设为当前线上模型
 - BI/改良 Barthel 指数已从当前上肢手功能在线推理、页面展示、统计和导出报告中移除，数据库字段仅保留旧记录兼容
 - 云服务器启动、验证、常见问题和本地开发文档
@@ -42,7 +42,7 @@ cloud-server-v1.1.7
 - FMA-UE、手部肌张力、Brunnstrom 手功能分期预测
 - 26 项关键 biomarker 计算、展示和报告解读
 - 独立“模型设置”页可选择报告生成大模型，默认内置 5 个国产和 2 个国外候选模型
-- 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；Qwen2.5-7B-Instruct GGUF 保留为回退/对照
+- 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；DeepSeek-R1-Distill-Qwen-7B 可在“模型设置”中切换为 baseline 对照，Qwen2.5-7B-Instruct GGUF 保留为回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
 - 页面内登录保护，后端使用 Bearer token 保护读写接口
@@ -97,7 +97,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.7
+git checkout cloud-server-v1.1.8
 ```
 
 2. 准备外部文件：
@@ -259,8 +259,8 @@ LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 当前云端验证结论：
 
 ```text
-qwen3_8b_hf：已通过端到端报告链路测试，可作为当前线上默认报告模型。
-deepseek_r1_distill_qwen7b：权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型。
+qwen3_8b_hf：已通过端到端报告链路测试，当前推荐作为线上默认报告模型。
+deepseek_r1_distill_qwen7b：已通过真实 26 biomarker 报告 JSON 结构校验，采用分段结构化生成避免 R1 推理模型输出截断；可在页面切换为 baseline 对照，但当前生成耗时约 2 分钟/份，临床文本质量仍建议后续通过知识库增强或微调优化。
 glm4_9b：GLM-4-9B-Chat 可加载，小样例 JSON 可通过；真实 26 biomarker 报告在当前 token 预算内输出截断，暂不允许切为线上报告模型。
 baichuan2_7b_chat：当前本地权重加载触发 PyTorch 2.6 torch.load 安全限制，暂不允许切为线上报告模型。
 mistral7b_v03：当前云服务器目录缺少 tokenizer 文件，且已按空间策略删除，暂不允许切为线上报告模型。
@@ -303,7 +303,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.7
+稳定演示/复现实验：使用 cloud-server-v1.1.8
 日常继续开发：使用 main
 ```
 
