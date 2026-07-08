@@ -192,6 +192,18 @@ MODEL_REGISTRY: dict[str, dict] = {
         "trust_remote_code": False,
         "extra_eos_tokens": ["<|eot_id|>"],
     },
+    "internlm3_8b": {
+        # InternLM3-8B-Instruct (Shanghai AI Lab). Custom architecture
+        # (modeling_internlm3.py) requires trust_remote_code. It uses a
+        # ChatML-style template, but the tokenizer eos_token is </s>, so stop
+        # additionally on <|im_end|> to avoid fabricated next turns.
+        "hf_id": "internlm/internlm3-8b-instruct",
+        "response_template": "<|im_start|>assistant\n",
+        "target_modules": list(_LLAMA_STYLE_TARGETS),
+        "max_seq_length": 1024,
+        "trust_remote_code": True,
+        "extra_eos_tokens": ["<|im_end|>"],
+    },
     "yi15_6b": {
         # Standard LlamaForCausalLM under the hood and a ChatML-style
         # chat_template (same "<|im_start|>assistant\n" marker as Qwen2.5),

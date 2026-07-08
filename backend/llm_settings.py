@@ -30,9 +30,14 @@ CONFIG_PATH = Path(
     )
 )
 
+REMOVED_DEFAULT_MODEL_IDS = {
+    "qwen25_7b_gguf",
+    "llama3_8b_instruct",
+}
+
 
 def _default_remote_url() -> str:
-    return os.environ.get("LLM_REMOTE_URL", "http://127.0.0.1:6007").strip().rstrip("/")
+    return os.environ.get("LLM_REMOTE_URL", "http://127.0.0.1:6008").strip().rstrip("/")
 
 
 def _original_model_path(filename: str) -> str:
@@ -61,23 +66,7 @@ def _default_model_path(filename: str, extra_candidates: Optional[List[str]] = N
 
 
 def _default_models() -> List[Dict[str, Any]]:
-    remote_url = _default_remote_url()
     return [
-        {
-            "id": "qwen25_7b_gguf",
-            "name": "Qwen2.5-7B-Instruct GGUF",
-            "vendor": "Qwen",
-            "origin": "国产",
-            "provider": "remote",
-            "model_id": "qwen25_7b",
-            "remote_url": remote_url,
-            "weight_path": _default_model_path(
-                "qwen2.5-7b-instruct-gguf/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-            ),
-            "enabled": True,
-            "description": "GGUF 回退/对照报告模型，通过本机 HTTP 服务调用。",
-            "report_ready": True,
-        },
         {
             "id": "qwen3_8b_hf",
             "name": "Qwen3-8B",
@@ -157,22 +146,19 @@ def _default_models() -> List[Dict[str, Any]]:
             "report_ready": True,
         },
         {
-            "id": "llama3_8b_instruct",
-            "name": "Llama-3-8B-Instruct",
-            "vendor": "Meta",
-            "origin": "国外",
+            "id": "internlm3_8b",
+            "name": "InternLM3-8B-Instruct",
+            "vendor": "Shanghai AI Lab",
+            "origin": "国产",
             "provider": "local",
-            "model_id": "llama3_8b_instruct",
+            "model_id": "internlm3_8b",
             "weight_path": _default_model_path(
-                "Meta-Llama-3-8B-Instruct",
-                extra_candidates=[
-                    _original_model_path("Meta-Llama-3-8B-Instruct"),
-                    _original_model_path("Llama-3-8B-Instruct"),
-                ],
+                "InternLM3-8B-Instruct",
+                extra_candidates=[_original_model_path("InternLM3-8B-Instruct")],
             ),
             "enabled": True,
-            "description": "国外通用指令模型候选，可作为国际基线。",
-            "report_ready": False,
+            "description": "书生·浦语3.0（上海AI实验室）8B 指令模型，HF 原版格式，可作为国产基线对照。",
+            "report_ready": True,
         },
     ]
 
@@ -195,6 +181,8 @@ def _merge_with_defaults(raw: Dict[str, Any]) -> Dict[str, Any]:
     for item in raw.get("models") or []:
         mid = item.get("id")
         if not mid:
+            continue
+        if mid in REMOVED_DEFAULT_MODEL_IDS:
             continue
         if mid in by_id:
             default_item = by_id[mid]

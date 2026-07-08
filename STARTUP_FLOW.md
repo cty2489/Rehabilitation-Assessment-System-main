@@ -15,7 +15,6 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 ```text
 MySQL      127.0.0.1:3306
 Qwen3 HF   由 FastAPI 启动时尝试加载，用于当前报告生成
-GGUF LLM   127.0.0.1:6007（可选回退/对照）
 FastAPI    127.0.0.1:8000
 Nginx      0.0.0.0:6006 -> frontend/dist + /api proxy
 ```
@@ -27,19 +26,18 @@ Nginx      0.0.0.0:6006 -> frontend/dist + /api proxy
 ```bash
 curl -I http://127.0.0.1:6006/
 curl http://127.0.0.1:8000/api/health
-curl http://127.0.0.1:6007/health   # 仅检查 GGUF 回退服务
-ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
+ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 ```
 
 期望：
 
 ```text
 6006 监听 0.0.0.0
-6007 监听 127.0.0.1
 8000 监听 127.0.0.1
 3306 监听 127.0.0.1
 5173 不监听
 33060 不监听
+6008 默认不监听；只有手动启动 GGUF 回退/对照时才监听 127.0.0.1
 ```
 
 业务数据接口必须登录后访问。裸访问应返回 `401 Bearer`：
@@ -77,7 +75,7 @@ APP_ADMIN_PASSWORD
 7. 查看患者基本信息自动回填
 8. 点击“开始分析”
 9. 等待评分和报告生成
-10. 查看 FMA-UE / BI / 手部肌张力 / Brunnstrom 结果
+10. 查看 FMA-UE / 手部肌张力 / Brunnstrom 结果
 11. 查看 biomarker 表格和临床解读
 12. 在记录详情中查看 trial、biomarker、报告和 prediction JSON
 13. 下载 JSON / PDF / ZIP 结果文件，演示设备端交付格式
@@ -154,9 +152,10 @@ curl http://127.0.0.1:8000/api/health
 tail -n 120 /root/autodl-tmp/rehab_project/backend_run.log
 ```
 
-如果设置页切回了 `qwen25_7b_gguf`，再检查 GGUF 回退服务：
+如果人工切到 remote/GGUF 回退模式，再单独启动并检查 GGUF 回退服务：
 
 ```bash
-curl http://127.0.0.1:6007/health
+bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
+curl http://127.0.0.1:6008/health
 tail -n 100 /root/autodl-tmp/rehab_project/gguf_server.log
 ```

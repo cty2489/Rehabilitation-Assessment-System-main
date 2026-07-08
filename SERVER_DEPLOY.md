@@ -1,6 +1,6 @@
 # 云服务器部署说明
 
-本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，MySQL 只监听本机；报告大模型当前推荐使用 FastAPI 进程内加载的 Qwen3-8B HF 原版权重，GGUF 服务保留为回退/对照。
+本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，MySQL 只监听本机；报告大模型当前推荐使用 FastAPI 进程内加载的 Qwen3-8B HF 原版权重。GGUF 服务仅作为手动回退/对照，不随生产启动脚本默认启动。
 
 ## 1. 服务拓扑
 
@@ -13,7 +13,6 @@
   -> FastAPI 127.0.0.1:8000
        |-- MySQL 127.0.0.1:3306
        |-- Qwen3-8B HF 本地报告模型（默认）
-       |-- GGUF LLM 127.0.0.1:6007（可选回退/对照）
        |-- PyTorch 评分模型 DL_model/*.pth
 ```
 
@@ -26,7 +25,8 @@
 ├── Rehabilitation-Assessment-System-main      # 项目源码
 ├── ../Qwen_data/Qwen3-8B                      # 当前推荐报告模型，HF 原版格式
 ├── ../Qwen_data/DeepSeek-R1-Distill-Qwen-7B   # 候选对照模型，HF 原版格式
-├── models/qwen2.5-7b-instruct-gguf            # GGUF 模型分卷
+├── ../Qwen_data/InternLM3-8B-Instruct         # 候选对照模型，HF 原版格式
+├── models/qwen2.5-7b-instruct-gguf            # 手动可选 GGUF 模型分卷
 ├── mysql_conf/my.cnf                          # MySQL 配置
 ├── mysql_data                                 # MySQL 数据目录
 ├── mysql_logs                                 # MySQL 日志
@@ -34,8 +34,9 @@
 ├── mysql_tmp                                  # MySQL 临时目录
 ├── exports                                    # 评估结果 JSON/PDF/ZIP 导出文件
 ├── backend_run.log                            # FastAPI 日志
-├── gguf_server.log                            # GGUF LLM 日志
-└── start_rehab_system.sh                      # 一键启动脚本
+├── gguf_server.log                            # 手动可选 GGUF LLM 日志
+├── start_rehab_system.sh                      # 生产一键启动脚本
+└── start_gguf_fallback.sh                     # 手动 GGUF 回退/对照启动脚本
 ```
 
 ### 2.1 从 GitHub 获取源码
@@ -47,7 +48,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.7
+git checkout cloud-server-v1.1.11
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -66,7 +67,7 @@ git pull
 | 环境 | 路径示例 | 用途 |
 |---|---|---|
 | 后端环境 | `/root/autodl-tmp/envs/rehab_backend` | FastAPI、PyTorch、biomarker、MySQL client |
-| LLM 环境 | `/root/autodl-tmp/envs/llm_env` | 可选 llama-cpp-python / GGUF 回退服务 |
+| LLM 环境 | `/root/autodl-tmp/envs/llm_env` | 手动可选 llama-cpp-python / GGUF 回退服务 |
 | Node 环境 | `/root/autodl-tmp/envs/node_env` | 前端构建 |
 
 后端依赖：
@@ -89,7 +90,7 @@ pip install \
   sentencepiece==0.2.1
 ```
 
-GGUF 回退服务依赖：
+仅当需要手动使用 GGUF 回退/对照服务时，再安装 GGUF 依赖：
 
 ```bash
 source /root/autodl-tmp/envs/llm_env/bin/activate
@@ -160,8 +161,8 @@ APP_ADMIN_PASSWORD=change-this-password
 APP_AUTH_TOKEN=generate-a-long-random-token
 DEVICE_API_TOKEN=generate-a-different-long-random-token
 
-LLM_PROVIDER=remote
-LLM_REMOTE_URL=http://127.0.0.1:6007
+LLM_PROVIDER=local
+LLM_REMOTE_URL=
 LLM_REMOTE_TIMEOUT=300
 LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
 LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
@@ -196,12 +197,12 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 
 ### 5.1 大模型设置页
 
-登录后进入左侧“模型设置”，可以选择下一次报告生成使用的大模型。页面只负责切换已验证的线上报告模型，不展示也不编辑本地权重路径或远程服务地址，避免业务操作误改部署路径。页面默认内置 7 个候选：
+登录后进入左侧“模型设置”，可以选择下一次报告生成使用的大模型。页面只负责切换已验证的线上报告模型，不展示也不编辑本地权重路径或远程服务地址，避免业务操作误改部署路径。页面默认只展示已准备/已验证的 HF 原版权重候选：
 
 | 类型 | 模型 |
 |---|---|
-| 国产 | Qwen2.5-7B-Instruct GGUF、Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、Baichuan2-7B-Chat、GLM-4-9B |
-| 国外 | Mistral-7B-Instruct-v0.3、Llama-3-8B-Instruct |
+| 国产 | Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、Baichuan2-7B-Chat、GLM-4-9B、InternLM3-8B-Instruct |
+| 国外 | Mistral-7B-Instruct-v0.3 |
 
 保存后会生成运行态配置：
 
@@ -209,7 +210,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/config/llm_settings.json
 ```
 
-该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置，便于兼容老部署。
+该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置；新部署建议使用 `LLM_PROVIDER=local`，由默认 `qwen3_8b_hf` 接管报告生成。
 
 本地权重路径、远程服务地址、adapter 目录等属于部署配置，由 `.env`、`LLM_MODEL_ROOT`、`LLM_ORIGINAL_MODEL_ROOT` 或上述运行态配置文件管理。权重不存在的本地模型会显示为未就绪；权重存在但端到端报告 JSON 结构尚未验证通过的模型会显示为候选待验证，不能设为当前线上报告模型。
 
@@ -222,8 +223,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 /root/autodl-tmp/Qwen_data/GLM-4-9B-0414
 /root/autodl-tmp/Qwen_data/GLM-4-9B-Chat
 /root/autodl-tmp/Qwen_data/Mistral-7B-Instruct-v0.3
-/root/autodl-tmp/Qwen_data/Meta-Llama-3-8B-Instruct
-/root/autodl-tmp/Qwen_data/Llama-3-8B-Instruct
+/root/autodl-tmp/Qwen_data/InternLM3-8B-Instruct
 ```
 
 当前云端验证结论：
@@ -231,11 +231,12 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 | 模型 ID | 结论 |
 |---|---|
 | `qwen3_8b_hf` | 已通过端到端报告链路测试，可作为当前线上默认报告模型 |
-| `deepseek_r1_distill_qwen7b` | 权重可加载、可生成，但报告 JSON 结构尚未通过端到端校验，页面暂不允许切为线上报告模型 |
-| `glm4_9b` | GLM-4-9B-Chat 可加载，小样例 JSON 可通过；真实 26 biomarker 报告在当前 token 预算内输出截断，暂不允许切为线上报告模型 |
-| `baichuan2_7b_chat` | 当前本地权重加载触发 PyTorch 2.6 torch.load 安全限制，暂不允许切为线上报告模型 |
-| `mistral7b_v03` | 当前云服务器目录缺少 tokenizer 文件，已按空间策略删除，暂不允许切为线上报告模型 |
-| `qwen25_7b_gguf` | 保留为可用回退/对照 |
+| `deepseek_r1_distill_qwen7b` | 已通过真实 26 biomarker 报告 JSON 结构校验，可作为 baseline 对照 |
+| `glm4_9b` | 已通过真实 26 biomarker 报告 JSON 结构校验，可作为 baseline 对照，生成较慢且文本偏模板化 |
+| `baichuan2_7b_chat` | 已通过真实 26 biomarker 报告 JSON 结构校验，可作为国产低阶 baseline，不推荐默认 |
+| `mistral7b_v03` | 已通过真实 26 biomarker 报告 JSON 结构校验，可作为国外 baseline 对照 |
+| `internlm3_8b` | 已通过真实 26 biomarker 报告 JSON 结构校验，可作为国产 baseline 对照 |
+| `qwen25_7b_gguf` | 不在默认模型设置页展示；仅通过 `start_gguf_fallback.sh` 手动作为回退/对照 |
 
 如果不放在 `LLM_ORIGINAL_MODEL_ROOT`，其它本地 HF 权重也会按 `LLM_MODEL_ROOT` 查找，例如：
 
@@ -243,7 +244,7 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 /root/autodl-tmp/rehab_project/models/Baichuan2-7B-Chat
 /root/autodl-tmp/rehab_project/models/GLM-4-9B-0414
 /root/autodl-tmp/rehab_project/models/Mistral-7B-Instruct-v0.3
-/root/autodl-tmp/rehab_project/models/Meta-Llama-3-8B-Instruct
+/root/autodl-tmp/rehab_project/models/InternLM3-8B-Instruct
 ```
 
 如果模型放在其他位置，可以通过环境变量修改根目录或配置文件路径：
@@ -316,10 +317,18 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 它会依次处理：
 
 1. 启动 MySQL `127.0.0.1:3306`
-2. 启动 GGUF LLM `127.0.0.1:6007`（用于回退/对照；如果只使用 Qwen3-HF，可保持但不设为当前模型）
-3. 启动 FastAPI `127.0.0.1:8000`
-4. 确认 `frontend/dist/index.html` 存在，必要时构建
-5. 启动或重载 Nginx `0.0.0.0:6006`
+2. 启动 FastAPI `127.0.0.1:8000`
+3. 确认 `frontend/dist/index.html` 存在，必要时构建
+4. 启动或重载 Nginx `0.0.0.0:6006`
+
+如需临时使用 GGUF 回退/对照服务，单独执行：
+
+```bash
+cp /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/start_gguf_fallback.sh \
+  /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
+chmod +x /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
+bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
+```
 
 ## 8. 结果文件导出
 
@@ -411,18 +420,18 @@ curl -s -H 'Content-Type: application/json' \
 curl -i http://127.0.0.1:8000/api/stats/summary
 
 # 生产端口检查
-ss -ltnp | grep -E ':(3306|33060|5173|6006|6007|8000)' || true
+ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 ```
 
 期望：
 
 ```text
 6006 监听 0.0.0.0
-6007 监听 127.0.0.1
 8000 监听 127.0.0.1
 3306 监听 127.0.0.1
 5173 不监听
 33060 不监听
+6008 默认不监听；只有手动启动 GGUF 回退/对照时才监听 127.0.0.1
 ```
 
 ## 12. 常见问题
@@ -488,18 +497,17 @@ PY
 tail -n 120 /root/autodl-tmp/rehab_project/backend_run.log
 ```
 
-如果当前设置页选择的是 `qwen25_7b_gguf`，检查 GGUF 回退服务：
-
-检查：
+如果人工切到 remote/GGUF 回退模式，先单独启动回退服务并检查：
 
 ```bash
-curl http://127.0.0.1:6007/health
+bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
+curl http://127.0.0.1:6008/health
 tail -n 100 /root/autodl-tmp/rehab_project/gguf_server.log
 ```
 
-后端 `.env` 应为：
+后端 `.env` 应临时改为：
 
 ```env
 LLM_PROVIDER=remote
-LLM_REMOTE_URL=http://127.0.0.1:6007
+LLM_REMOTE_URL=http://127.0.0.1:6008
 ```

@@ -4,7 +4,7 @@ This service is intentionally API-compatible with ``llm_server.py``'s
 ``POST /generate_messages`` endpoint, so the backend can use it through the
 existing ``LLM_PROVIDER=remote`` path:
 
-    LLM_REMOTE_URL=http://127.0.0.1:6006
+    LLM_REMOTE_URL=http://127.0.0.1:6008
 
 It loads a split GGUF model with llama-cpp-python. Pass the first split file
 (``...-00001-of-00002.gguf``); llama.cpp discovers the remaining split files in
@@ -252,6 +252,6 @@ def health() -> Dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("LLM_GGUF_SERVER_PORT", "6006"))
-    host = os.environ.get("LLM_GGUF_SERVER_HOST", "0.0.0.0")
+    port = int(os.environ.get("LLM_GGUF_SERVER_PORT", "6008"))
+    host = os.environ.get("LLM_GGUF_SERVER_HOST", "127.0.0.1")
     uvicorn.run("llm_gguf_server:app", host=host, port=port, reload=False)

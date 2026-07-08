@@ -8,7 +8,7 @@
 
 ## 1. 候选模型对比
 
-系统管理页与训练脚本共用同一套 `model_id`。默认报告候选为 5 个国产模型 + 2 个国外模型；训练时建议先挑权重已准备且 chat template 验证通过的模型进入 sweep。
+模型设置页与训练脚本共用同一套 `model_id`。当前网页默认只展示已准备/已验证的 HF 原版权重报告模型；训练实验仍可在注册表中保留更多研究用短名。进入 sweep 前，优先挑权重已准备且 chat template 验证通过的模型。
 
 | model_id (短名) | HF 仓库 | 参数量 | 架构 / LoRA 注入点 | 显存 (bs=1) | max_seq_length |
 |---|---|---|---|---|---|
@@ -18,13 +18,14 @@
 | `baichuan2_7b_chat` | `baichuan-inc/Baichuan2-7B-Chat` | 7 B | Baichuan: `W_pack` + MLP/O projection | 视本地权重格式而定 | 1024 |
 | `glm4_9b` | `unsloth/GLM-4-9B-0414-bnb-4bit` | 9 B | Llama-style (`Glm4ForCausalLM`, transformers ≥ 4.52) | ~19 GB | **768** |
 | `mistral7b_v03` | `mistralai/Mistral-7B-Instruct-v0.3` | 7 B | 同 Llama-style | ~5 GB (NF4) | 1024 |
-| `llama3_8b_instruct` | `meta-llama/Meta-Llama-3-8B-Instruct` | 8 B | 同 Llama-style | 需 HF 授权 / 视本地权重格式而定 | 1024 |
+| `internlm3_8b` | `internlm/internlm3-8b-instruct` | 8 B | 同 Llama-style | 视本地权重格式而定 | 1024 |
 
 保留研究用短名：
 
 | model_id | 用途 |
 |---|---|
 | `qwen25_3b` | 小模型快速调试 |
+| `llama3_8b_instruct` | 需 HF 授权和本地权重，暂不作为网页默认候选 |
 | `yi15_6b` | 早期 Yi-1.5 对照实验 |
 
 > **关于预量化变体**：`qwen25_3b` 与 `glm4_9b` 改用 Unsloth 维护的 bnb-NF4 预量化仓库（tokenizer / 模块名与原版一致，可直接接 PEFT LoRA），把 HF cache 占用从 ~6 GB / ~18 GB 压到 ~1.8 GB / ~5 GB，匹配 25 GB 云盘预算。其它 HF 权重如使用官方 fp16/bf16 仓库，建议靠运行时 bnb-4bit 量化压显存。

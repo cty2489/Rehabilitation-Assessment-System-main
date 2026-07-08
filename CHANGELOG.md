@@ -1,5 +1,16 @@
 # Changelog
 
+## cloud-server-v1.1.11 - 2026-07-08
+
+### 改进
+
+- 生产启动链路默认不再启动 GGUF 服务，`start_rehab_system.sh` 只负责 MySQL、FastAPI、前端生产包和 Nginx。
+- 新增 `start_gguf_fallback.sh`，需要临时回退/对照时可手动启动 Qwen2.5-7B-Instruct GGUF 服务，默认端口为 `127.0.0.1:6008`。
+- “模型设置”默认候选列表移除 `qwen25_7b_gguf` 和未准备的 `llama3_8b_instruct`，避免网页端出现不该切换的模型。
+- 默认报告模型保持 `qwen3_8b_hf`；HF 原版权重候选保留 Qwen3、DeepSeek、Baichuan2、GLM、Mistral 和 InternLM3，便于后续 baseline、知识库增强和微调实验。
+- 旧运行态配置若保存过 `qwen25_7b_gguf` 或 `llama3_8b_instruct`，后端读取时会自动过滤并回落到 `qwen3_8b_hf`。
+- `README.md` 与 `backend/.env.example` 更新为 HF 本地模型优先的云端部署方案。
+
 ## cloud-server-v1.1.10 - 2026-07-07
 
 ### 改进

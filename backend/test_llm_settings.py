@@ -11,16 +11,17 @@ def test_default_settings_include_baseline_candidates():
     payload = llm_settings.settings_payload(probe=False)
     ids = {model["id"] for model in payload["models"]}
 
-    assert payload["active_model_id"] == "qwen25_7b_gguf"
+    assert payload["active_model_id"] == "qwen3_8b_hf"
     assert {
-        "qwen25_7b_gguf",
         "qwen3_8b_hf",
         "deepseek_r1_distill_qwen7b",
         "baichuan2_7b_chat",
         "glm4_9b",
         "mistral7b_v03",
-        "llama3_8b_instruct",
+        "internlm3_8b",
     }.issubset(ids)
+    assert "qwen25_7b_gguf" not in ids
+    assert "llama3_8b_instruct" not in ids
 
 
 def test_update_active_model_persists_to_config(tmp_path, monkeypatch):
@@ -85,11 +86,13 @@ def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
     baichuan = qwen_data / "Baichuan2-7B-Chat"
     glm = qwen_data / "GLM-4-9B-Chat"
     mistral = qwen_data / "Mistral-7B-Instruct-v0.3"
+    internlm = qwen_data / "InternLM3-8B-Instruct"
     qwen3.mkdir(parents=True)
     deepseek.mkdir(parents=True)
     baichuan.mkdir(parents=True)
     glm.mkdir(parents=True)
     mistral.mkdir(parents=True)
+    internlm.mkdir(parents=True)
     monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))
     monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
 
@@ -114,6 +117,9 @@ def test_qwen_data_original_hf_paths_are_detected(tmp_path, monkeypatch):
     assert by_id["mistral7b_v03"]["report_ready"] is True
     assert by_id["mistral7b_v03"]["available"] is True
     assert by_id["mistral7b_v03"]["status"] == "ready"
+    assert by_id["internlm3_8b"]["report_ready"] is True
+    assert by_id["internlm3_8b"]["available"] is True
+    assert by_id["internlm3_8b"]["status"] == "ready"
 
 
 def test_saved_missing_weight_path_heals_to_existing_default(tmp_path, monkeypatch):
@@ -129,6 +135,11 @@ def test_saved_missing_weight_path_heals_to_existing_default(tmp_path, monkeypat
             "active_model_id": "qwen25_7b_gguf",
             "models": [
                 {
+                    "id": "qwen25_7b_gguf",
+                    "provider": "remote",
+                    "remote_url": "http://127.0.0.1:6008",
+                },
+                {
                     "id": "baichuan2_7b_chat",
                     "weight_path": str(tmp_path / "models" / "Baichuan2-7B-Chat"),
                 }
@@ -140,18 +151,37 @@ def test_saved_missing_weight_path_heals_to_existing_default(tmp_path, monkeypat
     payload = llm_settings.settings_payload(probe=False)
     baichuan = next(model for model in payload["models"] if model["id"] == "baichuan2_7b_chat")
 
+    assert payload["active_model_id"] == "qwen3_8b_hf"
+    assert "qwen25_7b_gguf" not in {model["id"] for model in payload["models"]}
     assert baichuan["weight_path"] == str(qwen_data / "Baichuan2-7B-Chat")
     assert baichuan["weight_exists"] is True
 
 
-def test_update_active_model_rejects_unverified_candidate(tmp_path, monkeypatch):
+def test_removed_default_candidates_are_hidden_from_saved_config(tmp_path, monkeypatch):
     config_path = tmp_path / "llm_settings.json"
-    qwen_data = tmp_path / "Qwen_data"
-    (qwen_data / "Meta-Llama-3-8B-Instruct").mkdir(parents=True)
     monkeypatch.setattr(llm_settings, "CONFIG_PATH", config_path)
-    monkeypatch.setenv("LLM_ORIGINAL_MODEL_ROOT", str(qwen_data))
+    config_path.write_text(
+        json.dumps({
+            "schema_version": "rehab.llm_settings.v1",
+            "active_model_id": "llama3_8b_instruct",
+            "models": [
+                {
+                    "id": "llama3_8b_instruct",
+                    "provider": "local",
+                    "model_id": "llama3_8b_instruct",
+                    "enabled": True,
+                    "report_ready": False,
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ValueError):
+    payload = llm_settings.settings_payload(probe=False)
+
+    assert payload["active_model_id"] == "qwen3_8b_hf"
+    assert "llama3_8b_instruct" not in {model["id"] for model in payload["models"]}
+    with pytest.raises(KeyError):
         llm_settings.update_active_model("llama3_8b_instruct")
 
 
