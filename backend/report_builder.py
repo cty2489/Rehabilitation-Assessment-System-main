@@ -376,18 +376,27 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     }
 
     # ── gesture plan + weekly plan: only when the 26-gesture library is ready ──
+    # Soft requirement: single-pass models (qwen3 等) can pick a 6+ gesture combo
+    # and a 7-day plan from the library, but segmented models (baichuan2 /
+    # deepseek / glm) don't emit gestures at all. Rather than fail the WHOLE
+    # report into a conservative fallback when a model can't produce gestures,
+    # skip only the gesture section (rendered with an explanation) and keep the
+    # measured values + clinical reasoning the model DID produce.
     if gestures.library_ready():
         plan = [g for g in (clinical.get("gesture_plan") or [])
                 if isinstance(g, dict) and g.get("name") in set(gestures.gesture_names())]
-        if len(plan) < MIN_GESTURES:
-            raise ClinicalUnavailable(
-                f"推荐手势不足 {MIN_GESTURES} 个（有效手势 {len(plan)} 个，须取自手势库）")
-        weekly = _normalize_weekly_plan(clinical.get("weekly_plan"), plan)
-        if weekly is None:
-            raise ClinicalUnavailable("每周训练计划未覆盖7天或含手势库外动作")
-        c["gesture_plan"] = plan
-        c["weekly_plan"] = weekly
-        c["gesture_ready"] = True
+        weekly = (_normalize_weekly_plan(clinical.get("weekly_plan"), plan)
+                  if len(plan) >= MIN_GESTURES else None)
+        if len(plan) >= MIN_GESTURES and weekly is not None:
+            c["gesture_plan"] = plan
+            c["weekly_plan"] = weekly
+            c["gesture_ready"] = True
+        else:
+            # Model (typically segmented) didn't return a usable gesture plan.
+            c["gesture_plan"] = []
+            c["weekly_plan"] = []
+            c["gesture_ready"] = False
+            c["gesture_skipped"] = True
     else:
         c["gesture_plan"] = []
         c["weekly_plan"] = []
@@ -497,13 +506,22 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     out.append("## 四、下周具体训练参数")
     out.append("")
     if not c.get("gesture_ready"):
-        # The clinical team's 26-gesture library is not configured yet, so the
-        # LLM was not asked to pick gestures. Show a placeholder instead of an
-        # invented (and potentially misleading) plan.
-        out.append("> 手势库待补充：请在 `backend/config/gestures_26.json` 配置 26 个康复手势后，"
-                   "由大模型从中动态选取手势组合与每周训练计划。")
+        if c.get("gesture_skipped"):
+            # Library IS ready, but this model (typically a segmented model like
+            # baichuan2 / deepseek / glm) did not emit a valid 6+ gesture combo.
+            # Keep the rest of the report instead of failing into a fallback.
+            out.append("> 当前报告模型本次未生成合规的手势处方（分段生成模型通常不输出手势组合）；"
+                       "如需完整的推荐手势组合与每周训练计划，建议改用 Qwen3 / InternLM3 / Mistral 等单次生成模型重新生成。")
+        else:
+            # The clinical team's 26-gesture library is not configured yet, so the
+            # LLM was not asked to pick gestures. Show a placeholder instead of an
+            # invented (and potentially misleading) plan.
+            out.append("> 手势库待补充：请先由康复团队审核 `backend/config/gestures_26.example.json`，"
+                       "确认后复制为 `backend/config/gestures_26.json`，再由大模型从中动态选取手势组合与每周训练计划。")
         out.append("")
     else:
+        out.append("> ⚠️ 以下手势组合与训练计划由系统从已配置手势库自动推荐，正式执行前请由康复治疗师核准手势选择、辅助力度与重复次数。")
+        out.append("")
         out.append("### 1. 推荐手势组合（从26个中动态选取）")
         out.append("")
         g_rows = [

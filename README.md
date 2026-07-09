@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.11
+cloud-server-v1.1.12
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -16,10 +16,13 @@ cloud-server-v1.1.11
 - FastAPI 后端、MySQL、Qwen3-8B HF 本地报告模型联动；GGUF 服务已降级为手动回退/对照，不随生产脚本默认启动
 - 页面登录和 Bearer token 业务接口保护
 - 26 项 biomarker 计算、报告解读和缺失项标记
+- 报告生成全局排队，避免单卡 GPU 多份报告并发导致互相拖慢或 OOM；前端会显示排队位置
+- 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
 - 独立“模型设置”页可切换已验证的报告大模型，默认只展示已准备/已验证的 HF 原版权重候选模型；Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 与 InternLM3-8B-Instruct 已通过端到端报告结构校验
 - 模型权重路径属于服务器部署配置，不在业务页面暴露；未通过报告结构校验的候选模型不能设为当前线上模型
 - BI/改良 Barthel 指数已从当前上肢手功能在线推理、页面展示、统计和导出报告中移除，数据库字段仅保留旧记录兼容
+- 手势库默认不启用具体处方；仓库仅提供 `backend/config/gestures_26.example.json`，需临床审核后复制为运行态 `gestures_26.json`
 - 云服务器启动、验证、常见问题和本地开发文档
 
 后续模型优化、设备接入和论文实验建议都从该标签或其后的 `main` 分支继续开发。
@@ -95,7 +98,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.11
+git checkout cloud-server-v1.1.12
 ```
 
 2. 准备外部文件：
@@ -202,6 +205,9 @@ APP_AUTH_TOKEN=generate-a-long-random-token
 LLM_PROVIDER=local
 LLM_REMOTE_URL=
 LLM_REMOTE_TIMEOUT=300
+LLM_LOAD_4BIT=0
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
 
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
@@ -230,6 +236,17 @@ backend/config/llm_settings.json
 该文件属于服务器运行态配置，已加入 `.gitignore`，不要提交。新服务器第一次启动且还未保存页面配置时，后端仍按 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等旧配置运行；管理员在页面点击“保存设置”后，后续报告生成才由该配置文件接管。
 
 业务页面只做“选择哪个已验证模型出报告”，不展示也不编辑权重路径。本地权重路径、远程服务地址、adapter 目录等属于部署配置，建议由运维/开发人员通过 `.env`、`LLM_MODEL_ROOT`、`LLM_ORIGINAL_MODEL_ROOT` 或 `backend/config/llm_settings.json` 管理。权重存在但端到端报告 JSON 结构未验证通过的模型会显示为候选待验证，不能设为当前线上报告模型。
+
+### 手势库配置
+
+仓库提供 `backend/config/gestures_26.example.json` 作为 26 手势库 schema 和候选动作示例。它不是临床确认库，不会自动启用。正式启用步骤：
+
+```bash
+cp backend/config/gestures_26.example.json backend/config/gestures_26.json
+# 临床团队审核/替换名称、适应分期、辅助力度和安全说明后，重启后端
+```
+
+`backend/config/gestures_26.json` 属于运行态配置，已加入 `.gitignore`。未启用时，报告会保留“手势库待补充”占位，不让大模型生成具体训练手势。
 
 默认候选模型包括：
 
@@ -304,7 +321,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.11
+稳定演示/复现实验：使用 cloud-server-v1.1.12
 日常继续开发：使用 main
 ```
 

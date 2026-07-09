@@ -321,6 +321,37 @@ def _decoding_kwargs(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {"max_new_tokens": max_new, "num_beams": num_beams, "repetition_penalty": rep}
 
 
+def _dynamic_report_max_new_tokens(
+    context: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None
+) -> Optional[int]:
+    """Size the new-token budget to what the model must actually write.
+
+    A full 26-biomarker report needs one 解读+治疗建议 per available marker
+    (≈90 tokens each) plus the summary / subtype / 治疗策略 / 预警 fields and,
+    once the gesture library is ready, a 6+ gesture plan and 7-day schedule.
+    The legacy fixed 1536 budget truncates that output, so the JSON fails to
+    parse and the report silently falls back to the conservative template
+    (measured: qwen3 needs 2400-2700 tokens on real 26/26 hospital data).
+
+    Returns an int budget to pass to ``_generate_local_text``; returns None
+    (keep the existing default) when an explicit override is in effect —
+    ``LLM_MAX_NEW_TOKENS`` env or a per-model ``max_new_tokens`` (e.g. the
+    segmented models set their own budget) still win.
+    """
+    if os.environ.get("LLM_MAX_NEW_TOKENS"):
+        return None
+    cfg = cfg or {}
+    if cfg.get("max_new_tokens"):
+        return None
+    available = sum(
+        1
+        for group in (context.get("biomarkers") or {}).get("groups", []) or []
+        for marker in group.get("markers", []) or []
+        if marker.get("available", True)
+    )
+    return max(2048, min(available * 100 + 1400, 4096))
+
+
 def llm_provider() -> str:
     """Return the selected report-generation provider.
 
@@ -491,6 +522,7 @@ def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = No
 
     return {
         "overall_interpretation": (
+            "【⚠️ 本报告由保守规则后备生成，非大模型结构化分析，仅供审阅参考】"
             f"{prefix}：当前评估显示手功能已有一定主动运动基础，"
             "需结合肌电、脑电和运动学指标继续观察协同分离、主动募集和运动质量。"
         ),
@@ -1116,4 +1148,5 @@ def _reason_local(
         sample=sample,
         generation_prefill=generation_prefill,
         stop_on_json=bool(rm.cfg.get("stop_on_json")),
+        max_new_tokens=_dynamic_report_max_new_tokens(context, rm.cfg),
     )

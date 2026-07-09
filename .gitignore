@@ -47,6 +47,10 @@ DL_model/*.pth
 # Runtime LLM selection written by the System Management page
 backend/config/llm_settings.json
 
+# Site-specific clinical gesture library. Commit only the reviewed example
+# schema, not the active runtime file.
+backend/config/gestures_26.json
+
 # ---- Databases ----
 *.db
 *.sqlite

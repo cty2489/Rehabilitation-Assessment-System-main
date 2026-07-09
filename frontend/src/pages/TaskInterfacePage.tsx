@@ -317,6 +317,11 @@ export default function TaskInterfacePage() {
 
           {processing && (
             <>
+              {stream.queueAhead > 0 && (
+                <div className="queue-banner">
+                  ⏳ 报告生成排队中，前面还有 {stream.queueAhead} 份报告正在处理，请稍候…（评分结果已生成，不受影响）
+                </div>
+              )}
               <ProgressSteps steps={stream.steps} />
               {stream.coverage && (
                 <div className="card">

@@ -1,0 +1,403 @@
+[
+  {
+    "id": "ext_index",
+    "name": "健侧伸食指+患侧被动伸指",
+    "purpose": "打破伸指协同模式（抗伸指-屈腕协同）",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      2,
+      3,
+      4
+    ],
+    "tags": [
+      "extension",
+      "isolation",
+      "mirror"
+    ]
+  },
+  {
+    "id": "fist",
+    "name": "健侧握拳+患侧被动握拳",
+    "purpose": "维持屈曲功能，但注意不要过度强化屈肌",
+    "default_force": "患侧辅助力度：60%",
+    "stages": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "flexion",
+      "grip"
+    ]
+  },
+  {
+    "id": "oppose",
+    "name": "健侧对指（拇指-食指捏）",
+    "purpose": "促进精细动作分离",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "isolation",
+      "fine"
+    ]
+  },
+  {
+    "id": "ext_pinky",
+    "name": "健侧伸小指+患侧被动伸小指",
+    "purpose": "训练单指分离运动",
+    "default_force": "患侧辅助力度：75%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "extension",
+      "isolation",
+      "fine"
+    ]
+  },
+  {
+    "id": "cylinder",
+    "name": "健侧圆柱抓握（模拟拿水杯）",
+    "purpose": "ADL实用性训练",
+    "default_force": "患侧辅助力度：65%",
+    "stages": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "adl",
+      "grip"
+    ]
+  },
+  {
+    "id": "wrist_ext",
+    "name": "健侧腕背伸+患侧被动腕背伸",
+    "purpose": "腕手联动训练",
+    "default_force": "电动抬腕辅助：开",
+    "stages": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "wrist",
+      "extension"
+    ]
+  },
+  {
+    "id": "ext_all",
+    "name": "五指同步伸展",
+    "purpose": "整体伸指肌群激活，对抗屈肌优势",
+    "default_force": "患侧辅助力度：75%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "extension",
+      "grip"
+    ]
+  },
+  {
+    "id": "ext_thumb",
+    "name": "拇指外展伸展",
+    "purpose": "恢复拇指伸展与外展分离",
+    "default_force": "患侧辅助力度：75%",
+    "stages": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "extension",
+      "isolation",
+      "thumb"
+    ]
+  },
+  {
+    "id": "ext_middle",
+    "name": "伸中指+其余屈曲",
+    "purpose": "高难度单指分离训练",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "extension",
+      "isolation",
+      "fine"
+    ]
+  },
+  {
+    "id": "wrist_radial",
+    "name": "腕桡侧偏移",
+    "purpose": "腕部多向控制，配合伸指",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "wrist",
+      "isolation"
+    ]
+  },
+  {
+    "id": "spherical",
+    "name": "球形抓握（模拟握球）",
+    "purpose": "球形抓握ADL训练，增大目标物降低震颤影响",
+    "default_force": "患侧辅助力度：65%",
+    "stages": [
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "adl",
+      "grip"
+    ]
+  },
+  {
+    "id": "hook",
+    "name": "勾状抓握（提物）",
+    "purpose": "提物功能，维持手内肌长度",
+    "default_force": "患侧辅助力度：60%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "grip",
+      "adl"
+    ]
+  },
+  {
+    "id": "lateral_pinch",
+    "name": "侧捏（钥匙捏）",
+    "purpose": "侧方抓握ADL，拇指带动",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "adl",
+      "thumb"
+    ]
+  },
+  {
+    "id": "tip_pinch",
+    "name": "指尖捏（捏小物）",
+    "purpose": "精细指尖控制",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "fine"
+    ]
+  },
+  {
+    "id": "tripod",
+    "name": "三指捏（写字握姿）",
+    "purpose": "书写相关精细抓握",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "fine",
+      "adl"
+    ]
+  },
+  {
+    "id": "palmar_grasp",
+    "name": "掌心抓握",
+    "purpose": "基础掌侧抓握，维持抓握模式",
+    "default_force": "患侧辅助力度：60%",
+    "stages": [
+      2,
+      3,
+      4
+    ],
+    "tags": [
+      "grip"
+    ]
+  },
+  {
+    "id": "oppose_all",
+    "name": "拇指依次对指（拇-食-中-环-小）",
+    "purpose": "拇指对指序列，精细协调",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "isolation",
+      "fine",
+      "thumb"
+    ]
+  },
+  {
+    "id": "thumb_circle",
+    "name": "拇指环转",
+    "purpose": "拇指多向活动度",
+    "default_force": "患侧辅助力度：75%",
+    "stages": [
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "thumb",
+      "isolation"
+    ]
+  },
+  {
+    "id": "wrist_flex_ext",
+    "name": "腕屈伸交替",
+    "purpose": "腕关节主动控制",
+    "default_force": "患侧辅助力度：65%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "wrist"
+    ]
+  },
+  {
+    "id": "forearm_supinate",
+    "name": "前臂旋后",
+    "purpose": "前臂旋转配合手部功能",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "forearm",
+      "adl"
+    ]
+  },
+  {
+    "id": "forearm_pronate",
+    "name": "前臂旋前",
+    "purpose": "前臂旋转配合手部功能",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "tags": [
+      "forearm",
+      "adl"
+    ]
+  },
+  {
+    "id": "ext_then_flex",
+    "name": "伸指后立即辅助屈指（交替）",
+    "purpose": "抗协同交替模式，避免单纯强化屈肌",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "extension",
+      "flexion",
+      "isolation"
+    ]
+  },
+  {
+    "id": "release_after_grip",
+    "name": "抓握后主动松开",
+    "purpose": "训练随意松手（抓-放分离）",
+    "default_force": "患侧辅助力度：70%",
+    "stages": [
+      3,
+      4,
+      5
+    ],
+    "tags": [
+      "extension",
+      "grip"
+    ]
+  },
+  {
+    "id": "ok_sign",
+    "name": "OK手势（拇食指成环）",
+    "purpose": "复杂对指组合（与早中期功能改善相关性较低）",
+    "default_force": "患侧辅助力度：80%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "pinch",
+      "fine",
+      "low_value_early"
+    ]
+  },
+  {
+    "id": "rapid_grip",
+    "name": "连续快速抓放",
+    "purpose": "速度性抓握（易诱发痉挛，慎用）",
+    "default_force": "患侧辅助力度：55%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "grip",
+      "spasticity_risk"
+    ]
+  },
+  {
+    "id": "strong_fist",
+    "name": "用力握拳保持",
+    "purpose": "握力强化（高张力期慎用，易强化屈肌）",
+    "default_force": "患侧辅助力度：50%",
+    "stages": [
+      5,
+      6
+    ],
+    "tags": [
+      "flexion",
+      "grip",
+      "spasticity_risk"
+    ]
+  }
+]

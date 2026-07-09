@@ -52,6 +52,7 @@ export default function AssessmentPage() {
   const [results, setResults] = useState<Partial<Record<TaskKey, PredictionEntry>>>({})
   const [reportText, setReportText] = useState('')
   const [reportStreaming, setReportStreaming] = useState(false)
+  const [queueAhead, setQueueAhead] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [savedPatientId, setSavedPatientId] = useState<string | null>(null)
@@ -77,7 +78,11 @@ export default function AssessmentPage() {
           updateStep(event.step, (s) => ({ ...s, status: 'running', label: event.label || s.label }))
           if (event.step === 'report') {
             setReportStreaming(true)
+            setQueueAhead(0)
           }
+          break
+        case 'report_queued':
+          setQueueAhead(event.ahead)
           break
         case 'step_detail':
           updateStep(event.step, (s) => ({ ...s, details: [...s.details, event.detail] }))
@@ -153,6 +158,7 @@ export default function AssessmentPage() {
     setResults({})
     setReportText('')
     setReportStreaming(false)
+    setQueueAhead(0)
     setSavedPatientId(patient.patient_id)
     setPhase('processing')
 
@@ -198,6 +204,7 @@ export default function AssessmentPage() {
     setResults({})
     setReportText('')
     setReportStreaming(false)
+    setQueueAhead(0)
     setError(null)
     setSessionId(null)
   }
@@ -268,6 +275,11 @@ export default function AssessmentPage() {
 
       {phase !== 'input' && (
         <>
+          {queueAhead > 0 && (
+            <div className="queue-banner">
+              ⏳ 报告生成排队中，前面还有 {queueAhead} 份报告正在处理，请稍候…（评分结果已生成，不受影响）
+            </div>
+          )}
           <ProgressSteps steps={steps} />
           <ResultsPanel results={results} />
           <ReportDisplay

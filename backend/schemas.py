@@ -64,7 +64,7 @@ class LlmModelSettingsUpdate(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Patient management + records + stats (SQLite-backed)                         #
+# Patient management + records + stats (MySQL-backed)                          #
 # --------------------------------------------------------------------------- #
 class PatientUpdate(BaseModel):
     """PATCH semantics — all fields optional; patient_id is NOT editable."""

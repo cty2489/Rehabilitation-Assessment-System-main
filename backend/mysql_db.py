@@ -1,19 +1,17 @@
-"""MySQL persistence for the device-end (task-interface) workflow.
+"""MySQL persistence for rehabilitation assessment workflows.
 
-This is a **separate** store from the SQLite layer in ``db.py``. SQLite backs the
-「康复评估」page (signal upload / output inspection during testing) and is left
-untouched. This module backs the「任务一与任务三对接接口页面」(device workflow):
+This module is the single business store for the browser assessment workflow,
+the task-interface workflow, and the device API:
 
 * ``patients``    — one row per business ``patient_id`` (minimal basic info,
                     enrolled by the hospital or auto-created from a device manifest).
 * ``assessments`` — many rows per patient: the hospital's first record at
                     enrollment + every later device assessment.
 
-Stdlib-style raw SQL via PyMySQL (no ORM), mirroring ``db.py``'s function API so
-the inference worker can dispatch on a per-session ``persist_target`` flag.
+Stdlib-style raw SQL via PyMySQL (no ORM).
 Connection config comes from ``.env`` (MYSQL_HOST / MYSQL_PORT / MYSQL_USER /
-MYSQL_PASSWORD / MYSQL_DB). PyMySQL is imported defensively so a host without it
-(or without a running MySQL) still serves the SQLite flow.
+MYSQL_PASSWORD / MYSQL_DB). PyMySQL is imported defensively so callers can
+surface a clear 503 when MySQL is unavailable.
 """
 from __future__ import annotations
 
@@ -26,7 +24,7 @@ from numbers import Real
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-try:  # defensive: a host without pymysql must still serve the SQLite flow
+try:  # defensive: callers surface a clear MySQLUnavailable if missing
     import pymysql
     from pymysql.cursors import DictCursor
 except ImportError:  # pragma: no cover - exercised only when dep missing
@@ -470,8 +468,8 @@ def _backfill_assessment_children(cur) -> None:
 def init_db() -> None:
     """Create the database (if missing) and both tables. Idempotent.
 
-    Raises ``MySQLUnavailable`` if MySQL can't be reached; the caller (startup)
-    only warns so the SQLite flow keeps working.
+    Raises ``MySQLUnavailable`` if MySQL can't be reached; startup logs a warning
+    and business APIs surface a clear 503.
     """
     global _initialized
     with _init_lock:

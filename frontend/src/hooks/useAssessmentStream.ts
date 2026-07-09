@@ -36,6 +36,7 @@ export function useAssessmentStream() {
   const [results, setResults] = useState<Partial<Record<TaskKey, PredictionEntry>>>({})
   const [reportText, setReportText] = useState('')
   const [reportStreaming, setReportStreaming] = useState(false)
+  const [queueAhead, setQueueAhead] = useState(0)
   const [coverage, setCoverage] = useState<BiomarkerCoverage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -52,7 +53,13 @@ export function useAssessmentStream() {
       switch (event.type) {
         case 'step_start':
           updateStep(event.step, (s) => ({ ...s, status: 'running', label: event.label || s.label }))
-          if (event.step === 'report') setReportStreaming(true)
+          if (event.step === 'report') {
+            setReportStreaming(true)
+            setQueueAhead(0)
+          }
+          break
+        case 'report_queued':
+          setQueueAhead(event.ahead)
           break
         case 'step_detail':
           updateStep(event.step, (s) => ({ ...s, details: [...s.details, event.detail] }))
@@ -93,6 +100,7 @@ export function useAssessmentStream() {
       setResults({})
       setReportText('')
       setReportStreaming(false)
+      setQueueAhead(0)
       setCoverage(null)
       setError(null)
       setSessionId(newSessionId)
@@ -122,6 +130,7 @@ export function useAssessmentStream() {
     setResults({})
     setReportText('')
     setReportStreaming(false)
+    setQueueAhead(0)
     setCoverage(null)
     setError(null)
     setSessionId(null)
@@ -133,6 +142,7 @@ export function useAssessmentStream() {
     results,
     reportText,
     reportStreaming,
+    queueAhead,
     coverage,
     error,
     sessionId,

@@ -2,8 +2,9 @@
 
 The report's “推荐手势组合（从26个中动态选取）” section recommends a combination
 of hand gestures drawn from a fixed library of 26. The clinical team supplies
-this library via ``backend/config/gestures_26.json`` (same schema as ``_g``
-below). **Until that file is provided, the library is considered "not ready"**
+this library via ``backend/config/gestures_26.json`` (same schema as
+``backend/config/gestures_26.example.json`` and ``_g`` below). **Until that
+reviewed runtime file is provided, the library is considered "not ready"**
 (``library_ready()`` is False): the report renders a placeholder for the gesture
 section and the LLM is NOT asked to pick gestures — so an un-fine-tuned base
 model can't invent gesture names. The ``_SEED_GESTURES_26`` list below is kept
@@ -13,8 +14,9 @@ inferred seed never masquerades as the clinical team's real library.
 Consumer: the **LLM** (``backend/report.py::reason_clinical``) receives the
 library as its *controlled selection space* and decides the final combination,
 dosing (辅助力度 / 重复次数) and weekly plan. Code validates that every gesture
-it picks exists in the library (anti-hallucination) — there is no rule-based
-selector fallback; if the LLM can't produce a valid plan the report errors out.
+it picks exists in the library (anti-hallucination). If the LLM can't produce a
+valid plan, the report keeps the rest of the clinical reasoning and skips only
+the gesture section.
 
 Each gesture:
     id            stable key
@@ -131,7 +133,7 @@ def library_ready() -> bool:
 
     While False, the report shows a placeholder gesture section and the LLM is
     not asked to select gestures (avoids an un-fine-tuned base model inventing
-    gesture names). The inferred ``_SEED_GESTURES_26`` does NOT count as ready.
+    gesture names). The example/seed library does NOT count as ready.
     """
     return _config_library() is not None
 

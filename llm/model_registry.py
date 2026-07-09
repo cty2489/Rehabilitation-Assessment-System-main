@@ -110,7 +110,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "generation_prefill": "</think>\n{\"overall_interpretation\":",
         "prompt_profile": "compact_clinical_json",
         "generation_mode": "segmented_clinical_json",
-        "segment_marker_chunk_size": 5,
+        "segment_marker_chunk_size": 3,
         "segment_marker_max_new_tokens": 1024,
         "segment_summary_max_new_tokens": 1024,
         "max_new_tokens": 4096,
@@ -173,7 +173,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         # DeepSeek, without the R1-specific </think> prefix.
         "prompt_profile": "compact_clinical_json",
         "generation_mode": "segmented_clinical_json",
-        "segment_marker_chunk_size": 5,
+        "segment_marker_chunk_size": 3,
         "segment_marker_prefill": "{\"marker_text\":{",
         "segment_single_marker_prefill_prefix": "{\"marker_text\":{",
         "segment_marker_max_new_tokens": 1024,

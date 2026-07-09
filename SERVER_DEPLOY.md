@@ -1,6 +1,6 @@
 # 云服务器部署说明
 
-本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，MySQL 只监听本机；报告大模型当前推荐使用 FastAPI 进程内加载的 Qwen3-8B HF 原版权重。GGUF 服务仅作为手动回退/对照，不随生产启动脚本默认启动。
+本文档用于在 Ubuntu 云服务器、AutoDL 或 SeetaCloud 环境中部署智能康复评估系统。当前生产推荐方式是：Nginx 服务前端生产包，FastAPI 只监听本机，MySQL 只监听本机；MySQL 是患者、评估、导出和设备任务的必需业务存储；报告大模型当前推荐使用 FastAPI 进程内加载的 Qwen3-8B HF 原版权重。GGUF 服务仅作为手动回退/对照，不随生产启动脚本默认启动。
 
 ## 1. 服务拓扑
 
@@ -48,7 +48,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.11
+git checkout cloud-server-v1.1.12
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -166,6 +166,9 @@ LLM_REMOTE_URL=
 LLM_REMOTE_TIMEOUT=300
 LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
 LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
+LLM_LOAD_4BIT=0
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
 
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
@@ -213,6 +216,17 @@ EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 该文件不随 Git 提交，适合每台服务器按自己的模型路径独立保存。未点击“保存设置”前，后端继续使用 `.env` 中的 `LLM_PROVIDER`、`LLM_REMOTE_URL` 等配置；新部署建议使用 `LLM_PROVIDER=local`，由默认 `qwen3_8b_hf` 接管报告生成。
 
 本地权重路径、远程服务地址、adapter 目录等属于部署配置，由 `.env`、`LLM_MODEL_ROOT`、`LLM_ORIGINAL_MODEL_ROOT` 或上述运行态配置文件管理。权重不存在的本地模型会显示为未就绪；权重存在但端到端报告 JSON 结构尚未验证通过的模型会显示为候选待验证，不能设为当前线上报告模型。
+
+### 5.2 手势库配置
+
+仓库只提供 `backend/config/gestures_26.example.json` 作为 26 手势库 schema 和候选动作示例。它不是临床确认库，不会自动启用。正式启用前请让康复团队审核/替换名称、适应分期、辅助力度和安全说明，然后复制为运行态文件并重启后端：
+
+```bash
+cp backend/config/gestures_26.example.json backend/config/gestures_26.json
+bash /root/autodl-tmp/rehab_project/restart_rehab_backend.sh
+```
+
+`backend/config/gestures_26.json` 已加入 `.gitignore`，每台服务器可按自己的临床确认版本维护。未启用时，报告第四节会显示“手势库待补充”，不会让大模型生成具体训练手势。
 
 可微调的原版 HF 模型默认按 `LLM_ORIGINAL_MODEL_ROOT` 优先查找。推荐放置示例：
 
@@ -320,6 +334,8 @@ bash /root/autodl-tmp/rehab_project/start_rehab_system.sh
 2. 启动 FastAPI `127.0.0.1:8000`
 3. 确认 `frontend/dist/index.html` 存在，必要时构建
 4. 启动或重载 Nginx `0.0.0.0:6006`
+
+报告生成会进入全局队列，同一时间只运行一份 LLM 报告，前端会显示“报告排队中，前面还有 N 份”。评分结果会先生成，排队只影响报告文本阶段。
 
 如需临时使用 GGUF 回退/对照服务，单独执行：
 

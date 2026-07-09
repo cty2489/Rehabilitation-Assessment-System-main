@@ -1,5 +1,59 @@
 # Changelog
 
+## cloud-server-v1.1.12 - 2026-07-09
+
+本次迭代在 v1.1.11 基础上：修复报告生成的静默降级隐患、统一 MySQL 存储层、新增报告并发队列，并补充手势库配置流程、BF16/离线/InternLM3 等接手说明。**接手须知集中在每条的「注意」里，末尾附各模型现状速查表。**
+
+### 报告生成质量（backend/report.py, report_builder.py）
+
+- **动态 token 预算，修复满负载静默降级**：`report.py` 新增 `_dynamic_report_max_new_tokens(context, cfg)`，按可用 biomarker 数动态设 `max_new_tokens`（区间 2048–4096），在 `_reason_local` 非分段路径生效，替代原固定 1536。
+  - 为什么：实测 qwen3 单次生成真实 26-marker 报告需 2400–2700 token；固定 1536 会截断 → JSON 解析失败 → 静默回退保守模板，而使用者以为是模型真实分析。医院端真实数据 coverage 就是 26/26，必然触发。
+  - 注意：显式 `LLM_MAX_NEW_TOKENS` 环境变量、或模型 cfg 的 `max_new_tokens`（分段模型都设了）仍优先——helper 检测到就返回 None 不覆盖。
+- **fallback 显式标注**：`_fallback_clinical` 的 `overall_interpretation` 加前缀「⚠️ 本报告由保守规则后备生成，非大模型结构化分析」，便于区分真实分析与降级模板。
+
+### 手势库（backend/config/gestures_26.example.json, gestures.py, report_builder.py）
+
+- **提供 26 手势库示例，但默认不启用处方**：新增 `backend/config/gestures_26.example.json` 和 `backend/config/README.md`，作为临床团队审核 schema 与候选动作的起点；`backend/config/gestures_26.json` 被加入 `.gitignore`，只有临床确认后手动复制为该运行态文件，`library_ready()` 才会变 True。
+  - 注意：example/seed **不是临床确认库**，不要直接当作正式处方库提交或启用。未启用时报告第四节保持“手势库待补充”占位，不要求大模型生成具体手势。
+- **手势校验硬要求改软要求（关键）**：`report_builder.validate_clinical` 原本在库 ready 时**硬要求** ≥6 手势 + 7 天计划，产不出就 `raise` → 整份报告 fallback。改为**软要求**：产出合规手势就用，产不出就只跳过手势段（`gesture_skipped=True`，渲染说明"该模型未生成手势，建议用 Qwen3/InternLM3/Mistral 重新生成"），保留报告其余内容。
+  - 为什么：分段模型（baichuan2/deepseek/glm）的分段路径根本不产手势，硬要求会让它们全部 fallback。
+
+### 报告模型（llm/model_registry.py）
+
+- **分段粒度调优**：`deepseek_r1_distill_qwen7b` 与 `glm4_9b` 的 `segment_marker_chunk_size` 由 5 降到 3，缓解满负载下分段 JSON 失败（baichuan2 每段 1 marker 本就稳）。
+- **单次生成实验结论（勿重复踩坑）**：本次实测把 deepseek/glm 改单次（去 `generation_mode`，像 qwen3）**均失败**——deepseek 漏 marker、glm 拼不成 JSON、baichuan2 上下文仅 4096 装不下完整 prompt，已回滚。**结论：这三个模型必须分段，勿再改单次。** 能单次的只有通用指令模型 qwen3 / internlm3 / mistral。
+
+### 数据层（backend/main.py, db.py）
+
+- **双存储统一到 MySQL**：删除失效的 SQLite 分支——`main.py` 移除 `import db` / `db.init_db()` / `_worker` 的 SQLite else 分支；`SessionState.persist_target` 默认由 `"sqlite"` 改 `"mysql"`；`backend/db.py` 从代码库移除。
+  - 为什么：所有评估流早已传 `persist_target="mysql"`，SQLite 分支从不触发、`rehab.db` 为空。云端部署从此要求 MySQL 正常运行；若 MySQL 不可用，业务 API 返回明确 503。
+
+### 并发（backend/main.py + frontend）
+
+- **报告生成全局队列**：`main.py` 新增模块级 `_report_gate`(Lock) + `_report_depth`(排队+在途计数)。`_worker` 生成报告前入队，report 一次只跑一个，避免多用户同时评估抢单块 GPU 导致互相拖慢/OOM。新增 SSE 事件 `{"type":"report_queued","ahead":N}`。
+- **前端排队进度**：`types.ts` 加 `report_queued` 类型；`useAssessmentStream.ts` 加 `queueAhead`；`AssessmentPage.tsx` 与 `TaskInterfacePage.tsx` 显示「报告排队中，前面还有 N 份」黄色横幅；`styles.css` 加 `.queue-banner`。
+  - 注意：**AssessmentPage 未用 `useAssessmentStream` hook，而是内联了自己的一套 SSE 处理**——两处都已改，但这俩重复逻辑是已知技术债，未来应合并到 hook。
+
+### 性能与环境（本次会话补记）
+
+- **BF16 替代 4bit**：云端 `backend/.env` 设 `LLM_LOAD_4BIT=0`。24GB 单卡显存充足（此前仅用 8.3GB），4bit 反而拖慢。实测 qwen3 生成 26-marker 报告 **227s → 104s（提速约 2.2 倍）**；显存 16.4GB/24GB。
+- **强制离线**：云端 `.env` 加 `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`。服务器无外网，不设会在加载本地模型时联网校验卡死。
+- **接入 InternLM3-8B**：`model_registry.py` 加 `internlm3_8b`（ChatML、`trust_remote_code=True`、`extra_eos_tokens=["<|im_end|>"]`——其 tokenizer eos 是 `</s>` 但轮次结束靠 `<|im_end|>`）。已验证单次生成通过端到端校验。
+
+### 各报告模型现状速查（给接手者）
+
+| 模型 | 生成方式 | 满负载 26-marker | 备注 |
+|---|---|---|---|
+| qwen3_8b_hf | 单次 | ✅ 稳定 ~104s | 当前默认，推荐 |
+| internlm3_8b | 单次 | ✅ 稳定 ~100s | |
+| mistral7b_v03 | 单次 | ✅ 稳定 ~84s | 国外 baseline |
+| baichuan2_7b_chat | 分段 | ✅ 出报告（无手势段） | 文本偏模板化 |
+| deepseek_r1_distill_qwen7b | 分段 | ⚠️ 偶失败→fallback | 推理模型 |
+| glm4_9b | 分段 | ⚠️ 偶失败→fallback | |
+| qwen25_7b_gguf | GGUF 回退 | 手动启 start_gguf_fallback.sh | 已从页面候选移除 |
+
+> 部署环境：单卡 RTX 4090D 24GB、无外网。BF16 主力模型约占 16GB，与 GGUF 回退服务(~5GB)可勉强共存(~21GB)，但切到 GLM-4-9B(18.8GB)+GGUF 会 OOM，注意别同时常驻。
+
 ## cloud-server-v1.1.11 - 2026-07-08
 
 ### 改进

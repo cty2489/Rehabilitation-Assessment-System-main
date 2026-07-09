@@ -32,7 +32,6 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-import db
 import llm_settings
 import mysql_db
 from assessment_export import ensure_assessment_export, export_filename, file_info
@@ -92,7 +91,7 @@ _LAST_SESSION_CLEANUP = 0.0
 class SessionState:
     def __init__(self, session_id: str, patient: PatientInfo, eeg_paths: List[Path],
                  emg_paths: List[Path], institution: str = "hospital",
-                 persist_target: str = "sqlite", package_name: Optional[str] = None,
+                 persist_target: str = "mysql", package_name: Optional[str] = None,
                  assessment_id: Optional[str] = None, assessment_time: Optional[str] = None,
                  n_trials: Optional[int] = None, package_hash: Optional[str] = None,
                  parse_warnings: Optional[List[str]] = None,
@@ -103,8 +102,7 @@ class SessionState:
         self.eeg_paths = eeg_paths
         self.emg_paths = emg_paths
         self.institution = institution
-        # Where this session's result is persisted. MySQL is the formal business
-        # store; SQLite is kept only as a legacy/local fallback target.
+        # MySQL is the single business store for all assessment flows.
         self.persist_target = persist_target
         self.package_name = package_name
         self.assessment_id = assessment_id
@@ -149,19 +147,25 @@ def _trial_details_from_paths(eeg_paths: List[Path], emg_paths: List[Path]) -> L
 
 SESSIONS: Dict[str, SessionState] = {}
 
+# Global report-generation serialization: only one report runs on the single
+# GPU at a time, so concurrent sessions don't fight over it. ``_report_depth``
+# counts queued + in-flight reports so a waiting session can be told how many
+# reports are ahead of it (surfaced as a ``report_queued`` SSE event).
+_report_gate = threading.Lock()
+_report_depth = 0
+_report_depth_lock = threading.Lock()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _cleanup_old_sessions(force=True)
 
-    db.init_db()
-    print(f"[startup] SQLite ready at {db.DB_PATH}")
-
-    # MySQL store for the device-end (task-interface) workflow. Best-effort: a
-    # missing MySQL/pymysql only warns so the SQLite「康复评估」flow still serves.
+    # MySQL is required for patient, assessment, export, and device-job records.
+    # Startup warns instead of crashing so /api/health can still explain service
+    # state, but business APIs will return a clear 503 if MySQL is unavailable.
     try:
         mysql_db.init_db()
-        print("[startup] MySQL ready (device-end task-interface store)")
+        print("[startup] MySQL ready (business store)")
     except Exception as exc:  # noqa: BLE001
         print(f"[startup][warn] MySQL not ready: {exc}")
 
@@ -371,9 +375,9 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
         )
         biomarkers = predictions_raw.get("_biomarkers")
 
-        # Persist to the store this session targets: MySQL for the device-end
-        # task-interface workflow, SQLite for the康复评估 page.
-        store = mysql_db if state.persist_target == "mysql" else db
+        # Every flow (康复评估 page / device / task-interface) persists to MySQL;
+        # the SQLite legacy store has been retired.
+        store = mysql_db
 
         # Previous assessment (for the report's 变化趋势 column) — read BEFORE we
         # insert this one so it reflects the prior visit, not the current.
@@ -383,19 +387,31 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             print(f"[history][warn] {exc}")
             history = None
 
+        # Serialize report generation across sessions: only one report runs on
+        # the GPU at a time; other sessions wait and are told their queue depth.
+        global _report_depth
+        with _report_depth_lock:
+            _report_depth += 1
+            ahead = _report_depth - 1
+        if ahead > 0:
+            state.queue.put({"type": "report_queued", "ahead": ahead})
         try:
-            report_text = stream_report(
-                state.patient,
-                predictions,
-                state.queue,
-                biomarkers=biomarkers,
-                history=history,
-                report_model=report_model,
-            )
+            with _report_gate:
+                report_text = stream_report(
+                    state.patient,
+                    predictions,
+                    state.queue,
+                    biomarkers=biomarkers,
+                    history=history,
+                    report_model=report_model,
+                )
         except Exception:
             # Report generation failed — predictions are still kept and the SSE
             # error event was already emitted by stream_report.
             report_text = None
+        finally:
+            with _report_depth_lock:
+                _report_depth -= 1
 
         state.result = AssessmentResult(
             session_id=state.session_id,
@@ -445,16 +461,6 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 state.assessment_db_id = int(assessment_db_id)
                 mysql_db.replace_assessment_trials(assessment_db_id, state.trial_details)
                 mysql_db.replace_assessment_biomarkers(assessment_db_id, biomarkers)
-            else:
-                pid = db.upsert_patient(state.patient)
-                db.insert_assessment(
-                    pid,
-                    state.session_id,
-                    predictions,
-                    report_text,
-                    report_status,
-                    biomarkers=bio_json,
-                )
         except Exception as exc:  # noqa: BLE001
             print(f"[persist][warn] failed to save assessment {state.session_id}: {exc}")
 
