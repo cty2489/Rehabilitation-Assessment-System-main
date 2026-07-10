@@ -1,5 +1,15 @@
 # Changelog
 
+## cloud-server-v1.1.13 - 2026-07-11
+
+- 将原“仅大模型报告排队”升级为完整评估 FIFO 队列：网页和设备任务从信号处理、深度模型、biomarker、大模型报告到持久化全程串行，避免单卡 GPU 并发和 OOM。
+- 设备任务响应升级为 `rehab.device_job.v1`，新增 `phase`、`queue_position`、`queue_ahead`、`progress_percent`、`poll_after_seconds`、结构化 `error` 和 `attempt_count`。
+- 设备 ZIP、患者快照和任务阶段持久化到 MySQL/`DEVICE_JOB_ROOT`；服务重启后按创建顺序恢复 `queued/running` 任务，若评估已落库则直接修正为 `completed`。
+- 上传接口支持 `Idempotency-Key`；同一次评估网络重传返回原 `job_id`，相同 key 对应不同 ZIP 返回 409。未提供 key 时，同设备/患者/assessment/package hash 的未失败任务也会去重。
+- ACK 改为幂等操作；新增机器可校验的 `docs/schemas/device-job-v1.schema.json` 和完整设备对接说明。
+- ACK 后清理已交付任务的持久化输入副本，避免设备长期运行耗尽磁盘；数据格式错误标记为不可重试，云端临时故障标记为可重试。
+- 前端排队提示改为完整“评估任务排队”，不再错误声称评分已经完成。
+
 ## cloud-server-v1.1.12 - 2026-07-09
 
 本次迭代在 v1.1.11 基础上：修复报告生成的静默降级隐患、统一 MySQL 存储层、新增报告并发队列，并补充手势库配置流程、BF16/离线/InternLM3 等接手说明。**接手须知集中在每条的「注意」里，末尾附各模型现状速查表。**

@@ -53,11 +53,12 @@ export function useAssessmentStream() {
       switch (event.type) {
         case 'step_start':
           updateStep(event.step, (s) => ({ ...s, status: 'running', label: event.label || s.label }))
+          setQueueAhead(0)
           if (event.step === 'report') {
             setReportStreaming(true)
-            setQueueAhead(0)
           }
           break
+        case 'assessment_queued':
         case 'report_queued':
           setQueueAhead(event.ahead)
           break

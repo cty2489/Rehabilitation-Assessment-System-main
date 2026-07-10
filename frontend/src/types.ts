@@ -305,6 +305,7 @@ export type SSEEvent =
       range?: string
     }
   | { type: 'report_chunk'; chunk: string }
+  | { type: 'assessment_queued'; ahead: number }
   | { type: 'report_queued'; ahead: number }
   | {
       type: 'biomarker_coverage'

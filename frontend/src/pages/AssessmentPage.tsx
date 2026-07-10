@@ -76,11 +76,12 @@ export default function AssessmentPage() {
       switch (event.type) {
         case 'step_start':
           updateStep(event.step, (s) => ({ ...s, status: 'running', label: event.label || s.label }))
+          setQueueAhead(0)
           if (event.step === 'report') {
             setReportStreaming(true)
-            setQueueAhead(0)
           }
           break
+        case 'assessment_queued':
         case 'report_queued':
           setQueueAhead(event.ahead)
           break
@@ -277,7 +278,7 @@ export default function AssessmentPage() {
         <>
           {queueAhead > 0 && (
             <div className="queue-banner">
-              ⏳ 报告生成排队中，前面还有 {queueAhead} 份报告正在处理，请稍候…（评分结果已生成，不受影响）
+              评估任务排队中，前面还有 {queueAhead} 个任务，请稍候。
             </div>
           )}
           <ProgressSteps steps={steps} />

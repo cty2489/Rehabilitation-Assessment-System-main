@@ -7,7 +7,7 @@
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.12
+cloud-server-v1.1.13
 ```
 
 这个标签对应已经在线上验证过的版本，包含：
@@ -16,7 +16,8 @@ cloud-server-v1.1.12
 - FastAPI 后端、MySQL、Qwen3-8B HF 本地报告模型联动；GGUF 服务已降级为手动回退/对照，不随生产脚本默认启动
 - 页面登录和 Bearer token 业务接口保护
 - 26 项 biomarker 计算、报告解读和缺失项标记
-- 报告生成全局排队，避免单卡 GPU 多份报告并发导致互相拖慢或 OOM；前端会显示排队位置
+- 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
+- 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
 - 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
 - 独立“模型设置”页可切换已验证的报告大模型，默认只展示已准备/已验证的 HF 原版权重候选模型；Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 与 InternLM3-8B-Instruct 已通过端到端报告结构校验
@@ -98,7 +99,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.12
+git checkout cloud-server-v1.1.13
 ```
 
 2. 准备外部文件：
@@ -163,6 +164,7 @@ curl http://127.0.0.1:8000/api/health
 | `LOCAL_DEPLOY.md` | Windows 本地开发部署 |
 | `STARTUP_FLOW.md` | 已部署环境的启动、验证和演示流程 |
 | `docs/DEVICE_API.md` | 训练设备端 HTTPS 上传、轮询、下载、ACK 接口 |
+| `docs/schemas/device-job-v1.schema.json` | 设备任务状态响应的机器校验 schema |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
 | `start_rehab_system.sh` | 云服务器生产启动脚本模板 |
@@ -321,7 +323,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.12
+稳定演示/复现实验：使用 cloud-server-v1.1.13
 日常继续开发：使用 main
 ```
 

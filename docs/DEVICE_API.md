@@ -4,13 +4,15 @@
 
 ```text
 设备端上传评估 zip
-→ 云端后台分析
+→ 云端进入统一 FIFO 队列
 → 设备端按 job_id 轮询状态
 → 设备端下载 export.zip / result.json / report.pdf
 → 设备端 ACK 确认收到
 ```
 
 不要求训练设备有公网 IP，所有通信均由设备端主动通过 HTTPS 请求云端。
+网页评估与设备评估共用同一个单 GPU 队列，完整的深度模型、biomarker、
+大模型报告和导出流程一次只运行一个任务。
 
 ## 1. 鉴权
 
@@ -20,6 +22,12 @@
 Authorization: Bearer <DEVICE_API_TOKEN>
 ```
 
+上传接口另外建议携带：
+
+```http
+Idempotency-Key: <device_id>:<assessment_id>
+```
+
 云端在 `backend/.env` 中配置：
 
 ```env
@@ -27,6 +35,9 @@ DEVICE_API_TOKEN=generate-a-different-long-random-token
 ```
 
 设备端 token 应与页面管理员 token `APP_AUTH_TOKEN` 分开。
+`Idempotency-Key` 不是鉴权信息，但设备端应为同一次评估始终使用相同值。
+网络超时后用相同 key 重传，云端会返回原 `job_id`；相同 key 对应不同 ZIP
+时返回 HTTP 409，避免误覆盖。
 
 ## 2. 数据包格式
 
@@ -133,6 +144,7 @@ Authorization: Bearer <DEVICE_API_TOKEN>
 ```bash
 curl -X POST "https://<cloud-host>/api/device/v1/assessments" \
   -H "Authorization: Bearer ${DEVICE_API_TOKEN}" \
+  -H "Idempotency-Key: device_001:EVAL_20260629_001" \
   -F "institution=device" \
   -F "device_id=device_001" \
   -F "package=@patient_P001_eval_20260629.zip" \
@@ -155,6 +167,7 @@ DEVICE_API_TOKEN = "设备端token"
 
 headers = {
     "Authorization": f"Bearer {DEVICE_API_TOKEN}",
+    "Idempotency-Key": "device_001:EVAL_20260629_001",
 }
 data = {
     "institution": "device",
@@ -202,6 +215,7 @@ curl 示例：
 curl -X POST \
   "https://<cloud-host>/api/device/v1/assessments/raw?patient_id=P001&name=张三&sex=男&age=62&diagnosis=脑卒中&disease_days=120&paralysis_side=左" \
   -H "Authorization: Bearer ${DEVICE_API_TOKEN}" \
+  -H "Idempotency-Key: device_001:EVAL_20260629_001" \
   -H "Content-Type: application/zip" \
   -H "X-Device-ID: device_001" \
   -H "X-Filename: patient_P001_eval_20260629.zip" \
@@ -218,6 +232,7 @@ DEVICE_API_TOKEN = "设备端token"
 
 headers = {
     "Authorization": f"Bearer {DEVICE_API_TOKEN}",
+    "Idempotency-Key": "device_001:EVAL_20260629_001",
     "Content-Type": "application/zip",
     "X-Device-ID": "device_001",
     "X-Filename": "patient_P001_eval_20260629.zip",
@@ -247,6 +262,7 @@ print(r.json())
 
 ```json
 {
+  "schema_version": "rehab.device_job.v1",
   "job_id": "devjob_9f1c0d44e3a741df",
   "device_id": "device_001",
   "session_id": "7b0bb3d9f1a2",
@@ -254,6 +270,12 @@ print(r.json())
   "patient_id": "P001",
   "package_hash": "sha256...",
   "status": "queued",
+  "phase": "waiting",
+  "queue_position": 2,
+  "queue_ahead": 1,
+  "progress_percent": 0,
+  "poll_after_seconds": 5,
+  "message": "已接收评估数据，等待处理",
   "status_url": "/api/device/v1/jobs/devjob_9f1c0d44e3a741df",
   "n_trials": 9,
   "parse_warnings": []
@@ -277,12 +299,32 @@ curl "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}" \
 | `failed` | 分析失败，查看 `error_message` |
 | `delivered` | 设备端已 ACK 确认收到 |
 
+`status` 是设备程序控制流程的唯一依据。`phase` 只用于显示当前阶段：
+
+| `phase` | 含义 |
+|---|---|
+| `waiting` | 等待队列调度 |
+| `dl_inference` | 信号处理、深度模型评分和 biomarker 提取 |
+| `llm_reporting` | 大模型生成临床报告 |
+| `exporting` | 写入数据库并准备 JSON/PDF/ZIP |
+| `finished` | 已完成 |
+| `failed` | 已失败 |
+
+排队时 `queue_position` 从 1 开始，`queue_ahead` 表示前方尚未完成的任务数；
+运行或结束后两个字段为 0。设备端按 `poll_after_seconds` 轮询，不要根据中文
+`message` 判断逻辑，也不要因为长时间处于 `queued/running` 而重复上传。
+
 完成后返回会包含文件地址：
 
 ```json
 {
+  "schema_version": "rehab.device_job.v1",
   "job_id": "devjob_9f1c0d44e3a741df",
   "status": "completed",
+  "phase": "finished",
+  "queue_position": 0,
+  "queue_ahead": 0,
+  "progress_percent": 100,
   "assessment_db_id": 8,
   "files": {
     "json": "/api/device/v1/jobs/devjob_9f1c0d44e3a741df/result.json",
@@ -291,6 +333,25 @@ curl "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}" \
   }
 }
 ```
+
+失败时还会返回稳定错误结构：
+
+```json
+{
+  "schema_version": "rehab.device_job.v1",
+  "job_id": "devjob_9f1c0d44e3a741df",
+  "status": "failed",
+  "phase": "failed",
+  "error": {
+    "code": "ANALYSIS_FAILED",
+    "message": "具体错误说明",
+    "retryable": true
+  }
+}
+```
+
+机器可校验的响应 schema 位于 `docs/schemas/device-job-v1.schema.json`。
+以后云端可能增加字段，设备端必须忽略不认识的字段。
 
 ## 5. 下载结果
 
@@ -354,6 +415,8 @@ curl -X POST "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}/ack" \
 ```
 
 云端会把任务状态更新为 `delivered` 并记录 `delivered_at`。
+ACK 成功后，云端会删除用于任务恢复的原始上传副本；结构化评估记录和
+`result.json` / `report.pdf` / `export.zip` 仍然保留。
 
 ## 7. 联调建议
 
@@ -362,6 +425,11 @@ curl -X POST "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}/ack" \
 3. 首版只下载 `export.zip`，设备端从中读取 `result.json` 并保存 `report.pdf`。
 4. 下载后校验 `manifest.json` 中的 sha256。
 5. 成功保存后再 ACK。
+6. 在本地持久化 `job_id`；设备程序重启后继续轮询原任务。
+7. 上传超时但未拿到响应时，使用相同 `Idempotency-Key` 重传。
+
+云端会持久化设备 ZIP 和任务快照。后端重启后，尚未完成的 `queued/running`
+任务会按原创建顺序重新排队；`attempt_count` 会记录实际启动处理的次数。
 
 ## 8. 常见错误
 
@@ -371,5 +439,6 @@ curl -X POST "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}/ack" \
 | 403 | token 错误 |
 | 413 | zip 或解压后数据超过限制 |
 | 422 | zip 无效、缺少 manifest、缺少可用 active trial 或患者字段非法 |
+| 409 | 同一个 `Idempotency-Key` 被用于不同 ZIP，或任务尚未完成就请求下载 |
 | 425/409 | 任务尚未完成，暂不能下载 |
 | 500/503 | 后端、MySQL、模型或导出服务异常 |

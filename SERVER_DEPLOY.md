@@ -48,7 +48,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.12
+git checkout cloud-server-v1.1.13
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -399,6 +399,15 @@ GET  /api/device/v1/jobs/{job_id}        查询 queued/running/completed/failed
 GET  /api/device/v1/jobs/{job_id}/export.zip
 POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
 ```
+
+上传时建议发送 `Idempotency-Key: <device_id>:<assessment_id>`。网页评估和
+设备评估共用单 GPU FIFO 队列；设备状态响应包含 `phase`、`queue_position`、
+`queue_ahead`、`progress_percent` 和 `poll_after_seconds`。设备 ZIP 默认持久化到
+`/root/autodl-tmp/rehab_project/device_jobs`，服务重启后会恢复未完成任务。
+设备ACK成功后该任务的原始上传副本会清理，导出的结果文件和数据库记录继续保留。
+
+统一队列是单进程调度器，生产环境必须保持一个 Uvicorn worker；不要给启动命令
+增加 `--workers 2` 或更高值。同一服务器需要多进程/多GPU时，应改用独立队列服务。
 
 详细协议见 `docs/DEVICE_API.md`。
 

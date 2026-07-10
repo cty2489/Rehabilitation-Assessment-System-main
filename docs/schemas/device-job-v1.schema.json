@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rehab.local/schemas/device-job-v1.schema.json",
+  "title": "Rehabilitation device assessment job",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "job_id",
+    "status",
+    "phase",
+    "queue_position",
+    "queue_ahead",
+    "progress_percent"
+  ],
+  "properties": {
+    "schema_version": {"const": "rehab.device_job.v1"},
+    "job_id": {"type": "string", "minLength": 1},
+    "device_id": {"type": ["string", "null"]},
+    "session_id": {"type": ["string", "null"]},
+    "assessment_db_id": {"type": ["integer", "null"]},
+    "assessment_id": {"type": ["string", "null"]},
+    "patient_id": {"type": ["string", "null"]},
+    "package_name": {"type": ["string", "null"]},
+    "package_hash": {"type": ["string", "null"]},
+    "status": {
+      "enum": ["queued", "running", "completed", "failed", "delivered"]
+    },
+    "phase": {
+      "enum": ["waiting", "dl_inference", "llm_reporting", "exporting", "finished", "failed"]
+    },
+    "queue_position": {"type": "integer", "minimum": 0},
+    "queue_ahead": {"type": "integer", "minimum": 0},
+    "progress_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+    "poll_after_seconds": {"type": ["integer", "null"], "minimum": 1},
+    "message": {"type": ["string", "null"]},
+    "attempt_count": {"type": "integer", "minimum": 0},
+    "error_message": {"type": ["string", "null"]},
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "files": {
+      "type": "object",
+      "required": ["json", "pdf", "zip"],
+      "properties": {
+        "json": {"type": "string"},
+        "pdf": {"type": "string"},
+        "zip": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "created_at": {"type": ["string", "null"]},
+    "started_at": {"type": ["string", "null"]},
+    "completed_at": {"type": ["string", "null"]},
+    "delivered_at": {"type": ["string", "null"]},
+    "updated_at": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

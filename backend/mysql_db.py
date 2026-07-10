@@ -61,6 +61,28 @@ _ASSESSMENT_INDEXES: Dict[str, str] = {
     "idx_assess_session": "CREATE INDEX idx_assess_session ON assessments(session_id)",
 }
 
+_DEVICE_JOB_EXTRA_COLUMNS: Dict[str, str] = {
+    "institution": "VARCHAR(16)",
+    "input_path": "VARCHAR(1024)",
+    "patient_json": "LONGTEXT",
+    "parse_warnings": "LONGTEXT",
+    "n_trials": "INT",
+    "idempotency_key": "VARCHAR(255)",
+    "phase": "VARCHAR(32) NOT NULL DEFAULT 'waiting'",
+    "progress_percent": "INT NOT NULL DEFAULT 0",
+    "status_message": "VARCHAR(255)",
+    "error_code": "VARCHAR(64)",
+    "error_retryable": "TINYINT(1) NOT NULL DEFAULT 0",
+    "attempt_count": "INT NOT NULL DEFAULT 0",
+}
+
+_DEVICE_JOB_INDEXES: Dict[str, str] = {
+    "uniq_device_job_idempotency": (
+        "CREATE UNIQUE INDEX uniq_device_job_idempotency ON device_jobs(idempotency_key)"
+    ),
+    "idx_device_job_created": "CREATE INDEX idx_device_job_created ON device_jobs(created_at)",
+}
+
 
 class MySQLUnavailable(RuntimeError):
     """Raised when MySQL / pymysql is not usable; callers surface a clear error."""
@@ -165,6 +187,16 @@ def _norm_assessment_detail(row: Optional[Dict[str, Any]]) -> Optional[Dict[str,
         return None
     for key in ("biomarkers", "parse_warnings", "prediction_json"):
         row[key] = _json_value(row.get(key))
+    return row
+
+
+def _norm_device_job(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    row = _norm(row)
+    if row is None:
+        return None
+    row["patient_json"] = _json_value(row.get("patient_json"))
+    row["parse_warnings"] = _json_value(row.get("parse_warnings")) or []
+    row["error_retryable"] = bool(row.get("error_retryable"))
     return row
 
 
@@ -329,8 +361,20 @@ CREATE TABLE IF NOT EXISTS device_jobs (
   patient_id        VARCHAR(64),
   package_name      VARCHAR(255),
   package_hash      VARCHAR(64),
+  institution       VARCHAR(16),
+  input_path        VARCHAR(1024),
+  patient_json      LONGTEXT,
+  parse_warnings    LONGTEXT,
+  n_trials          INT,
+  idempotency_key   VARCHAR(255),
   status            VARCHAR(32) NOT NULL,
+  phase             VARCHAR(32) NOT NULL DEFAULT 'waiting',
+  progress_percent  INT NOT NULL DEFAULT 0,
+  status_message    VARCHAR(255),
   error_message     TEXT,
+  error_code        VARCHAR(64),
+  error_retryable   TINYINT(1) NOT NULL DEFAULT 0,
+  attempt_count     INT NOT NULL DEFAULT 0,
   created_at        DATETIME NOT NULL,
   started_at        DATETIME,
   completed_at      DATETIME,
@@ -341,7 +385,9 @@ CREATE TABLE IF NOT EXISTS device_jobs (
   INDEX idx_device_job_session (session_id),
   INDEX idx_device_job_assessment (assessment_db_id),
   INDEX idx_device_job_patient (patient_id),
-  INDEX idx_device_job_status (status)
+  INDEX idx_device_job_status (status),
+  INDEX idx_device_job_created (created_at),
+  UNIQUE KEY uniq_device_job_idempotency (idempotency_key)
 ) CHARACTER SET utf8mb4
 """
 
@@ -364,6 +410,20 @@ def _ensure_assessment_schema(cur) -> None:
     cur.execute("SHOW INDEX FROM assessments")
     indexes = {row["Key_name"] for row in cur.fetchall()}
     for name, ddl in _ASSESSMENT_INDEXES.items():
+        if name not in indexes:
+            cur.execute(ddl)
+
+
+def _ensure_device_job_schema(cur) -> None:
+    cur.execute("SHOW COLUMNS FROM device_jobs")
+    existing = {row["Field"] for row in cur.fetchall()}
+    for name, ddl in _DEVICE_JOB_EXTRA_COLUMNS.items():
+        if name not in existing:
+            cur.execute(f"ALTER TABLE device_jobs ADD COLUMN {name} {ddl}")
+
+    cur.execute("SHOW INDEX FROM device_jobs")
+    indexes = {row["Key_name"] for row in cur.fetchall()}
+    for name, ddl in _DEVICE_JOB_INDEXES.items():
         if name not in indexes:
             cur.execute(ddl)
 
@@ -494,6 +554,7 @@ def init_db() -> None:
                 cur.execute(_CREATE_DEVICE_JOBS)
                 _ensure_patient_schema(cur)
                 _ensure_assessment_schema(cur)
+                _ensure_device_job_schema(cur)
                 _backfill_assessment_children(cur)
         finally:
             conn.close()
@@ -630,6 +691,12 @@ def create_device_job(
     patient_id: str,
     package_name: Optional[str],
     package_hash: Optional[str],
+    institution: str,
+    input_path: str,
+    patient_json: Dict[str, Any],
+    parse_warnings: Optional[List[str]],
+    n_trials: int,
+    idempotency_key: Optional[str] = None,
     status: str = "queued",
 ) -> Dict[str, Any]:
     """Create one device upload/analysis job."""
@@ -641,8 +708,12 @@ def create_device_job(
                 """
                 INSERT INTO device_jobs
                   (job_id, device_id, session_id, assessment_id, patient_id,
-                   package_name, package_hash, status, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   package_name, package_hash, institution, input_path,
+                   patient_json, parse_warnings, n_trials, idempotency_key,
+                   status, phase, progress_percent, status_message,
+                   created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, 'waiting', 0, %s, %s, %s)
                 """,
                 (
                     job_id,
@@ -652,7 +723,14 @@ def create_device_job(
                     patient_id,
                     package_name,
                     package_hash,
+                    institution,
+                    input_path,
+                    json.dumps(patient_json, ensure_ascii=False),
+                    json.dumps(parse_warnings or [], ensure_ascii=False),
+                    n_trials,
+                    idempotency_key,
                     status,
+                    "已接收评估数据，等待处理",
                     ts,
                     ts,
                 ),
@@ -669,8 +747,16 @@ def update_device_job(
     job_id: str,
     *,
     status: Optional[str] = None,
+    phase: Optional[str] = None,
+    progress_percent: Optional[int] = None,
+    status_message: Optional[str] = None,
     assessment_db_id: Optional[int] = None,
     error_message: Optional[str] = None,
+    error_code: Optional[str] = None,
+    error_retryable: Optional[bool] = None,
+    clear_error: bool = False,
+    increment_attempt: bool = False,
+    reset_timestamps: bool = False,
     mark_started: bool = False,
     mark_completed: bool = False,
     mark_delivered: bool = False,
@@ -680,10 +766,24 @@ def update_device_job(
     fields: Dict[str, Any] = {"updated_at": now}
     if status is not None:
         fields["status"] = status
+    if phase is not None:
+        fields["phase"] = phase
+    if progress_percent is not None:
+        fields["progress_percent"] = max(0, min(100, int(progress_percent)))
+    if status_message is not None:
+        fields["status_message"] = status_message
     if assessment_db_id is not None:
         fields["assessment_db_id"] = assessment_db_id
     if error_message is not None:
         fields["error_message"] = error_message
+    if error_code is not None:
+        fields["error_code"] = error_code
+    if error_retryable is not None:
+        fields["error_retryable"] = 1 if error_retryable else 0
+    if clear_error:
+        fields["error_message"] = None
+        fields["error_code"] = None
+        fields["error_retryable"] = 0
     if mark_started:
         fields["started_at"] = now
     if mark_completed:
@@ -691,7 +791,12 @@ def update_device_job(
     if mark_delivered:
         fields["delivered_at"] = now
 
-    cols = ", ".join(f"{k}=%s" for k in fields)
+    assignments = [f"{k}=%s" for k in fields]
+    if increment_attempt:
+        assignments.append("attempt_count=attempt_count+1")
+    if reset_timestamps:
+        assignments.extend(("started_at=NULL", "completed_at=NULL", "delivered_at=NULL"))
+    cols = ", ".join(assignments)
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -709,7 +814,80 @@ def get_device_job(job_id: str) -> Optional[Dict[str, Any]]:
             row = cur.fetchone()
     finally:
         conn.close()
-    return _norm(row)
+    return _norm_device_job(row)
+
+
+def find_device_job_by_idempotency_key(idempotency_key: str) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM device_jobs WHERE idempotency_key=%s LIMIT 1",
+                (idempotency_key,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm_device_job(row)
+
+
+def find_reusable_device_job(
+    *,
+    package_hash: str,
+    patient_id: str,
+    device_id: Optional[str],
+    assessment_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Find the newest non-failed submission for the same logical package."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM device_jobs
+                WHERE package_hash=%s AND patient_id=%s
+                  AND (device_id <=> %s) AND (assessment_id <=> %s)
+                  AND status IN ('queued', 'running', 'completed', 'delivered')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (package_hash, patient_id, device_id, assessment_id),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm_device_job(row)
+
+
+def list_recoverable_device_jobs() -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM device_jobs
+                WHERE status IN ('queued', 'running')
+                ORDER BY created_at, job_id
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [_norm_device_job(row) for row in rows]
+
+
+def assessment_id_for_session(session_id: str) -> Optional[int]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM assessments WHERE session_id=%s ORDER BY id DESC LIMIT 1",
+                (session_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return int(row["id"]) if row else None
 
 
 def list_patients() -> List[Dict[str, Any]]:
@@ -1103,6 +1281,13 @@ __all__ = [
     "replace_assessment_trials",
     "replace_assessment_biomarkers",
     "latest_assessment_for_patient",
+    "create_device_job",
+    "update_device_job",
+    "get_device_job",
+    "find_device_job_by_idempotency_key",
+    "find_reusable_device_job",
+    "list_recoverable_device_jobs",
+    "assessment_id_for_session",
     "list_assessments",
     "get_assessment",
     "stats_summary",
