@@ -1,5 +1,11 @@
 # Changelog
 
+## cloud-server-v1.1.14 - 2026-07-11
+
+- 新增 `DEVICE_API_TOKENS_JSON` 多设备独立凭证配置，同时保留 `DEVICE_API_TOKEN` 兼容已有设备。
+- 独立 token 自动绑定对应 `device_id`，只能上传、查询、下载和ACK本设备任务；跨设备访问或请求中的设备ID不一致返回 403。
+- 新增纯逻辑鉴权测试，校验旧凭证兼容、独立凭证匹配、错误token、非法JSON和重复token配置。
+
 ## cloud-server-v1.1.13 - 2026-07-11
 
 - 将原“仅大模型报告排队”升级为完整评估 FIFO 队列：网页和设备任务从信号处理、深度模型、biomarker、大模型报告到持久化全程串行，避免单卡 GPU 并发和 OOM。

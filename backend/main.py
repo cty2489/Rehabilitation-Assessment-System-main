@@ -36,6 +36,12 @@ import llm_settings
 import mysql_db
 from assessment_queue import AssessmentQueue
 from assessment_export import ensure_assessment_export, export_filename, file_info
+from device_auth import (
+    DeviceCredential,
+    DeviceTokenConfigError,
+    authenticate_device_token,
+    credential_count,
+)
 from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
 from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
 from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url, stream_report
@@ -247,10 +253,15 @@ def _require_admin(authorization: Optional[str] = Header(None)) -> None:
 def _require_device(
     authorization: Optional[str] = Header(None),
     x_device_token: Optional[str] = Header(None, alias="X-Device-Token"),
-) -> None:
-    expected_token = os.environ.get("DEVICE_API_TOKEN", "").strip()
-    if not expected_token:
-        raise HTTPException(status_code=503, detail="设备端鉴权未配置：缺少 DEVICE_API_TOKEN")
+) -> DeviceCredential:
+    legacy_token = os.environ.get("DEVICE_API_TOKEN", "")
+    named_tokens_json = os.environ.get("DEVICE_API_TOKENS_JSON", "")
+    try:
+        configured = credential_count(legacy_token, named_tokens_json)
+    except DeviceTokenConfigError as exc:
+        raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
+    if configured == 0:
+        raise HTTPException(status_code=503, detail="设备端鉴权未配置")
 
     token = (x_device_token or "").strip()
     if not token:
@@ -264,12 +275,17 @@ def _require_device(
             detail="缺少设备端 Bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not secrets.compare_digest(token, expected_token):
+    try:
+        credential = authenticate_device_token(token, legacy_token, named_tokens_json)
+    except DeviceTokenConfigError as exc:
+        raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
+    if credential is None:
         raise HTTPException(
             status_code=403,
             detail="设备端凭证无效",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return credential
 
 
 def _human_bytes(num: int) -> str:
@@ -905,13 +921,22 @@ def _format_device_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _device_job_or_404(job_id: str) -> Dict[str, Any]:
+def _bound_device_id(credential: DeviceCredential, requested_device_id: Optional[str]) -> Optional[str]:
+    requested = (requested_device_id or "").strip() or None
+    if credential.device_id and requested and requested != credential.device_id:
+        raise HTTPException(status_code=403, detail="设备凭证与 device_id 不匹配")
+    return credential.device_id or requested
+
+
+def _device_job_or_404(job_id: str, credential: DeviceCredential) -> Dict[str, Any]:
     try:
         job = mysql_db.get_device_job(job_id)
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
     if job is None:
         raise HTTPException(status_code=404, detail="设备任务不存在")
+    if credential.device_id and job.get("device_id") != credential.device_id:
+        raise HTTPException(status_code=403, detail="该设备凭证无权访问此任务")
     return job
 
 
@@ -1203,7 +1228,7 @@ async def device_create_assessment(
     disease_days: Optional[int] = Form(None),
     paralysis_side: Optional[str] = Form(None),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    _device: None = Depends(_require_device),
+    _device: DeviceCredential = Depends(_require_device),
 ):
     """Device-side machine API: upload one active-assessment zip and start a
     background analysis job. The device polls ``/jobs/{job_id}`` and downloads
@@ -1220,7 +1245,7 @@ async def device_create_assessment(
             pkg=pkg,
             package_hash=package_hash,
             idempotency_key=idempotency_key,
-            device_id=device_id,
+            device_id=_bound_device_id(_device, device_id),
             patient_id=patient_id,
             name=name,
             sex=sex,
@@ -1246,7 +1271,7 @@ async def device_create_assessment(
             pkg=pkg,
             package_hash=package_hash,
             idempotency_key=idempotency_key,
-            device_id=_request_text(request, "device_id"),
+            device_id=_bound_device_id(_device, _request_text(request, "device_id")),
             patient_id=_request_text(request, "patient_id"),
             name=_request_text(request, "name"),
             sex=_request_text(request, "sex"),
@@ -1273,7 +1298,7 @@ async def device_create_assessment(
 async def device_create_assessment_raw(
     request: Request,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    _device: None = Depends(_require_device),
+    _device: DeviceCredential = Depends(_require_device),
 ):
     """Raw zip upload variant for embedded clients.
 
@@ -1295,7 +1320,7 @@ async def device_create_assessment_raw(
         pkg=pkg,
         package_hash=package_hash,
         idempotency_key=idempotency_key,
-        device_id=_request_text(request, "device_id"),
+        device_id=_bound_device_id(_device, _request_text(request, "device_id")),
         patient_id=_request_text(request, "patient_id"),
         name=_request_text(request, "name"),
         sex=_request_text(request, "sex"),
@@ -1311,13 +1336,16 @@ async def device_create_assessment_raw(
 
 
 @app.get("/api/device/v1/jobs/{job_id}")
-async def device_get_job(job_id: str, _device: None = Depends(_require_device)):
-    return _format_device_job(_device_job_or_404(job_id))
+async def device_get_job(job_id: str, _device: DeviceCredential = Depends(_require_device)):
+    return _format_device_job(_device_job_or_404(job_id, _device))
 
 
 @app.get("/api/device/v1/jobs/{job_id}/result.json")
-async def device_download_result_json(job_id: str, _device: None = Depends(_require_device)):
-    job = _device_job_or_404(job_id)
+async def device_download_result_json(
+    job_id: str,
+    _device: DeviceCredential = Depends(_require_device),
+):
+    job = _device_job_or_404(job_id, _device)
     assessment_id = _completed_device_assessment_id(job)
     assessment, bundle = _assessment_export_bundle(assessment_id)
     return FileResponse(
@@ -1328,8 +1356,11 @@ async def device_download_result_json(job_id: str, _device: None = Depends(_requ
 
 
 @app.get("/api/device/v1/jobs/{job_id}/report.pdf")
-async def device_download_report_pdf(job_id: str, _device: None = Depends(_require_device)):
-    job = _device_job_or_404(job_id)
+async def device_download_report_pdf(
+    job_id: str,
+    _device: DeviceCredential = Depends(_require_device),
+):
+    job = _device_job_or_404(job_id, _device)
     assessment_id = _completed_device_assessment_id(job)
     assessment, bundle = _assessment_export_bundle(assessment_id)
     return FileResponse(
@@ -1340,8 +1371,11 @@ async def device_download_report_pdf(job_id: str, _device: None = Depends(_requi
 
 
 @app.get("/api/device/v1/jobs/{job_id}/export.zip")
-async def device_download_export_zip(job_id: str, _device: None = Depends(_require_device)):
-    job = _device_job_or_404(job_id)
+async def device_download_export_zip(
+    job_id: str,
+    _device: DeviceCredential = Depends(_require_device),
+):
+    job = _device_job_or_404(job_id, _device)
     assessment_id = _completed_device_assessment_id(job)
     assessment, bundle = _assessment_export_bundle(assessment_id)
     return FileResponse(
@@ -1352,8 +1386,11 @@ async def device_download_export_zip(job_id: str, _device: None = Depends(_requi
 
 
 @app.post("/api/device/v1/jobs/{job_id}/ack")
-async def device_ack_job(job_id: str, _device: None = Depends(_require_device)):
-    current = _device_job_or_404(job_id)
+async def device_ack_job(
+    job_id: str,
+    _device: DeviceCredential = Depends(_require_device),
+):
+    current = _device_job_or_404(job_id, _device)
     _completed_device_assessment_id(current)
     if current.get("status") == "delivered":
         _cleanup_delivered_device_input(current)

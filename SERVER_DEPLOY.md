@@ -160,6 +160,7 @@ APP_ADMIN_USER=your_admin_user
 APP_ADMIN_PASSWORD=change-this-password
 APP_AUTH_TOKEN=generate-a-long-random-token
 DEVICE_API_TOKEN=generate-a-different-long-random-token
+DEVICE_API_TOKENS_JSON='{"device_002":"generate-device-002-token","device_003":"generate-device-003-token"}'
 
 LLM_PROVIDER=local
 LLM_REMOTE_URL=
@@ -408,6 +409,10 @@ POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
 
 统一队列是单进程调度器，生产环境必须保持一个 Uvicorn worker；不要给启动命令
 增加 `--workers 2` 或更高值。同一服务器需要多进程/多GPU时，应改用独立队列服务。
+
+`DEVICE_API_TOKEN` 仅用于兼容已有设备。新增设备应配置在
+`DEVICE_API_TOKENS_JSON`，每台设备一个独立 token；独立 token 只能操作绑定
+`device_id` 的任务。修改凭证后必须重启后端。
 
 详细协议见 `docs/DEVICE_API.md`。
 
