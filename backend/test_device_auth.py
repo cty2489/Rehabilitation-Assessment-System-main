@@ -4,7 +4,10 @@ from device_auth import (
     DeviceTokenConfigError,
     authenticate_device_token,
     credential_count,
+    generate_device_token,
     parse_named_tokens,
+    token_digest,
+    token_hint,
 )
 
 
@@ -26,6 +29,12 @@ class DeviceAuthTests(unittest.TestCase):
             parse_named_tokens('{"a":"same","b":"same"}')
         with self.assertRaises(DeviceTokenConfigError):
             credential_count("same", '{"a":"same"}')
+
+    def test_generated_token_has_stable_digest_and_masked_hint(self) -> None:
+        token = generate_device_token()
+        self.assertGreaterEqual(len(token), 40)
+        self.assertEqual(len(token_digest(token)), 64)
+        self.assertNotIn(token, token_hint(token))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Parse and verify legacy and per-device API credentials."""
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -15,6 +16,21 @@ class DeviceTokenConfigError(ValueError):
 class DeviceCredential:
     device_id: Optional[str]
     legacy: bool = False
+
+
+def generate_device_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def token_hint(token: str) -> str:
+    value = token.strip()
+    if len(value) <= 12:
+        return value
+    return f"{value[:6]}...{value[-6:]}"
 
 
 def parse_named_tokens(raw: str) -> Dict[str, str]:
@@ -75,5 +91,8 @@ __all__ = [
     "DeviceTokenConfigError",
     "authenticate_device_token",
     "credential_count",
+    "generate_device_token",
     "parse_named_tokens",
+    "token_digest",
+    "token_hint",
 ]

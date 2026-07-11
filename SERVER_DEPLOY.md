@@ -48,7 +48,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.13
+git checkout cloud-server-v1.1.15
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -413,6 +413,11 @@ POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
 `DEVICE_API_TOKEN` 仅用于兼容已有设备。新增设备应配置在
 `DEVICE_API_TOKENS_JSON`，每台设备一个独立 token；独立 token 只能操作绑定
 `device_id` 的任务。修改凭证后必须重启后端。
+
+首次启动会把上述环境变量中的设备码导入 MySQL `device_credentials` 表，只保存
+SHA-256 哈希和掩码。数据库中存在凭证后，设备鉴权以数据库为准；管理员可在网页
+“系统管理 → 设备凭证”生成、停用、轮换和撤销。确认迁移成功后可从 `.env` 删除
+`DEVICE_API_TOKEN` 与 `DEVICE_API_TOKENS_JSON` 明文，已有设备码仍继续有效。
 
 详细协议见 `docs/DEVICE_API.md`。
 

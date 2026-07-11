@@ -79,6 +79,37 @@ export interface LlmModelSettingsPatch {
   use_adapter?: boolean
 }
 
+export type DeviceCredentialStatus = 'active' | 'disabled' | 'revoked'
+
+export interface DeviceCredentialRecord {
+  id: number
+  device_id: string
+  label: string | null
+  access_scope: 'device' | 'shared'
+  token_hint: string
+  status: DeviceCredentialStatus
+  source: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  rotated_at: string | null
+  revoked_at: string | null
+  job_count?: number
+  last_job_at?: string | null
+}
+
+export interface DeviceCredentialList {
+  schema_version: 'rehab.device_credentials.v1'
+  items: DeviceCredentialRecord[]
+}
+
+export interface DeviceCredentialSecret {
+  schema_version: 'rehab.device_credential_secret.v1'
+  credential: DeviceCredentialRecord
+  token: string
+}
+
 export interface HealthStatus {
   status: string
   models_loaded: string[]

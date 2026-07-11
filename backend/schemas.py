@@ -63,6 +63,21 @@ class LlmModelSettingsUpdate(BaseModel):
     use_adapter: Optional[bool] = Field(None, description="是否加载 LoRA adapter")
 
 
+class DeviceCredentialCreate(BaseModel):
+    device_id: str = Field(
+        ...,
+        min_length=2,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    label: str = Field(..., min_length=1, max_length=128)
+
+
+class DeviceCredentialUpdate(BaseModel):
+    label: Optional[str] = Field(None, min_length=1, max_length=128)
+    status: Optional[Literal["active", "disabled"]] = None
+
+
 # --------------------------------------------------------------------------- #
 # Patient management + records + stats (MySQL-backed)                          #
 # --------------------------------------------------------------------------- #

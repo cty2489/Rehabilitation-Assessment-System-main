@@ -1,6 +1,10 @@
 import {
   AssessmentOverview,
   AuthLoginResponse,
+  DeviceCredentialList,
+  DeviceCredentialRecord,
+  DeviceCredentialSecret,
+  DeviceCredentialStatus,
   EnrollmentRequest,
   HealthStatus,
   LlmModelSettingsPatch,
@@ -94,6 +98,54 @@ export function fetchHealth(): Promise<HealthStatus> {
 
 export function fetchLlmSettings(): Promise<LlmSettings> {
   return getJSON('/api/settings/llm')
+}
+
+export function fetchDeviceCredentials(): Promise<DeviceCredentialList> {
+  return getJSON('/api/admin/device-credentials')
+}
+
+export async function createDeviceCredential(
+  deviceId: string,
+  label: string,
+): Promise<DeviceCredentialSecret> {
+  const res = await fetch('/api/admin/device-credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ device_id: deviceId, label }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function updateDeviceCredential(
+  id: number,
+  patch: { label?: string; status?: Exclude<DeviceCredentialStatus, 'revoked'> },
+): Promise<DeviceCredentialRecord> {
+  const res = await fetch(`/api/admin/device-credentials/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function rotateDeviceCredential(id: number): Promise<DeviceCredentialSecret> {
+  const res = await fetch(`/api/admin/device-credentials/${id}/rotate`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function revokeDeviceCredential(id: number): Promise<DeviceCredentialRecord> {
+  const res = await fetch(`/api/admin/device-credentials/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
 }
 
 export async function updateLlmSettings(activeModelId: string): Promise<LlmSettings> {

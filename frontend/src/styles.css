@@ -402,6 +402,19 @@ body::before {
   color: var(--teal-700);
 }
 
+.button.danger {
+  background: #fff;
+  color: #b91c1c;
+  border-color: #fecaca;
+  box-shadow: none;
+}
+
+.button.danger:hover:not(:disabled) {
+  background: #fff5f5;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
 .button.tiny {
   padding: 7px 10px;
   font-size: 12px;
@@ -492,6 +505,105 @@ body::before {
 .settings-focus-card {
   box-shadow: 0 0 0 2px rgba(14, 124, 138, 0.16), 0 14px 28px -24px rgba(14, 124, 138, 0.55);
 }
+
+.credential-manager { min-width: 0; }
+
+.credential-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.credential-summary {
+  margin: 5px 0 0;
+  color: var(--ink-400);
+  font-size: 13px;
+}
+
+.credential-create {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(260px, 1.2fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+}
+
+.credential-create-button { min-height: 42px; white-space: nowrap; }
+
+.credential-secret {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid #86efac;
+  border-left: 3px solid var(--mint-500);
+  border-radius: var(--radius-sm);
+  background: #f0fdf4;
+}
+
+.credential-secret-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.credential-secret-label {
+  color: #047857;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.credential-secret code {
+  color: var(--ink-900);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.credential-secret-actions,
+.credential-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.credential-secret-actions { flex-shrink: 0; }
+
+.credential-table-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+
+.credential-table { min-width: 980px; }
+.credential-table th, .credential-table td { vertical-align: middle; }
+.credential-table strong { display: block; color: var(--ink-900); font-size: 13.5px; }
+.credential-device-id {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-400);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.credential-hint {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--ink-700);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.credential-empty { text-align: center; color: var(--ink-400); padding: 28px !important; }
+.credential-actions { min-width: 210px; }
 
 .model-settings-layout {
   display: grid;
@@ -1620,6 +1732,10 @@ body::before {
   .llm-settings-head { grid-template-columns: 1fr; align-items: stretch; }
   .llm-selected-detail { grid-template-columns: 1fr; }
   .model-path-edit { grid-template-columns: 1fr; min-width: 260px; }
+  .credential-create { grid-template-columns: 1fr; align-items: stretch; }
+  .credential-create-button { width: 100%; justify-content: center; }
+  .credential-secret { align-items: flex-start; flex-direction: column; }
+  .credential-secret-actions { width: 100%; }
 }
 
 /* ── Rendered Markdown report (multi-section + tables) ────────────────────── */

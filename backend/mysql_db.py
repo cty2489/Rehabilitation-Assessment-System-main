@@ -15,9 +15,10 @@ surface a clear 503 when MySQL is unavailable.
 """
 from __future__ import annotations
 
-import os
+import hashlib
 import json
 import math
+import os
 import threading
 from datetime import datetime
 from numbers import Real
@@ -391,6 +392,26 @@ CREATE TABLE IF NOT EXISTS device_jobs (
 ) CHARACTER SET utf8mb4
 """
 
+_CREATE_DEVICE_CREDENTIALS = """
+CREATE TABLE IF NOT EXISTS device_credentials (
+  id                BIGINT PRIMARY KEY AUTO_INCREMENT,
+  device_id         VARCHAR(128) NOT NULL UNIQUE,
+  label             VARCHAR(128),
+  access_scope      VARCHAR(16) NOT NULL DEFAULT 'device',
+  token_hash        CHAR(64) NOT NULL UNIQUE,
+  token_hint        VARCHAR(32) NOT NULL,
+  status            VARCHAR(16) NOT NULL DEFAULT 'active',
+  source            VARCHAR(32) NOT NULL DEFAULT 'admin',
+  created_by        VARCHAR(128),
+  created_at        DATETIME NOT NULL,
+  updated_at        DATETIME NOT NULL,
+  last_used_at      DATETIME,
+  rotated_at        DATETIME,
+  revoked_at        DATETIME,
+  INDEX idx_device_credential_status (status)
+) CHARACTER SET utf8mb4
+"""
+
 
 def _ensure_patient_schema(cur) -> None:
     cur.execute("SHOW COLUMNS FROM patients")
@@ -552,6 +573,7 @@ def init_db() -> None:
                 cur.execute(_CREATE_ASSESSMENT_TRIALS)
                 cur.execute(_CREATE_ASSESSMENT_BIOMARKERS)
                 cur.execute(_CREATE_DEVICE_JOBS)
+                cur.execute(_CREATE_DEVICE_CREDENTIALS)
                 _ensure_patient_schema(cur)
                 _ensure_assessment_schema(cur)
                 _ensure_device_job_schema(cur)
@@ -677,6 +699,240 @@ def update_patient(patient_db_id: int, fields: Dict[str, Any]) -> Optional[Dict[
     finally:
         conn.close()
     return get_patient(patient_db_id)
+
+
+# --------------------------------------------------------------------------- #
+# Device credentials                                                           #
+# --------------------------------------------------------------------------- #
+_DEVICE_CREDENTIAL_PUBLIC_COLUMNS = """
+    id, device_id, label, access_scope, token_hint, status, source,
+    created_by, created_at, updated_at, last_used_at, rotated_at, revoked_at
+"""
+
+
+def _device_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def ensure_device_credential(
+    *,
+    device_id: str,
+    label: str,
+    access_scope: str,
+    token_hash: str,
+    token_hint: str,
+    source: str = "env-migrated",
+    created_by: str = "system",
+) -> Dict[str, Any]:
+    """Insert an environment credential once without reactivating later revokes."""
+    existing = get_device_credential_by_device_id(device_id)
+    if existing is not None:
+        return existing
+    return create_device_credential(
+        device_id=device_id,
+        label=label,
+        access_scope=access_scope,
+        token_hash=token_hash,
+        token_hint=token_hint,
+        source=source,
+        created_by=created_by,
+    )
+
+
+def create_device_credential(
+    *,
+    device_id: str,
+    label: str,
+    access_scope: str,
+    token_hash: str,
+    token_hint: str,
+    source: str = "admin",
+    created_by: str = "admin",
+) -> Dict[str, Any]:
+    ts = now_dt()
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO device_credentials
+                  (device_id, label, access_scope, token_hash, token_hint,
+                   status, source, created_by, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
+                """,
+                (
+                    device_id,
+                    label,
+                    access_scope,
+                    token_hash,
+                    token_hint,
+                    source,
+                    created_by,
+                    ts,
+                    ts,
+                ),
+            )
+            credential_id = int(cur.lastrowid)
+    finally:
+        conn.close()
+    credential = get_device_credential(credential_id)
+    if credential is None:
+        raise MySQLUnavailable(f"设备凭证创建后无法读取：{device_id}")
+    return credential
+
+
+def get_device_credential(credential_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_DEVICE_CREDENTIAL_PUBLIC_COLUMNS} FROM device_credentials WHERE id=%s",
+                (credential_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm(row)
+
+
+def get_device_credential_by_device_id(device_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_DEVICE_CREDENTIAL_PUBLIC_COLUMNS} FROM device_credentials WHERE device_id=%s",
+                (device_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return _norm(row)
+
+
+def list_device_credentials() -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_DEVICE_CREDENTIAL_PUBLIC_COLUMNS},
+                       CASE WHEN access_scope='shared'
+                         THEN (SELECT COUNT(*) FROM device_jobs)
+                         ELSE (SELECT COUNT(*) FROM device_jobs j WHERE j.device_id=device_credentials.device_id)
+                       END AS job_count,
+                       CASE WHEN access_scope='shared'
+                         THEN (SELECT MAX(created_at) FROM device_jobs)
+                         ELSE (SELECT MAX(j.created_at) FROM device_jobs j WHERE j.device_id=device_credentials.device_id)
+                       END AS last_job_at
+                FROM device_credentials
+                ORDER BY access_scope='shared' DESC, created_at, id
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [_norm(row) for row in rows]
+
+
+def authenticate_device_credential(token: str) -> tuple[Optional[Dict[str, Any]], int]:
+    """Return an active credential and total configured rows.
+
+    Once at least one row exists, the database is authoritative and callers
+    must not fall back to environment plaintext tokens.
+    """
+    digest = _device_token_hash(token)
+    now = now_dt()
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM device_credentials")
+            configured = int(cur.fetchone()["c"])
+            cur.execute(
+                """
+                SELECT id, device_id, access_scope, status
+                FROM device_credentials
+                WHERE token_hash=%s
+                LIMIT 1
+                """,
+                (digest,),
+            )
+            row = cur.fetchone()
+            if row and row.get("status") == "active":
+                cur.execute(
+                    "UPDATE device_credentials SET last_used_at=%s WHERE id=%s",
+                    (now, row["id"]),
+                )
+            else:
+                row = None
+    finally:
+        conn.close()
+    return _norm(row), configured
+
+
+def update_device_credential(
+    credential_id: int,
+    *,
+    label: Optional[str] = None,
+    status: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    fields: Dict[str, Any] = {"updated_at": now_dt()}
+    if label is not None:
+        fields["label"] = label
+    if status is not None:
+        fields["status"] = status
+    cols = ", ".join(f"{key}=%s" for key in fields)
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE device_credentials SET {cols} WHERE id=%s AND status<>'revoked'",
+                (*fields.values(), credential_id),
+            )
+    finally:
+        conn.close()
+    return get_device_credential(credential_id)
+
+
+def rotate_device_credential(
+    credential_id: int,
+    *,
+    token_hash: str,
+    token_hint: str,
+) -> Optional[Dict[str, Any]]:
+    ts = now_dt()
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE device_credentials
+                SET token_hash=%s, token_hint=%s, status='active',
+                    rotated_at=%s, revoked_at=NULL, updated_at=%s
+                WHERE id=%s
+                """,
+                (token_hash, token_hint, ts, ts, credential_id),
+            )
+    finally:
+        conn.close()
+    return get_device_credential(credential_id)
+
+
+def revoke_device_credential(credential_id: int) -> Optional[Dict[str, Any]]:
+    ts = now_dt()
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE device_credentials
+                SET status='revoked', revoked_at=COALESCE(revoked_at, %s), updated_at=%s
+                WHERE id=%s
+                """,
+                (ts, ts, credential_id),
+            )
+    finally:
+        conn.close()
+    return get_device_credential(credential_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -1281,6 +1537,15 @@ __all__ = [
     "replace_assessment_trials",
     "replace_assessment_biomarkers",
     "latest_assessment_for_patient",
+    "ensure_device_credential",
+    "create_device_credential",
+    "get_device_credential",
+    "get_device_credential_by_device_id",
+    "list_device_credentials",
+    "authenticate_device_credential",
+    "update_device_credential",
+    "rotate_device_credential",
+    "revoke_device_credential",
     "create_device_job",
     "update_device_job",
     "get_device_job",

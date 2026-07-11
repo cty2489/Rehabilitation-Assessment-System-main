@@ -41,6 +41,10 @@ from device_auth import (
     DeviceTokenConfigError,
     authenticate_device_token,
     credential_count,
+    generate_device_token,
+    parse_named_tokens,
+    token_digest,
+    token_hint,
 )
 from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
 from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
@@ -51,6 +55,8 @@ from schemas import (
     AssessSessionResponse,
     AuthLoginRequest,
     AuthLoginResponse,
+    DeviceCredentialCreate,
+    DeviceCredentialUpdate,
     EnrollmentRequest,
     LlmModelSettingsUpdate,
     LlmSettingsUpdate,
@@ -163,6 +169,29 @@ SESSIONS: Dict[str, SessionState] = {}
 SESSION_SCHEDULER = AssessmentQueue()
 
 
+def _migrate_env_device_credentials() -> None:
+    """Seed plaintext environment credentials into the hashed MySQL store once."""
+    legacy_token = os.environ.get("DEVICE_API_TOKEN", "").strip()
+    named_raw = os.environ.get("DEVICE_API_TOKENS_JSON", "")
+    named = parse_named_tokens(named_raw)
+    if legacy_token:
+        mysql_db.ensure_device_credential(
+            device_id="legacy_shared",
+            label="旧共享设备码",
+            access_scope="shared",
+            token_hash=token_digest(legacy_token),
+            token_hint=token_hint(legacy_token),
+        )
+    for device_id, token in named.items():
+        mysql_db.ensure_device_credential(
+            device_id=device_id,
+            label=device_id,
+            access_scope="device",
+            token_hash=token_digest(token),
+            token_hint=token_hint(token),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _cleanup_old_sessions(force=True)
@@ -175,6 +204,11 @@ async def lifespan(app: FastAPI):
         print("[startup] MySQL ready (business store)")
     except Exception as exc:  # noqa: BLE001
         print(f"[startup][warn] MySQL not ready: {exc}")
+    else:
+        try:
+            _migrate_env_device_credentials()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup][warn] device credential migration failed: {exc}")
 
     registry = ModelRegistry()
     print(f"[startup] loading CMK-AGN models onto {registry.device}...")
@@ -256,13 +290,6 @@ def _require_device(
 ) -> DeviceCredential:
     legacy_token = os.environ.get("DEVICE_API_TOKEN", "")
     named_tokens_json = os.environ.get("DEVICE_API_TOKENS_JSON", "")
-    try:
-        configured = credential_count(legacy_token, named_tokens_json)
-    except DeviceTokenConfigError as exc:
-        raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
-    if configured == 0:
-        raise HTTPException(status_code=503, detail="设备端鉴权未配置")
-
     token = (x_device_token or "").strip()
     if not token:
         scheme, _, bearer = (authorization or "").partition(" ")
@@ -275,6 +302,30 @@ def _require_device(
             detail="缺少设备端 Bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    try:
+        stored, stored_count = mysql_db.authenticate_device_credential(token)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if stored_count > 0:
+        if stored is None:
+            raise HTTPException(
+                status_code=403,
+                detail="设备端凭证无效或已停用",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        shared = stored.get("access_scope") == "shared"
+        return DeviceCredential(
+            device_id=None if shared else str(stored["device_id"]),
+            legacy=shared,
+        )
+
+    try:
+        configured = credential_count(legacy_token, named_tokens_json)
+    except DeviceTokenConfigError as exc:
+        raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
+    if configured == 0:
+        raise HTTPException(status_code=503, detail="设备端鉴权未配置")
     try:
         credential = authenticate_device_token(token, legacy_token, named_tokens_json)
     except DeviceTokenConfigError as exc:
@@ -1520,6 +1571,108 @@ async def update_llm_model_settings(
 
     REPORT_MODEL.reset()
     return llm_settings.settings_payload(probe=True)
+
+
+# --------------------------------------------------------------------------- #
+# Admin device credential management                                          #
+# --------------------------------------------------------------------------- #
+def _device_credentials_payload() -> Dict[str, Any]:
+    return {
+        "schema_version": "rehab.device_credentials.v1",
+        "items": mysql_db.list_device_credentials(),
+    }
+
+
+@app.get("/api/admin/device-credentials")
+async def admin_list_device_credentials(_admin: None = Depends(_require_admin)):
+    try:
+        return _device_credentials_payload()
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+
+
+@app.post("/api/admin/device-credentials", status_code=201)
+async def admin_create_device_credential(
+    payload: DeviceCredentialCreate,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        if mysql_db.get_device_credential_by_device_id(payload.device_id) is not None:
+            raise HTTPException(status_code=409, detail="设备 ID 已存在，请使用轮换功能生成新码")
+        token = generate_device_token()
+        credential = mysql_db.create_device_credential(
+            device_id=payload.device_id,
+            label=payload.label.strip(),
+            access_scope="device",
+            token_hash=token_digest(token),
+            token_hint=token_hint(token),
+            created_by=_admin_settings()[0],
+        )
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    return {
+        "schema_version": "rehab.device_credential_secret.v1",
+        "credential": credential,
+        "token": token,
+    }
+
+
+@app.patch("/api/admin/device-credentials/{credential_id}")
+async def admin_update_device_credential(
+    credential_id: int,
+    payload: DeviceCredentialUpdate,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        current = mysql_db.get_device_credential(credential_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="设备凭证不存在")
+        if current.get("status") == "revoked":
+            raise HTTPException(status_code=409, detail="已撤销凭证不能直接启用，请重新生成设备码")
+        updated = mysql_db.update_device_credential(
+            credential_id,
+            label=payload.label.strip() if payload.label is not None else None,
+            status=payload.status,
+        )
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    return updated
+
+
+@app.post("/api/admin/device-credentials/{credential_id}/rotate")
+async def admin_rotate_device_credential(
+    credential_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        if mysql_db.get_device_credential(credential_id) is None:
+            raise HTTPException(status_code=404, detail="设备凭证不存在")
+        token = generate_device_token()
+        credential = mysql_db.rotate_device_credential(
+            credential_id,
+            token_hash=token_digest(token),
+            token_hint=token_hint(token),
+        )
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    return {
+        "schema_version": "rehab.device_credential_secret.v1",
+        "credential": credential,
+        "token": token,
+    }
+
+
+@app.delete("/api/admin/device-credentials/{credential_id}")
+async def admin_revoke_device_credential(
+    credential_id: int,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        if mysql_db.get_device_credential(credential_id) is None:
+            raise HTTPException(status_code=404, detail="设备凭证不存在")
+        return mysql_db.revoke_device_credential(credential_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
 
 
 @app.post("/api/auth/login", response_model=AuthLoginResponse)
