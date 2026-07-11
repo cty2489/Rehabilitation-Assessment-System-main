@@ -1,0 +1,65 @@
+{
+  "schema_version": "rehab.knowledge.ingestion-config.v1",
+  "collection_id": "rehab_knowledge_demo_v0_1",
+  "document_id": "rehab_knowledge_structured_entries_20260710",
+  "entry_version": "0.1",
+  "source_status": "pending",
+  "expert_review_status": "pending",
+  "entry_overrides": {
+    "1": {
+      "knowledge_id": "KB-ASSESSMENT-001",
+      "aliases": ["FMA", "FMA-UE", "Fugl-Meyer上肢评定"],
+      "issues": ["embedded_scoring_form_requires_source_identification"]
+    },
+    "2": {
+      "knowledge_id": "KB-ASSESSMENT-002",
+      "aliases": ["MAS", "改良Ashworth量表"]
+    },
+    "3": {
+      "knowledge_id": "KB-ASSESSMENT-003",
+      "aliases": ["Brunnstrom", "Brunnstrom分期"],
+      "content_image_transcribed": true,
+      "fields": {
+        "content": "本条目仅转录原图中与当前系统相关的上肢和手部分。I期：上肢和手无任何运动。II期：上肢仅出现协同运动模式，手仅有极细微屈伸。III期：上肢可随意发起协同运动；手可做钩状抓握但不能伸指。IV期：上肢开始出现脱离协同运动的活动；手可侧捏并松开拇指，手指有小范围半随意伸展。V期：上肢出现相对独立于协同运动的活动；手可做球状和圆柱状抓握并同时伸指，但不能单独伸展。VI期：上肢运动协调接近正常，但速度可能比健侧慢；手可完成抓握，但速度和准确性可能比非受累侧差。该文字由原文内嵌分期表人工转录，正式使用前需临床专家逐项核对。",
+        "cautions": "分期结果需结合标准化检查和患者整体临床表现；本条目的图片转录内容尚待专家复核。",
+        "interpretation_boundary": "Brunnstrom分期描述运动恢复阶段，不应单独用于诊断、预后判断或自动生成治疗处方。"
+      },
+      "issues": ["manual_image_transcription_pending_expert_check"]
+    },
+    "4": {
+      "knowledge_id": "KB-FOUNDATION-001",
+      "indexable": false,
+      "issues": ["entry_body_is_empty"]
+    },
+    "5": {
+      "knowledge_id": "KB-FOUNDATION-002",
+      "aliases": ["肌张力", "痉挛", "协同运动"]
+    },
+    "6": {
+      "knowledge_id": "KB-BIOMARKER-EMG-001",
+      "aliases": ["RMS", "iEMG", "MDF", "CCI", "共收缩指数"],
+      "issues": ["formula_and_fatigue_interpretation_need_expert_review"],
+      "review_notes": [
+        "RMS和iEMG与肌力或疲劳的关系受任务、电极和归一化方法影响。",
+        "CCI存在多种计算公式，正式入库前必须绑定本系统实际算法定义。"
+      ]
+    },
+    "7": {
+      "knowledge_id": "KB-BIOMARKER-IMU-001",
+      "aliases": ["IMU", "ROM", "SPARC", "峰值速度", "运动平滑度"],
+      "issues": ["algorithm_and_unit_definitions_missing"]
+    },
+    "8": {
+      "knowledge_id": "KB-BIOMARKER-EEG-001",
+      "aliases": ["EEG", "mu节律", "beta节律", "ERD", "ERS"],
+      "issues": ["frequency_band_and_method_definitions_need_review"]
+    },
+    "9": {
+      "knowledge_id": "KB-REPORT-TEMPLATE-001",
+      "kind": "report_template",
+      "indexable": false,
+      "include_tables_in_content": true,
+      "issues": ["report_template_must_not_be_used_as_clinical_evidence"]
+    }
+  }
+}
