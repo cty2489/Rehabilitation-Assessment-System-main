@@ -1,0 +1,7 @@
+{"query":"FMA上肢评定满分是多少？","match_terms":["FMA","66分"],"expected_knowledge_id":"KB-ASSESSMENT-001"}
+{"query":"MAS 1+级代表什么？","match_terms":["MAS","1+级"],"expected_knowledge_id":"KB-ASSESSMENT-002"}
+{"query":"Brunnstrom IV期手功能有什么表现？","match_terms":["Brunnstrom","侧捏"],"expected_knowledge_id":"KB-ASSESSMENT-003"}
+{"query":"痉挛和肌张力是什么关系？","match_terms":["痉挛","牵张反射"],"expected_knowledge_id":"KB-FOUNDATION-002"}
+{"query":"肌肉疲劳时MDF通常如何变化？","match_terms":["MDF","疲劳时降低"],"expected_knowledge_id":"KB-BIOMARKER-EMG-001"}
+{"query":"IMU运动平滑度反映什么？","match_terms":["IMU","平滑度"],"expected_knowledge_id":"KB-BIOMARKER-IMU-001"}
+{"query":"mu节律通常处于哪个频段？","match_terms":["mu节律","8-13 Hz"],"expected_knowledge_id":"KB-BIOMARKER-EEG-001"}

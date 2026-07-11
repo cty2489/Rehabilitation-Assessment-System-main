@@ -166,6 +166,7 @@ curl http://127.0.0.1:8000/api/health
 | `LOCAL_DEPLOY.md` | Windows 本地开发部署 |
 | `STARTUP_FLOW.md` | 已部署环境的启动、验证和演示流程 |
 | `docs/DEVICE_API.md` | 训练设备端 HTTPS 上传、轮询、下载、ACK 接口 |
+| `docs/RAG_INGESTION.md` | RAG 知识入库第一步、质量门禁和私有资料目录约定 |
 | `docs/schemas/device-job-v1.schema.json` | 设备任务状态响应的机器校验 schema |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
@@ -183,6 +184,8 @@ frontend/                    React/Vite 前端
 Deeplearning/                康复评分模型代码
 biomarkers/                  biomarker 计算与参考范围
 llm/                         transformers/LoRA 相关代码
+rag/                         RAG 文档解析、知识治理和后续检索代码
+knowledge_base/              RAG 配置与评测集；原文和运行数据不提交 Git
 DL_model/                    康复评分模型权重目录，不随仓库上传
 llm_gguf_server.py           手动可选 GGUF 大模型 HTTP 服务
 start_gguf_fallback.sh       手动可选 GGUF 回退/对照启动脚本

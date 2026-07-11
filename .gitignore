@@ -58,3 +58,11 @@ backend/config/gestures_26.json
 
 # ---- Device gateway (not published to GitHub) ----
 device_gateway/
+
+# ---- RAG knowledge runtime data (private / generated) ----
+# Raw clinical documents, extracted media and generated indexes may contain
+# copyrighted or site-specific material. Keep only schemas, manifests and
+# reviewed examples in Git.
+knowledge_base/raw/
+knowledge_base/runtime/
+knowledge_base/vector_store/
