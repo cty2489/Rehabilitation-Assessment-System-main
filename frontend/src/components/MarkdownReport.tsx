@@ -40,8 +40,38 @@ const isTableSep = (line: string): boolean =>
 const LEGACY_BIOMARKER_NOTE =
   '该历史报告采用旧版参考规则，当前不展示单次高低判断；请以同一设备、同一采集流程下的复测趋势为准。'
 
+const SPECIFIC_METHOD_SEGMENT =
+  /(?:^|[；;]\s*)具体方法(?:[（(][^）)]*[）)])?\s*[：:]\s*.*?(?=(?:[；;]\s*)?(?:训练剂量|反馈标准|调整原则|安全注意)\s*[：:]|$)/g
+
+function reportDisplayLines(text: string): string[] {
+  let inStrategySection = false
+  const visible: string[] = []
+
+  for (const original of text.split('\n')) {
+    const trimmed = original.trim()
+    if (/^##\s+/.test(trimmed)) {
+      inStrategySection = trimmed.includes('综合亚型界定与治疗策略')
+    }
+    if (/^\*\*亚型界定[：:]/.test(trimmed)) continue
+
+    if (inStrategySection && /^\s*\d+\.\s+/.test(original)) {
+      const prefix = original.match(/^\s*\d+\.\s+/)?.[0] || ''
+      const strategy = original
+        .slice(prefix.length)
+        .replace(SPECIFIC_METHOD_SEGMENT, '')
+        .replace(/^[；;\s]+|[；;\s]+$/g, '')
+        .replace(/[；;]\s*[；;]/g, '；')
+      if (!strategy) continue
+      visible.push(prefix + strategy)
+      continue
+    }
+    visible.push(original)
+  }
+  return visible
+}
+
 export default function MarkdownReport({ text }: { text: string }) {
-  const lines = text.split('\n')
+  const lines = reportDisplayLines(text)
   const blocks: JSX.Element[] = []
   let i = 0
   let key = 0

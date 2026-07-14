@@ -7,14 +7,14 @@ Mirrors ``大模型评估报告模板示例.docx``. Division of labour:
   vs the previous visit, and the 26-gesture candidate space. Numbers come from
   the DL predictions + ``biomarkers.extract`` and are *never* delegated.
 * **The LLM owns the clinical reasoning text** (see ``report.py::reason_clinical``):
-  per-biomarker 解读/治疗建议, subtype 界定, 治疗策略, 手势组合 + 剂量, 预警, etc.
+  per-biomarker 解读/治疗建议, 综合亚型界定, 治疗策略, 手势组合 + 剂量, 预警, etc.
   Its output is a JSON ``clinical`` dict (schema in ``CLINICAL_SCHEMA_HINT``)
   which this module *back-fills* into the fixed skeleton. The LLM cannot alter
   any measured value because the value columns are rendered from code, not from
   its output.
 * There is **no rule-engine fallback for the clinical text**: if the LLM is
   unavailable or returns text that fails ``validate_clinical`` (missing fields,
-  or a subtype whose 分期 prefix disagrees with the measured Brunnstrom stage),
+  or an overall subtype whose 分期 prefix disagrees with the measured Brunnstrom stage),
   the report is NOT rendered — the caller surfaces a "大模型不可用" error instead
   of a deterministic template that could mislead the reader.
 
@@ -39,9 +39,8 @@ import gestures
 CLINICAL_SCHEMA_HINT = """{
   "overall_interpretation": "总体分期及状态的临床解读（一句话，点明当前分期/过渡窗口与核心障碍）",
   "marker_text": { "<biomarker_key>": {"interpretation": "说明本次记录值、指标意义和同条件复测要求；没有有效常模时禁止判断偏高、偏低、正常或异常", "treatment_advice": "结合功能量表、动作表现和同条件复测给出训练/随访建议，不得仅凭单次设备特异量开具处方"}, ... },
-  "group_subtypes": { "emg": "肌电亚型界定（如：III期-屈肌优势型，协同开始解离）", "eeg": "脑电亚型界定（如：III期-中枢驱动不足型）", "imu": "运动学亚型界定（可选）" },
   "overall_subtype": "综合亚型界定（一句话，必须含五要素：分期 + 优势运动模式 + 中枢驱动特征 + 协同分离程度 + 关节活动度状态。如：III期-屈肌优势伴中枢驱动不足亚型，协同开始解离，但关节活动度严重受限）",
-  "treatment_strategy": ["每条都是一句富信息描述，必须覆盖六维度：①策略名称（短语概括核心目标）②具体方法（健侧/患侧/设备如何配合）③训练剂量（时间/频次/占比/辅助力度）④反馈标准（可量化阈值及奖励方式）⑤调整原则（需减少/替换/避免的训练）⑥安全注意（单次时长/疲劳程度/分次安排）", "..."],
+  "treatment_strategy": ["每条都是一句高层策略，覆盖五维度：①策略名称（短语概括核心目标）②训练剂量（时间/频次/占比/辅助力度）③反馈标准（可量化阈值及奖励方式）④调整原则（需减少/替换/避免的训练）⑤安全注意（单次时长/疲劳程度/分次安排）；禁止输出具体方法字段，具体动作放在后续训练计划中", "..."],
   "gesture_plan": [ {"name": "必须取自候选手势库", "purpose": "训练目的", "force": "辅助力度", "reps": "重复次数"} ]，至少6个手势（仅当提供了候选手势库时才需要；未提供则省略本字段）,
   "weekly_plan": [ {"day": "周一", "content": "训练内容（只能用上面 gesture_plan 中的手势）", "duration": "预计时长"} ]，必须覆盖周一至周日共7天（仅当提供了候选手势库时才需要；未提供则省略本字段）,
   "warnings": ["预警与特殊建议1", "..."],
@@ -340,17 +339,33 @@ def _enforce_marker_evidence_policy(
     }
 
 
+_SPECIFIC_METHOD_SEGMENT = re.compile(
+    r"(?:^|[；;]\s*)具体方法(?:[（(][^）)]*[）)])?\s*[：:]\s*.*?"
+    r"(?=(?:[；;]\s*)?(?:训练剂量|反馈标准|调整原则|安全注意)\s*[：:]|$)"
+)
+
+
+def _strip_specific_method(value: Any) -> str:
+    """Remove the duplicated implementation field from a strategy sentence."""
+    text = str(value or "").strip()
+    text = _SPECIFIC_METHOD_SEGMENT.sub("", text)
+    text = re.sub(r"^[；;\s]+|[；;\s]+$", "", text)
+    text = re.sub(r"[；;]\s*[；;]", "；", text)
+    return text.strip()
+
+
 def _normalize_strategy_item(v: Any) -> Optional[str]:
     if _nonempty_str(v):
-        return str(v).strip()
+        return _strip_specific_method(v) or None
     if isinstance(v, dict):
-        method = v.get("method") or v.get("strategy") or v.get("name") or v.get("策略")
-        desc = v.get("description") or v.get("content") or v.get("detail") or v.get("说明")
-        if _nonempty_str(method) and _nonempty_str(desc):
-            return f"{str(method).strip()}：{str(desc).strip()}"
-        values = [str(item).strip() for item in v.values() if _nonempty_str(item)]
+        method_keys = {"method", "specific_method", "具体方法", "方法"}
+        values = [
+            str(item).strip()
+            for key, item in v.items()
+            if str(key).strip() not in method_keys and _nonempty_str(item)
+        ]
         if values:
-            return "；".join(values)
+            return _strip_specific_method("；".join(values)) or None
     return None
 
 
@@ -391,7 +406,7 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
 
     The LLM owns ALL clinical text; there is no rule-engine fallback. Raises
     ``ClinicalUnavailable`` if the model output is missing required fields, leaves
-    any biomarker without interpretation/advice, or produces a subtype whose 分期
+    any biomarker without interpretation/advice, or produces an overall subtype whose 分期
     prefix disagrees with the measured Brunnstrom stage (the parrot-the-example
     failure mode). Gesture fields are only required/validated once the clinical
     team's 26-gesture library is ready; until then they render as a placeholder.
@@ -417,9 +432,7 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     if not isinstance(src_mt, dict):
         src_mt = {}
     marker_text: Dict[str, Dict[str, str]] = {}
-    groups_avail: Dict[str, int] = {}
     for group in context["biomarkers"].get("groups", []):
-        groups_avail.setdefault(group["key"], 0)
         for m in group["markers"]:
             key = m["key"]
             if m.get("available", True) is False:
@@ -428,7 +441,6 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
                     "treatment_advice": "—",
                 }
                 continue
-            groups_avail[group["key"]] += 1
             txt = _normalize_marker_text_entry(src_mt.get(key))
             if txt is None:
                 raise ClinicalUnavailable(f"生物标志物 {m['name']}（{key}）缺少解读或治疗建议")
@@ -436,25 +448,6 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
                 "interpretation": txt["interpretation"].strip(),
                 "treatment_advice": txt["treatment_advice"].strip(),
             })
-
-    # ── group subtypes: required only for modalities with ≥1 measured marker;
-    #    分期前缀必须与实测分期一致 ──
-    src_sub = clinical.get("group_subtypes")
-    if not isinstance(src_sub, dict):
-        src_sub = {}
-    group_subtypes: Dict[str, str] = {}
-    for gk in ("emg", "eeg"):
-        if groups_avail.get(gk, 0) == 0:
-            continue  # whole modality unavailable (e.g. device EEG) → don't require
-        sub = src_sub.get(gk)
-        if not _nonempty_str(sub):
-            raise ClinicalUnavailable(f"缺少 {gk} 亚型界定")
-        if prefix and not sub.lstrip().startswith(prefix):
-            raise ClinicalUnavailable(
-                f"{gk} 亚型分期（{sub.strip()[:8]}…）与实测 Brunnstrom {prefix} 不一致")
-        group_subtypes[gk] = sub.strip()
-    if _nonempty_str(src_sub.get("imu")):
-        group_subtypes["imu"] = src_sub["imu"].strip()
 
     # ── overall subtype: 五要素一句话，分期前缀必须一致 ──
     overall_subtype = clinical.get("overall_subtype")
@@ -477,7 +470,6 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     c: Dict[str, Any] = {
         "overall_interpretation": clinical["overall_interpretation"].strip(),
         "marker_text": marker_text,
-        "group_subtypes": group_subtypes,
         "overall_subtype": overall_subtype.strip(),
         "treatment_strategy": treatment_strategy,
         "warnings": warnings,
@@ -584,7 +576,7 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
                 txt.get("treatment_advice", "—"),
             ])
         out.append(_table(["标志物", "当前值", "解读", "训练/随访建议"], rows))
-        # per-group note (e.g. ROM is an estimate) + subtype. Each marker's note
+        # Per-group note (e.g. ROM is an estimate). Each marker's note
         # is itself a "；"-joined multi-fragment string, so dedupe at the FRAGMENT
         # level (preserving order) — otherwise shared fragments like "设备特异量"
         # / "Welch 谱…" repeat across markers in the footnote.
@@ -599,10 +591,6 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         if frags:
             out.append("")
             out.append("> " + "；".join(frags))
-        subtype = (c.get("group_subtypes") or {}).get(group["key"])
-        if subtype:
-            out.append("")
-            out.append(f"**亚型界定：** {subtype}")
         out.append("")
 
     # 三、综合亚型界定与治疗策略

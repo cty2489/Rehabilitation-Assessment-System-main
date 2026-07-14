@@ -126,6 +126,18 @@ def _numbered_text(line: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+_SPECIFIC_METHOD_SEGMENT = re.compile(
+    r"(?:^|[；;]\s*)具体方法(?:[（(][^）)]*[）)])?\s*[：:]\s*.*?"
+    r"(?=(?:[；;]\s*)?(?:训练剂量|反馈标准|调整原则|安全注意)\s*[：:]|$)"
+)
+
+
+def _strip_specific_method(value: Any) -> str:
+    text = _SPECIFIC_METHOD_SEGMENT.sub("", str(value or "").strip())
+    text = re.sub(r"^[；;\s]+|[；;\s]+$", "", text)
+    return re.sub(r"[；;]\s*[；;]", "；", text).strip()
+
+
 def _group_key_from_heading(text: str) -> Optional[str]:
     if "肌电" in text:
         return "emg"
@@ -168,7 +180,6 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
     parsed: Dict[str, Any] = {
         "overall_interpretation": None,
         "biomarker_text": {},
-        "group_subtypes": {},
         "overall_subtype": None,
         "treatment_strategy": [],
         "gesture_plan": [],
@@ -253,8 +264,6 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
 
         if line.startswith("**临床解读"):
             parsed["overall_interpretation"] = _md_text(line.split("：", 1)[-1])
-        elif line.startswith("**亚型界定") and current_group:
-            parsed["group_subtypes"][current_group] = _md_text(line.split("：", 1)[-1])
         elif "患者可归类为" in clean:
             m = re.search(r"患者可归类为：(.+)$", clean)
             if m:
@@ -264,7 +273,9 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
         elif collect_strategy:
             item = _numbered_text(clean)
             if item:
-                parsed["treatment_strategy"].append(item)
+                item = _strip_specific_method(item)
+                if item:
+                    parsed["treatment_strategy"].append(item)
         elif section == "warnings":
             item = _numbered_text(clean)
             if item:
@@ -372,13 +383,11 @@ def _biomarker_sections(assessment: Dict[str, Any], parsed: Dict[str, Any]) -> L
         grouped.setdefault(group_key, []).append(indicator)
 
     sections: List[Dict[str, Any]] = []
-    group_subtypes = parsed.get("group_subtypes") or {}
     for group_key in sorted(grouped, key=lambda g: _GROUP_ORDER.get(g, 99)):
         sections.append({
             "section_key": group_key,
             "section_name": _GROUP_LABELS.get(group_key) or group_key,
             "description": _GROUP_DESCRIPTIONS.get(group_key),
-            "subtype": group_subtypes.get(group_key),
             "indicators": grouped[group_key],
         })
     return sections
@@ -663,8 +672,6 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     ])
     for section in payload.get("biomarker_sections", []) or []:
         story.append(p(section.get("section_name"), h3))
-        if section.get("subtype"):
-            story.append(p(f"亚型界定：{section.get('subtype')}", note))
         indicators = section.get("indicators", []) or []
         legacy_only = bool(indicators) and all(
             marker.get("interpretation_status") == "legacy_hidden" for marker in indicators

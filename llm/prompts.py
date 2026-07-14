@@ -99,16 +99,16 @@ CLINICAL_SYSTEM_PROMPT = (
     "把单次值写成偏高、偏低、正常、异常、超标或处于范围内。运动平滑度 SPARC 的当前算法"
     "与文献常模尺度不同，同样不得直接比较。\n"
     "请你像医师一样【读数→判断→开方】，针对【这名患者的真实数值】给出：每个生物标志物的"
-    "解读与治疗建议、各模态亚型界定、综合亚型界定、治疗策略要点、预警与特殊建议、下次评估"
+    "解读与治疗建议、综合亚型界定、治疗策略要点、预警与特殊建议、下次评估"
     "时间。\n"
     "\n"
     "★ 防套模板（最高优先级）：本提示中所有 `<…>` 占位符、写作步骤与括号内说明【仅为格式"
     "示意】，严禁原样照抄或复述；你输出的每一句话都必须依据上方该患者的真实数值推导，换一"
     "名数值不同的患者其输出必须明显不同。严禁产出与具体数值无关的通用模板话术。\n"
     "★ 分期接地：分期判断必须严格等于输入中给定的 Brunnstrom 手分期（payload 的 stage / "
-    "stage_roman）。overall_subtype 与 group_subtypes 各模态亚型的分期前缀【必须】写成"
-    "「{stage_roman}期-…」，不得臆造其它分期；若客观分期较高（如已达较晚期），临床解读与"
-    "亚型也必须与之一致，不得描述成早期重症。\n"
+    "stage_roman）。overall_subtype 的分期前缀【必须】写成「{stage_roman}期-…」，不得臆造"
+    "其它分期；若客观分期较高（如已达较晚期），临床解读与综合亚型也必须与之一致，不得描述"
+    "成早期重症。\n"
     "\n"
     "硬性约束：\n"
     "1) 严禁修改任何给定数值；不得把 reference 元数据当作当前设备的诊断阈值；\n"
@@ -127,13 +127,11 @@ CLINICAL_SYSTEM_PROMPT = (
     "B) overall_subtype：必须是含五要素的一句话，按此骨架填空（占位符替换为基于本患者数值"
     "的判断，勿照抄）：「<stage_roman>期-<优势运动模式>伴<中枢驱动特征>亚型，<协同分离程度>，"
     "<关节活动度状态>」。\n"
-    "C) group_subtypes：emg/eeg（imu 可选）各给一句亚型界定，分期前缀同样写「<stage_roman>"
-    "期-…」，内容须与对应模态的标志物表现一致。\n"
-    "D) treatment_strategy：每条要点必须覆盖六维度——①策略名称 ②具体方法（健侧/患侧/设备"
-    "如何配合）③训练剂量（时间/频次/占比/辅助力度）④反馈标准（可量化阈值及奖励方式）"
-    "⑤调整原则（需减少/替换/避免的训练）⑥安全注意（单次时长/疲劳/分次安排），写成一句"
-    "富信息描述，且与本患者的标志物表现对应。\n"
-    "E) next_assessment 固定为：「7天后执行下一次居家评估。」\n"
+    "C) treatment_strategy：只输出高层策略，禁止输出“具体方法”字段，也不要描述具体动作步骤；"
+    "每条覆盖五维度——①策略名称 ②训练剂量（时间/频次/占比/辅助力度）③反馈标准"
+    "④调整原则（需减少/替换/避免的训练）⑤安全注意（单次时长/疲劳/分次安排）。具体动作与"
+    "设备配合放在后续 gesture_plan/weekly_plan 中，避免与训练计划重复。\n"
+    "D) next_assessment 固定为：「7天后执行下一次居家评估。」\n"
 )
 
 
@@ -169,11 +167,11 @@ COMPACT_CLINICAL_SYSTEM_PROMPT = (
     "1) overall_interpretation：1 句，80 字内。\n"
     "2) marker_text：对象；每个 key 的值必须是二元数组 [interpretation, treatment_advice]，"
     "两段均为短中文句，每段 70 字内；禁止把值写成普通字符串。\n"
-    "3) group_subtypes：至少覆盖有数据的 emg/eeg；每个值必须以「{stage_roman}期-」开头。\n"
-    "4) overall_subtype：1 句，必须以「{stage_roman}期-」开头，并包含运动模式、中枢驱动、"
+    "3) overall_subtype：1 句，必须以「{stage_roman}期-」开头，并包含运动模式、中枢驱动、"
     "协同分离、关节活动度状态。\n"
-    "5) treatment_strategy：3-5 条，每条 100 字内，包含方法、剂量、反馈/调整、安全注意。\n"
-    "6) warnings：1-3 条；next_assessment 固定为「7天后执行下一次居家评估。」\n"
+    "4) treatment_strategy：3-5 条，每条 100 字内，只包含策略名称、剂量、反馈/调整和安全"
+    "注意；禁止输出具体方法或动作步骤。\n"
+    "5) warnings：1-3 条；next_assessment 固定为「7天后执行下一次居家评估。」\n"
 )
 
 
@@ -249,7 +247,7 @@ def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[s
         # biomarkers payload is the bulk of the prompt.
         + _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         + f"\n\n本患者 Brunnstrom 手分期为第 {context.get('stage_roman', '')} 期，"
-        + "所有亚型界定的分期前缀必须与之一致。\n"
+        + "综合亚型界定的分期前缀必须与之一致。\n"
         + dropped_note
         + "\n【必须返回的 JSON Schema】\n"
         + schema_hint
@@ -269,7 +267,7 @@ def build_compact_clinical_reasoning_messages(context: Dict[str, object]) -> Lis
     clinical contract while making the emitted JSON smaller and easier to parse.
     """
     gesture_ready = bool(context.get("gesture_ready"))
-    biomarkers_payload, n_dropped, marker_keys, modality_keys = _filter_available_biomarkers(context)
+    biomarkers_payload, n_dropped, marker_keys, _ = _filter_available_biomarkers(context)
     stage = str(context.get("stage_roman", ""))
     system = COMPACT_CLINICAL_SYSTEM_PROMPT.replace("{stage_roman}", stage)
     if gesture_ready:
@@ -286,7 +284,6 @@ def build_compact_clinical_reasoning_messages(context: Dict[str, object]) -> Lis
         "stage": context.get("stage"),
         "stage_roman": context.get("stage_roman"),
         "marker_keys": marker_keys,
-        "required_modalities": [m for m in ("emg", "eeg") if m in modality_keys],
         "biomarkers": biomarkers_payload,
     }
     if gesture_ready:
@@ -295,7 +292,6 @@ def build_compact_clinical_reasoning_messages(context: Dict[str, object]) -> Lis
     compact_schema = {
         "overall_interpretation": "string",
         "marker_text": {key: ["interpretation", "treatment_advice"] for key in marker_keys},
-        "group_subtypes": {m: f"{stage}期-..." for m in payload["required_modalities"]},
         "overall_subtype": f"{stage}期-...",
         "treatment_strategy": ["string", "string", "string"],
         "warnings": ["string"],

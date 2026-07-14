@@ -72,9 +72,11 @@ def _valid_clinical(roman: str = "VI") -> dict:
             "m_eeg": {"interpretation": "相干偏低，中枢-外周耦合偏弱。",
                       "treatment_advice": "加运动想象与本体反馈。"},
         },
-        "group_subtypes": {"emg": f"{roman}期-屈肌优势型", "eeg": f"{roman}期-中枢驱动可型"},
         "overall_subtype": f"{roman}期-伸肌渐参与伴中枢驱动尚可亚型，协同接近正常，且活动度接近目标。",
-        "treatment_strategy": ["伸指训练：每日健侧镜像+患侧主动，单次30分钟。"],
+        "treatment_strategy": [
+            "策略名称：分离控制；具体方法：每日健侧镜像配合患侧主动；训练剂量：单次30分钟；"
+            "反馈标准：动作完成质量；调整原则：代偿时降低难度；安全注意：避免疲劳。"
+        ],
         "warnings": [],
     }
 
@@ -134,10 +136,28 @@ class ValidateClinicalTests(unittest.TestCase):
     def test_strategy_dict_items_are_normalized(self) -> None:
         clinical = _valid_clinical("VI")
         clinical["treatment_strategy"] = [
-            {"method": "物理治疗", "description": "进行针对性的等速训练。"},
+            {
+                "strategy": "分离控制优先",
+                "specific_method": "镜像配合患侧主动",
+                "dose": "单次20分钟",
+                "safety": "疲劳时停止",
+            },
         ]
         c = report_builder.validate_clinical(_context(6), clinical)
-        self.assertEqual(c["treatment_strategy"], ["物理治疗：进行针对性的等速训练。"])
+        self.assertEqual(c["treatment_strategy"], ["分离控制优先；单次20分钟；疲劳时停止"])
+
+    def test_group_subtypes_are_not_required_or_returned(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["group_subtypes"] = {"emg": "III期-旧肌电亚型"}
+        c = report_builder.validate_clinical(_context(6), clinical)
+        self.assertNotIn("group_subtypes", c)
+
+    def test_specific_method_segment_is_removed(self) -> None:
+        c = report_builder.validate_clinical(_context(6), _valid_clinical("VI"))
+        strategy = c["treatment_strategy"][0]
+        self.assertNotIn("具体方法", strategy)
+        self.assertNotIn("健侧镜像", strategy)
+        self.assertIn("训练剂量", strategy)
 
     def test_none_raises(self) -> None:
         with self.assertRaises(ClinicalUnavailable):
@@ -192,6 +212,9 @@ class RenderTests(unittest.TestCase):
         self.assertIn("同一患者在相同设备、相同采集流程下", md)
         self.assertIn("Brunnstrom手部分期", md)
         self.assertIn("手部肌张力（MAS）", md)
+        self.assertNotIn("**亚型界定：**", md)
+        self.assertNotIn("具体方法", md)
+        self.assertNotIn("健侧镜像", md)
 
 
 class PromptTests(unittest.TestCase):
@@ -212,6 +235,8 @@ class PromptTests(unittest.TestCase):
         self.assertIn("gesture_plan", sys_txt)
         self.assertIn("不得", sys_txt)
         self.assertIn("队列排名", sys_txt)
+        self.assertNotIn("group_subtypes", "\n".join(m["content"] for m in msgs))
+        self.assertIn("禁止输出“具体方法”字段", sys_txt)
 
     def test_compact_prompt_lists_marker_keys_and_schema(self) -> None:
         from llm.prompts import build_compact_clinical_reasoning_messages
@@ -223,6 +248,8 @@ class PromptTests(unittest.TestCase):
         self.assertIn('"m_emg":["interpretation","treatment_advice"]', joined)
         self.assertIn("每个值必须是 [解读, 治疗建议] 二元数组", joined)
         self.assertIn("VI期-", joined)
+        self.assertNotIn("group_subtypes", joined)
+        self.assertIn("禁止输出具体方法", joined)
 
 
 class BiomarkerReferenceTests(unittest.TestCase):

@@ -411,6 +411,11 @@ natural_language_summary
 患者在相同设备、相同采集流程下的连续复测才可用于趋势观察。当前接口不计算队列排名或
 百分位。
 
+报告不再输出 EMG、EEG、IMU 各自的模态亚型，只在
+`subtype_classification_and_treatment_strategy.subtype_classification.overall_subtype`
+保留综合亚型。`overall_strategies` 只包含策略名称、训练剂量、反馈/调整原则和安全注意，
+不包含“具体方法”；具体动作和设备配合由 `next_week_training_plan` 承载，避免重复。
+
 也可分别下载：
 
 ```bash

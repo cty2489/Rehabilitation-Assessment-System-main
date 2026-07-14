@@ -1,13 +1,13 @@
 """Full multi-section rehab report: deterministic skeleton + LLM clinical reasoning.
 
 The report mirrors ``大模型评估报告模板示例.docx`` (总体分期 / 生物标志物 /
-亚型界定 / 治疗策略 / 手势组合 / 预警 / 下次评估). Division of labour:
+综合亚型 / 治疗策略 / 手势组合 / 预警 / 下次评估). Division of labour:
 
   - ``report_builder`` owns the deterministic numeric skeleton (tables, the
     3 clinical indicators, biomarker measured values + evidence metadata, the
     26-gesture candidate space, change-trend vs the previous visit).
   - The LLM (this module) does the *clinical reasoning* over those numbers —
-    per-biomarker 解读/治疗建议, subtype, 治疗策略, 手势组合 + 剂量, 预警 — and
+    per-biomarker 解读/治疗建议, 综合 subtype, 治疗策略, 手势组合 + 剂量, 预警 — and
     returns a JSON ``clinical`` dict that ``report_builder`` back-fills into the
     fixed skeleton. The LLM cannot alter any measured value (value columns are
     rendered from code). Works WITHOUT fine-tuning (constrained structured
@@ -154,7 +154,6 @@ def _parse_clinical_json(text: str) -> Optional[Dict[str, Any]]:
                 schema_keys = {
                     "overall_interpretation",
                     "marker_text",
-                    "group_subtypes",
                     "overall_subtype",
                     "treatment_strategy",
                 }
@@ -478,7 +477,6 @@ def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = No
     }
 
     marker_text: Dict[str, Dict[str, str]] = {}
-    available_by_group = {"emg": 0, "eeg": 0, "imu": 0}
     for group in context.get("biomarkers", {}).get("groups", []) or []:
         gkey = group.get("key", "")
         focus, default_advice = group_phrase.get(gkey, ("该模态功能", "建议结合复测趋势调整训练剂量。"))
@@ -490,7 +488,6 @@ def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = No
                     "treatment_advice": "—",
                 }
                 continue
-            available_by_group[gkey] = available_by_group.get(gkey, 0) + 1
             value = marker.get("value")
             unit = marker.get("unit") or ""
             try:
@@ -507,14 +504,6 @@ def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = No
                 "treatment_advice": key_advice.get(key, default_advice),
             }
 
-    group_subtypes: Dict[str, str] = {}
-    if available_by_group.get("emg", 0):
-        group_subtypes["emg"] = f"{prefix}-外周肌肉协同与募集可量化型"
-    if available_by_group.get("eeg", 0):
-        group_subtypes["eeg"] = f"{prefix}-中枢驱动与半球协同需纵向观察型"
-    if available_by_group.get("imu", 0):
-        group_subtypes["imu"] = f"{prefix}-运动控制质量可追踪型"
-
     warn = "本报告的部分解读由保守规则后备生成；临床决策需结合医师查体与复测趋势。"
     if reason:
         warn += f" 后备触发原因：大模型结构化输出不可用。"
@@ -526,15 +515,14 @@ def _fallback_clinical(context: Dict[str, Any], reason: Optional[Exception] = No
             "需结合肌电、脑电和运动学指标继续观察协同分离、主动募集和运动质量。"
         ),
         "marker_text": marker_text,
-        "group_subtypes": group_subtypes,
         "overall_subtype": (
             f"{prefix}-主动运动可量化伴协同分离需巩固亚型，"
             "中枢驱动与外周肌肉募集可通过同设备复测持续追踪，关节活动度和运动平滑度需同步训练。"
         ),
         "treatment_strategy": [
-            "分离控制优先策略：以腕伸、伸指和慢速回中为核心，每次10-15分钟、每日2-3组，出现屈肌共同收缩或动作代偿时立即降低难度并增加休息。",
-            "中枢驱动强化策略：运动想象、镜像反馈与实际患侧主动助力动作配对，每轮3-5分钟，用动作完成度和肌电/运动学趋势作为反馈标准。",
-            "运动质量递进策略：先保证轨迹平滑和可控活动范围，再逐步提高速度与重复次数；若震颤、疲劳或张力升高，改为短组数、低负荷、分次完成。",
+            "策略名称：分离控制优先；训练剂量：每次10-15分钟、每日2-3组；反馈标准：以动作代偿和完成质量为准；调整原则：质量下降时降低难度；安全注意：组间充分休息。",
+            "策略名称：中枢驱动强化；训练剂量：每轮3-5分钟、分次完成；反馈标准：结合动作完成度与同条件复测趋势；调整原则：认知或运动疲劳时减少轮次；安全注意：避免连续长时训练。",
+            "策略名称：运动质量递进；训练剂量：短组数、低负荷起始；反馈标准：以轨迹平滑度和可控活动范围为准；调整原则：稳定后再增加速度与次数；安全注意：震颤、疲劳或张力增加时暂停。",
         ],
         "warnings": [warn],
         "not_recommended": [],
@@ -599,7 +587,7 @@ def _reason_clinical(
     """Get + validate the clinical-reasoning JSON from the LLM (remote or local).
 
     There is NO rule-engine fallback. The LLM owns all clinical text; if its
-    output is missing/invalid (parse failure, missing fields, or a subtype whose
+    output is missing/invalid (parse failure, missing fields, or an overall subtype whose
     分期 disagrees with the measured Brunnstrom stage — see
     ``report_builder.validate_clinical``), this **retries once** (local path
     re-samples for a different draft) and then **raises** so the caller surfaces
@@ -953,18 +941,15 @@ def _segment_marker_messages(
 def _segment_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
     stage = str(context.get("stage_roman", ""))
     groups = _available_groups(context)
-    modality_keys = [str(g.get("key")) for g in groups if g.get("key")]
     payload = {
         "patient": context.get("patient"),
         "predictions": context.get("predictions"),
         "stage": context.get("stage"),
         "stage_roman": stage,
         "biomarkers": {"groups": groups},
-        "required_modalities": [m for m in ("emg", "eeg") if m in modality_keys],
     }
     schema = {
         "overall_interpretation": "一句话总体临床解读，80字内",
-        "group_subtypes": {m: f"{stage}期-..." for m in payload["required_modalities"]},
         "overall_subtype": f"{stage}期-...",
         "treatment_strategy": ["3-5条，每条100字内"],
         "warnings": ["1-3条"],
@@ -975,9 +960,10 @@ def _segment_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
         "不要生成 marker_text，不要输出推理过程、Markdown 或代码块。"
         "设备特异量的单次值不能用于判断偏高、偏低、正常或异常，也不能证明变化方向；"
         "总体判断必须优先依据临床量表和动作表现，生物标志物仅作为待复测记录。"
-        f"group_subtypes 与 overall_subtype 必须以「{stage}期-」开头；"
+        f"overall_subtype 必须以「{stage}期-」开头；"
         "overall_subtype 需包含运动模式、中枢驱动、协同分离、关节活动度状态。"
-        "treatment_strategy 每条包含方法、剂量、反馈/调整、安全注意。"
+        "treatment_strategy 每条只包含策略名称、剂量、反馈/调整和安全注意，"
+        "禁止输出具体方法或动作步骤。"
     )
     user = (
         "【输入 JSON】\n"
@@ -1118,7 +1104,7 @@ def _reason_local_segmented_clinical_json(
         generation_prefill=summary_prefill,
         max_new_tokens=int(rm.cfg.get("segment_summary_max_new_tokens") or 1024),
         stop_on_json=stop_json,
-        required_top_keys=["overall_interpretation", "group_subtypes", "overall_subtype", "treatment_strategy"],
+        required_top_keys=["overall_interpretation", "overall_subtype", "treatment_strategy"],
     )
     summary = _parse_segment_json(summary_text)
     if not isinstance(summary, dict):

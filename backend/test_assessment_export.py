@@ -39,7 +39,7 @@ _REPORT = """# 智能康复评估报告
 
 **治疗策略要点：**
 
-1. 分离控制优先：每日进行腕伸与伸指训练。
+1. 策略名称：分离控制优先；具体方法：每日进行腕伸与伸指训练；训练剂量：每日2组；反馈标准：动作完成质量；调整原则：代偿时降低难度；安全注意：避免疲劳。
 
 ## 四、下周具体训练参数
 
@@ -149,6 +149,7 @@ class AssessmentExportPayloadTests(unittest.TestCase):
 
         sections = payload["biomarker_sections"]
         self.assertEqual(len(sections), 1)
+        self.assertNotIn("subtype", sections[0])
         indicators = sections[0]["indicators"]
         self.assertEqual([m["indicator_key"] for m in indicators], ["fds_iemg"])
         self.assertIsNone(indicators[0]["interpretation"])
@@ -163,6 +164,11 @@ class AssessmentExportPayloadTests(unittest.TestCase):
         policy = payload["biomarker_interpretation_policy"]
         self.assertEqual(policy["user_facing_reference_range"], "hidden")
         self.assertEqual(policy["single_measurement_rule"], "do_not_classify_normal_abnormal")
+        strategies = payload["subtype_classification_and_treatment_strategy"]["treatment_strategy"]["overall_strategies"]
+        self.assertEqual(len(strategies), 1)
+        self.assertNotIn("具体方法", strategies[0])
+        self.assertNotIn("腕伸与伸指", strategies[0])
+        self.assertIn("训练剂量", strategies[0])
 
     def test_new_four_column_report_preserves_evidence_aware_text(self) -> None:
         assessment = _assessment()
