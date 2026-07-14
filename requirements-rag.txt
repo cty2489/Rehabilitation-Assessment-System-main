@@ -1,0 +1,9 @@
+# Isolated RAG environment. Do not install these into the production backend
+# environment until the retrieval experiment has been accepted.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchvision==0.21.0+cpu
+sentence-transformers==5.6.0
+transformers==4.52.4
+sentencepiece==0.2.1
+qdrant-client==1.18.0

@@ -167,6 +167,7 @@ curl http://127.0.0.1:8000/api/health
 | `STARTUP_FLOW.md` | 已部署环境的启动、验证和演示流程 |
 | `docs/DEVICE_API.md` | 训练设备端 HTTPS 上传、轮询、下载、ACK 接口 |
 | `docs/RAG_INGESTION.md` | RAG 知识入库第一步、质量门禁和私有资料目录约定 |
+| `docs/RAG_RETRIEVAL.md` | RAG 第二步、BGE-M3 与 Qdrant 语义检索实验 |
 | `docs/schemas/device-job-v1.schema.json` | 设备任务状态响应的机器校验 schema |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
@@ -191,6 +192,7 @@ llm_gguf_server.py           手动可选 GGUF 大模型 HTTP 服务
 start_gguf_fallback.sh       手动可选 GGUF 回退/对照启动脚本
 requirements-gguf-server.txt 手动可选 GGUF 服务依赖
 requirements-llm-server.txt  transformers LLM 服务依赖
+requirements-rag.txt         独立RAG检索实验依赖，不安装到生产后端环境
 scripts/                     Windows 本地开发启动/检查脚本
 ```
 

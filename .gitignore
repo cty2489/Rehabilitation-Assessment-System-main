@@ -66,3 +66,4 @@ device_gateway/
 knowledge_base/raw/
 knowledge_base/runtime/
 knowledge_base/vector_store/
+rag_models/
