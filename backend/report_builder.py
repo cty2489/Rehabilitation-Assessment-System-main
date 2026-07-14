@@ -3,7 +3,7 @@
 Mirrors ``大模型评估报告模板示例.docx``. Division of labour:
 
 * **This module owns the deterministic skeleton**: section titles, the numeric
-  columns of every table (指标 / 当前值 / 参考范围), patient info, change-trend
+  columns of every table (指标 / 当前值), patient info, change-trend
   vs the previous visit, and the 26-gesture candidate space. Numbers come from
   the DL predictions + ``biomarkers.extract`` and are *never* delegated.
 * **The LLM owns the clinical reasoning text** (see ``report.py::reason_clinical``):
@@ -26,8 +26,10 @@ Public API:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional
 
+from biomarker_refs import marker_ref, normalize_evidence_note
 from schemas import PatientInfo, PredictionResult
 
 import gestures
@@ -36,7 +38,7 @@ import gestures
 # parser share one source of truth).
 CLINICAL_SCHEMA_HINT = """{
   "overall_interpretation": "总体分期及状态的临床解读（一句话，点明当前分期/过渡窗口与核心障碍）",
-  "marker_text": { "<biomarker_key>": {"interpretation": "针对该标志物当前值相对其参考范围的高低，给出具体解读（每个标志物各不相同）", "treatment_advice": "针对该标志物的、与解读强绑定的差异化治疗建议（禁止套用统一句式）"}, ... },
+  "marker_text": { "<biomarker_key>": {"interpretation": "说明本次记录值、指标意义和同条件复测要求；没有有效常模时禁止判断偏高、偏低、正常或异常", "treatment_advice": "结合功能量表、动作表现和同条件复测给出训练/随访建议，不得仅凭单次设备特异量开具处方"}, ... },
   "group_subtypes": { "emg": "肌电亚型界定（如：III期-屈肌优势型，协同开始解离）", "eeg": "脑电亚型界定（如：III期-中枢驱动不足型）", "imu": "运动学亚型界定（可选）" },
   "overall_subtype": "综合亚型界定（一句话，必须含五要素：分期 + 优势运动模式 + 中枢驱动特征 + 协同分离程度 + 关节活动度状态。如：III期-屈肌优势伴中枢驱动不足亚型，协同开始解离，但关节活动度严重受限）",
   "treatment_strategy": ["每条都是一句富信息描述，必须覆盖六维度：①策略名称（短语概括核心目标）②具体方法（健侧/患侧/设备如何配合）③训练剂量（时间/频次/占比/辅助力度）④反馈标准（可量化阈值及奖励方式）⑤调整原则（需减少/替换/避免的训练）⑥安全注意（单次时长/疲劳程度/分次安排）", "..."],
@@ -48,6 +50,44 @@ CLINICAL_SCHEMA_HINT = """{
 
 
 _SIDE_PARALYSIS = {"左": "左", "右": "右", "L": "左", "R": "右"}
+
+
+def _reference_context(key: str) -> Dict[str, Any]:
+    """Return prompt/export metadata without presenting it as a clinical range."""
+    ref = marker_ref(key)
+    if ref is None:
+        return {
+            "type": "unknown",
+            "absolute_comparison_applicable": False,
+            "display_in_report": False,
+        }
+    return {
+        "type": ref["reference_type"],
+        "absolute_comparison_applicable": bool(ref["absolute_comparison_applicable"]),
+        "expected_direction": ref["expected_direction"],
+        "low": ref["lo"],
+        "high": ref["hi"],
+        "confidence": ref["confidence"],
+        "source_ids": list(ref["source"]),
+        "note": ref["note"],
+        "display_in_report": False,
+    }
+
+
+def _decorate_biomarkers(biomarkers: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach evidence metadata to a copy of the prompt-facing marker rows."""
+    groups = []
+    for group in biomarkers.get("groups", []) or []:
+        markers = []
+        for marker in group.get("markers", []) or []:
+            decorated = dict(marker)
+            decorated.pop("ref_range", None)
+            if decorated.get("note"):
+                decorated["note"] = normalize_evidence_note(decorated["note"])
+            decorated["reference"] = _reference_context(str(marker.get("key") or ""))
+            markers.append(decorated)
+        groups.append({**group, "markers": markers})
+    return {**biomarkers, "groups": groups}
 
 
 # --------------------------------------------------------------------------- #
@@ -83,12 +123,12 @@ def build_context(
     prev = history or {}
     overall_rows = [
         {
-            "metric": "Brunnstrom分期",
+            "metric": "Brunnstrom手部分期",
             "value": f"{_roman(stage)}期",
             "trend": _trend(stage, prev.get("hand_function"), fmt="{:.0f}", unit="期"),
         },
         {
-            "metric": "肌张力（MAS）",
+            "metric": "手部肌张力（MAS）",
             "value": f"手部{predictions.hand_tone}级",
             "trend": _tone_trend(predictions.hand_tone, prev.get("hand_tone")),
         },
@@ -120,7 +160,7 @@ def build_context(
         "stage": stage,
         "stage_roman": _roman(stage),
         "overall_rows": overall_rows,
-        "biomarkers": biomarkers,           # groups + flat (from biomarkers.extract)
+        "biomarkers": _decorate_biomarkers(biomarkers),
         "gesture_library": gestures.gesture_names(),
         "generated_at": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d"),
     }
@@ -230,6 +270,76 @@ def _normalize_marker_text_entry(v: Any) -> Optional[Dict[str, str]]:
     return None
 
 
+_UNSUPPORTED_ABSOLUTE_CLAIM = re.compile(
+    r"偏高|偏低|较高|较低|过高|过低|高于|低于|正常范围|范围内|超标|异常值|募集不足"
+)
+_EVIDENCE_AWARE_WORDS = ("复测", "同设备", "同流程", "单次", "不能直接", "不作")
+_CONDITIONAL_ADVICE_WORDS = ("复测", "结合", "若", "根据", "治疗师", "医师")
+_GROUP_FOLLOW_UP = {
+    "emg": "后续同条件复测应保持电极位置、设备增益和任务一致，并结合手部MAS、FMA手部分数及动作表现调整训练。",
+    "eeg": "后续同条件复测应保持导联、任务和伪迹处理一致，并结合运动表现由康复治疗师调整训练。",
+    "imu": "后续同条件复测应保持传感器位置和动作任务一致，并结合轨迹质量及功能量表调整训练。",
+}
+
+
+def _marker_value_text(marker: Dict[str, Any]) -> str:
+    value = marker.get("value", "—")
+    unit = str(marker.get("unit") or "").strip()
+    return f"{value}{(' ' + unit) if unit else ''}"
+
+
+def _enforce_marker_evidence_policy(
+    marker: Dict[str, Any],
+    group_key: str,
+    text: Dict[str, str],
+) -> Dict[str, str]:
+    """Neutralise unsupported single-value judgements before report rendering.
+
+    Prompt instructions improve model behaviour, but this deterministic gate is
+    the final protection against wording such as "偏高" or "正常范围内" when
+    the current device/protocol has no valid absolute comparator.
+    """
+    ref = marker.get("reference") or {}
+    rtype = str(ref.get("type") or "unknown")
+    if rtype == "unknown" or ref.get("absolute_comparison_applicable"):
+        return text
+
+    interpretation = text["interpretation"].strip()
+    advice = text["treatment_advice"].strip()
+    interpretation_ok = (
+        not _UNSUPPORTED_ABSOLUTE_CLAIM.search(interpretation)
+        and any(word in interpretation for word in _EVIDENCE_AWARE_WORDS)
+    )
+    advice_ok = any(word in advice for word in _CONDITIONAL_ADVICE_WORDS)
+    if interpretation_ok and advice_ok:
+        return text
+
+    value_text = _marker_value_text(marker)
+    if rtype == "directional_trend":
+        direction = {"increase": "升高", "decrease": "下降"}.get(
+            str(ref.get("expected_direction") or "")
+        )
+        direction_text = f"文献仅提示康复过程中通常{direction}" if direction else "文献仅提供方向性证据"
+        safe_interpretation = (
+            f"本次记录值为{value_text}；{direction_text}，单次结果不能判断变化趋势，需同条件复测。"
+        )
+    elif rtype == "healthy_norm":
+        safe_interpretation = (
+            f"本次记录值为{value_text}；当前算法与文献常模计算尺度不同，不能直接比较，需同条件复测。"
+        )
+    else:
+        safe_interpretation = (
+            f"本次记录值为{value_text}，仅作为同设备、同流程复测基线；单次结果不判断正常或异常。"
+        )
+    return {
+        "interpretation": safe_interpretation,
+        "treatment_advice": _GROUP_FOLLOW_UP.get(
+            group_key,
+            "后续在相同采集条件下复测，并结合临床量表与动作表现调整训练。",
+        ),
+    }
+
+
 def _normalize_strategy_item(v: Any) -> Optional[str]:
     if _nonempty_str(v):
         return str(v).strip()
@@ -322,10 +432,10 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
             txt = _normalize_marker_text_entry(src_mt.get(key))
             if txt is None:
                 raise ClinicalUnavailable(f"生物标志物 {m['name']}（{key}）缺少解读或治疗建议")
-            marker_text[key] = {
+            marker_text[key] = _enforce_marker_evidence_policy(m, group["key"], {
                 "interpretation": txt["interpretation"].strip(),
                 "treatment_advice": txt["treatment_advice"].strip(),
-            }
+            })
 
     # ── group subtypes: required only for modalities with ≥1 measured marker;
     #    分期前缀必须与实测分期一致 ──
@@ -446,6 +556,11 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     # 关键生物标志物输出与解读
     out.append("### 2. 关键生物标志物输出与解读")
     out.append("")
+    out.append(
+        "> 说明：生物标志物受设备与采集流程影响。本报告仅用于同一患者在相同设备、"
+        "相同采集流程下的连续变化观察，不作为正常或异常的诊断阈值。"
+    )
+    out.append("")
     group_titles = {"emg": "（1）肌电标志物（基于患侧被动评估）",
                     "eeg": "（2）脑电标志物（基于运动想象任务）",
                     "imu": "（3）运动学标志物（IMU）"}
@@ -465,11 +580,10 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
             rows.append([
                 m["name"],
                 value_disp,
-                m["ref_range"],
                 txt.get("interpretation", "—"),
                 txt.get("treatment_advice", "—"),
             ])
-        out.append(_table(["标志物", "当前值", "参考范围", "解读", "治疗建议"], rows))
+        out.append(_table(["标志物", "当前值", "解读", "训练/随访建议"], rows))
         # per-group note (e.g. ROM is an estimate) + subtype. Each marker's note
         # is itself a "；"-joined multi-fragment string, so dedupe at the FRAGMENT
         # level (preserving order) — otherwise shared fragments like "设备特异量"

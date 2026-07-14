@@ -161,6 +161,18 @@ class ValidateClinicalTests(unittest.TestCase):
         with self.assertRaises(ClinicalUnavailable):
             report_builder.validate_clinical(_context(6), bad)
 
+    def test_device_specific_marker_cannot_keep_unsupported_high_low_claim(self) -> None:
+        biomarkers = _biomarkers()
+        biomarkers["groups"][0]["markers"][0]["key"] = "fds_iemg"
+        context = report_builder.build_context(_patient(), _predictions(6), biomarkers)
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["fds_iemg"] = clinical["marker_text"].pop("m_emg")
+        result = report_builder.validate_clinical(context, clinical)
+        text = result["marker_text"]["fds_iemg"]
+        self.assertNotIn("偏高", text["interpretation"])
+        self.assertIn("单次结果不判断正常或异常", text["interpretation"])
+        self.assertIn("同条件", text["treatment_advice"])
+
 
 class RenderTests(unittest.TestCase):
     def test_footnote_fragments_deduped(self) -> None:
@@ -172,6 +184,14 @@ class RenderTests(unittest.TestCase):
         self.assertIn("私有B", md)
         # Gesture library not ready → placeholder, not a fabricated plan.
         self.assertIn("手势库待补充", md)
+
+    def test_biomarker_table_hides_reference_range_and_labels_hand_scales(self) -> None:
+        md = report_builder.render_markdown(_context(6), _valid_clinical("VI"))
+        self.assertNotIn("| 标志物 | 当前值 | 参考范围 |", md)
+        self.assertIn("| 标志物 | 当前值 | 解读 | 训练/随访建议 |", md)
+        self.assertIn("同一患者在相同设备、相同采集流程下", md)
+        self.assertIn("Brunnstrom手部分期", md)
+        self.assertIn("手部肌张力（MAS）", md)
 
 
 class PromptTests(unittest.TestCase):
@@ -190,6 +210,8 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("III期-屈肌优势伴中枢驱动不足亚型，协同开始解离", sys_txt)
         # Gesture library not ready → prompt tells the model to omit gesture fields.
         self.assertIn("gesture_plan", sys_txt)
+        self.assertIn("不得", sys_txt)
+        self.assertIn("队列排名", sys_txt)
 
     def test_compact_prompt_lists_marker_keys_and_schema(self) -> None:
         from llm.prompts import build_compact_clinical_reasoning_messages
@@ -201,6 +223,21 @@ class PromptTests(unittest.TestCase):
         self.assertIn('"m_emg":["interpretation","treatment_advice"]', joined)
         self.assertIn("每个值必须是 [解读, 治疗建议] 二元数组", joined)
         self.assertIn("VI期-", joined)
+
+
+class BiomarkerReferenceTests(unittest.TestCase):
+    def test_sparc_literature_range_is_not_treated_as_directly_comparable(self) -> None:
+        from biomarker_refs import judge, marker_ref
+
+        ref = marker_ref("movement_smoothness_sparc")
+        self.assertIsNotNone(ref)
+        self.assertFalse(ref["absolute_comparison_applicable"])
+        self.assertNotIn("参考范围内", judge("movement_smoothness_sparc", -1.44))
+
+    def test_device_specific_value_has_no_user_facing_absolute_range(self) -> None:
+        from biomarker_refs import ref_display
+
+        self.assertEqual(ref_display("fds_iemg"), "不适用；仅支持同设备、同流程复测")
 
 
 if __name__ == "__main__":

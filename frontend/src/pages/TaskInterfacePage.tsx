@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import PatientForm from '../components/PatientForm'
+import MarkdownReport from '../components/MarkdownReport'
 import ProgressSteps from '../components/ProgressSteps'
 import ResultsPanel from '../components/ResultsPanel'
 import ReportDisplay from '../components/ReportDisplay'
@@ -631,9 +632,9 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
                 <th>患者</th>
                 <th>来源</th>
                 <th>Trials</th>
-                <th>FMA-UE</th>
-                <th>肌张力</th>
-                <th>Brunnstrom</th>
+                <th>FMA 手部</th>
+                <th>手部 MAS</th>
+                <th>Brunnstrom 手部</th>
                 <th>Model</th>
                 <th>数据包</th>
                 <th>报告</th>
@@ -763,9 +764,9 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
           {selected.report && (
             <details>
               <summary>AI report</summary>
-              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto', fontSize: 13 }}>
-                {selected.report}
-              </pre>
+              <div className="report-display" style={{ marginTop: 12, maxHeight: 480, overflow: 'auto' }}>
+                <MarkdownReport text={selected.report} />
+              </div>
             </details>
           )}
         </div>

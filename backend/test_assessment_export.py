@@ -151,8 +151,36 @@ class AssessmentExportPayloadTests(unittest.TestCase):
         self.assertEqual(len(sections), 1)
         indicators = sections[0]["indicators"]
         self.assertEqual([m["indicator_key"] for m in indicators], ["fds_iemg"])
-        self.assertEqual(indicators[0]["interpretation"], "屈肌激活偏高。")
-        self.assertEqual(indicators[0]["treatment_advice"], "控制屈肌代偿。")
+        self.assertIsNone(indicators[0]["interpretation"])
+        self.assertIsNone(indicators[0]["treatment_advice"])
+        self.assertEqual(indicators[0]["interpretation_status"], "legacy_hidden")
+        self.assertFalse(indicators[0]["reference_range"]["display"])
+        self.assertIsNone(indicators[0]["reference_range"]["text"])
+        self.assertEqual(indicators[0]["reference_range"]["type"], "none")
+        self.assertFalse(indicators[0]["reference_range"]["absolute_comparison_applicable"])
+        self.assertNotIn("队列", indicators[0]["reference_range"]["note"])
+        self.assertIn("同一患者", indicators[0]["reference_range"]["note"])
+        policy = payload["biomarker_interpretation_policy"]
+        self.assertEqual(policy["user_facing_reference_range"], "hidden")
+        self.assertEqual(policy["single_measurement_rule"], "do_not_classify_normal_abnormal")
+
+    def test_new_four_column_report_preserves_evidence_aware_text(self) -> None:
+        assessment = _assessment()
+        assessment["report"] = _REPORT.replace(
+            "| 标志物 | 当前值 | 参考范围 | 解读 | 治疗建议 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| 指浅屈肌积分肌电 | 1.2 uV.s | 设备特异量 | 屈肌激活偏高。 | 控制屈肌代偿。 |\n"
+            "| 缺失指标 | — | 设备特异量 | 本次数据不足，未予解读 | — |",
+            "| 标志物 | 当前值 | 解读 | 训练/随访建议 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 指浅屈肌积分肌电 | 1.2 uV.s | 本次值用于同条件复测。 | 结合功能量表调整训练。 |\n"
+            "| 缺失指标 | — | 本次数据不足，未予解读 | — |",
+        )
+        payload = assessment_export.build_result_payload(assessment)
+        marker = payload["biomarker_sections"][0]["indicators"][0]
+        self.assertEqual(marker["interpretation"], "本次值用于同条件复测。")
+        self.assertEqual(marker["treatment_advice"], "结合功能量表调整训练。")
+        self.assertEqual(marker["interpretation_status"], "available")
 
     def test_report_pdf_can_be_written_from_v2_payload(self) -> None:
         payload = assessment_export.build_result_payload(_assessment())

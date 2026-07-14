@@ -393,6 +393,7 @@ patient_basic_info
 stage_assessment
 clinical_scores
 biomarker_coverage
+biomarker_interpretation_policy
 biomarker_sections
 subtype_classification_and_treatment_strategy
 next_week_training_plan
@@ -400,9 +401,15 @@ warnings_and_recommendations
 natural_language_summary
 ```
 
-其中 `biomarker_sections[].indicators[]` 已把每个可计算指标的当前值、参考范围、
-解读和治疗建议放在同一个对象中；数据不足或当前采集格式暂不支持的指标不会生成
-临床解读，只会进入 `biomarker_coverage.missing_keys`。
+其中 `biomarker_sections[].indicators[]` 已把每个可计算指标的当前值、解读和训练/随访
+建议放在同一个对象中。`reference_range` 只保留证据类型、适用性、方向和来源 ID 等审计
+元数据，并明确 `display=false`；网页和 PDF 不把它显示为临床参考范围。数据不足或当前
+采集格式暂不支持的指标不会生成临床解读，只会进入
+`biomarker_coverage.missing_keys`。
+
+`biomarker_interpretation_policy` 规定：单次设备特异量不得用于判断正常或异常，只有同一
+患者在相同设备、相同采集流程下的连续复测才可用于趋势观察。当前接口不计算队列排名或
+百分位。
 
 也可分别下载：
 

@@ -20,7 +20,7 @@ class PredictionResult(BaseModel):
     FMA_UE: float = Field(..., ge=0.0, le=20.0, description="FMA手部分数")
     BI: float = Field(..., ge=0.0, le=100.0, description="旧记录兼容字段；当前在线报告不展示")
     hand_tone: str = Field(..., description='手部肌张力："0"/"1"/"1+"/"2"/"3"/"4"')
-    hand_function: int = Field(..., ge=1, le=6, description="Brunnstrom分期 1–6")
+    hand_function: int = Field(..., ge=1, le=6, description="Brunnstrom手部分期 1–6")
 
 
 class AssessSessionResponse(BaseModel):

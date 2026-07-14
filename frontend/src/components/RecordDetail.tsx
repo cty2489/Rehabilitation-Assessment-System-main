@@ -5,7 +5,7 @@ import { fmtDateTime } from '../util'
 import MarkdownReport from './MarkdownReport'
 
 const HAND_TONE_DESC: Record<string, string> = {
-  '0': '正常张力',
+  '0': '未见肌张力增高',
   '1': '轻度增高',
   '1+': '轻中度增高',
   '2': '中度增高',
@@ -216,7 +216,6 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
                   <th>指标</th>
                   <th>值</th>
                   <th>单位</th>
-                  <th>参考范围</th>
                   <th>有效试次</th>
                 </tr>
               </thead>
@@ -230,7 +229,6 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
                     </td>
                     <td>{marker.value_text || '—'}</td>
                     <td>{marker.unit || '—'}</td>
-                    <td>{marker.ref_range || '—'}</td>
                     <td>{marker.n_valid ?? '—'}</td>
                   </tr>
                 ))}

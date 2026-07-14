@@ -1610,7 +1610,7 @@ body::before {
 }
 .record-head:hover { background: var(--line-soft); }
 .record-time { font-weight: 600; color: var(--ink-900); font-size: 13.5px; flex-shrink: 0; }
-.record-summary { color: var(--ink-500); font-size: 13px; flex: 1; }
+.record-summary { color: var(--ink-500); font-size: 13px; line-height: 1.45; flex: 1; min-width: 0; }
 .record-caret { color: var(--ink-300); }
 .record-detail { padding: 16px; }
 .record-detail-toolbar {

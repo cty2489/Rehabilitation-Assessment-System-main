@@ -79,8 +79,8 @@ def build_chat_messages(
 # Structured clinical-reasoning prompt (full multi-section report).            #
 #                                                                             #
 # Unlike the legacy one-paragraph skeleton above, this asks the model to act   #
-# as a rehab physician over ALL numbers (4 indicators + every digital          #
-# biomarker + its per-stage reference range + the 26-gesture library) and      #
+# as a rehab physician over ALL numbers (3 indicators + every digital          #
+# biomarker + its evidence metadata + the 26-gesture library) and              #
 # return a STRUCTURED JSON of clinical text only — interpretations, treatment  #
 # advice, subtype, strategy, gesture plan + dosing, weekly plan, warnings.     #
 # The caller back-fills this text into a fixed numeric skeleton, so the model  #
@@ -91,14 +91,13 @@ import json as _json
 
 
 CLINICAL_SYSTEM_PROMPT = (
-    "你是一名资深康复医学医师。下面给你一名脑卒中偏瘫患者的多模态评估数值：四项临床"
-    "评估指标、26 项数字生物标志物（含其文献参考范围）。\n"
-    "重要：26 项生物标志物的参考范围分三类——①少数项（如运动平滑度 SPARC）有【健康常模"
-    "区间】；②部分项（如皮层-肌肉相干、半球间相干、半球不对称指数、前额叶 θ/β、震颤指数）"
-    "文献仅给【恢复方向（↑/↓）】而无绝对阈值；③多数项（原始 EMG 电压/RMS、四块肌 IEMG、"
-    "腕/指共收缩指数 CCI、四块肌中位频率 MDF、IMU 陀螺角速度、运动相关功率变化）为本研究"
-    "设备/协议特异量，文献【无标准参考范围】，且部分量真实与模拟数据相差数量级，其绝对值"
-    "仅供方向/队列内排名参考。\n"
+    "你是一名资深康复医学医师。下面给你一名脑卒中偏瘫患者的多模态评估数值：三项临床"
+    "评估指标、26 项数字生物标志物（含证据类型和适用边界）。\n"
+    "重要：多数生物标志物为设备/协议特异量；部分指标文献只给出康复过程中的期望方向，"
+    "不提供绝对阈值。当前系统没有经验证的本地常模，也没有在报告中计算队列百分位。即使"
+    "输入里保留文献范围元数据，只要 reference.absolute_comparison_applicable=false，就不得"
+    "把单次值写成偏高、偏低、正常、异常、超标或处于范围内。运动平滑度 SPARC 的当前算法"
+    "与文献常模尺度不同，同样不得直接比较。\n"
     "请你像医师一样【读数→判断→开方】，针对【这名患者的真实数值】给出：每个生物标志物的"
     "解读与治疗建议、各模态亚型界定、综合亚型界定、治疗策略要点、预警与特殊建议、下次评估"
     "时间。\n"
@@ -112,21 +111,19 @@ CLINICAL_SYSTEM_PROMPT = (
     "亚型也必须与之一致，不得描述成早期重症。\n"
     "\n"
     "硬性约束：\n"
-    "1) 严禁修改任何给定的数值与参考范围，只产出文字判断与方案；\n"
-    "2) 治疗策略必须与「总体分期 + 各生物标志物相对其参考范围或恢复方向」一致"
-    "（屈/伸肌 IEMG 比偏大=屈肌主导→加大伸指比例；腕/指共收缩指数偏高→避免快速抓放并先"
-    "牵伸；中枢驱动不足（皮层-肌肉/半球间相干低、半球不对称指数大）→强化运动想象与镜像反馈）；\n"
+    "1) 严禁修改任何给定数值；不得把 reference 元数据当作当前设备的诊断阈值；\n"
+    "2) 治疗策略必须结合总体分期、FMA手部分数、手部MAS、动作表现和同条件复测趋势。"
+    "不得仅凭一次设备特异量推导屈肌主导、中枢驱动不足或直接开具训练处方；\n"
     "3) 必须严格输出符合给定 JSON Schema 的【单个 JSON 对象】，不要输出多余文字、不要"
     "使用代码块标记。\n"
     "\n"
     "写作要求（务必逐项满足）：\n"
-    "A) marker_text：逐个生物标志物给【各不相同】的 interpretation 与 treatment_advice，"
-    "二者都要与该标志物当前值相对其参考范围/恢复方向强绑定；【严禁】所有标志物套用同一"
-    "句话术。对于①有健康常模的项，按高于/处于/低于常模解读；对于②③【无标准参考范围】的"
-    "项，按以下【写作步骤】组织（步骤本身不要照抄成文字）：先点明该指标当前是偏高/偏低或"
-    "处于何方向 → 声明「文献无标准参考范围（设备特异量）」→ 给出康复期望方向（↑或↓）→ "
-    "结合相关肌群/相邻模态做组合解释 → 承认其不确定性 → 给出后续随访/训练建议；不得对无阈"
-    "值的项硬下「超标/正常」结论。\n"
+    "A) marker_text：逐个生物标志物给 interpretation 与 treatment_advice。若"
+    "absolute_comparison_applicable=false，interpretation 只能说明本次记录值、指标意义、"
+    "文献期望方向（若有）以及同设备同流程复测要求；禁止写偏高、偏低、较高、较低、正常、"
+    "异常、超标、范围内或募集不足。单次值不能证明上升或下降。treatment_advice 必须写成"
+    "结合临床量表/动作表现或复测结果后的条件性建议，不得仅凭该数值直接开方。严禁声称已做"
+    "队列排名或百分位分析。\n"
     "B) overall_subtype：必须是含五要素的一句话，按此骨架填空（占位符替换为基于本患者数值"
     "的判断，勿照抄）：「<stage_roman>期-<优势运动模式>伴<中枢驱动特征>亚型，<协同分离程度>，"
     "<关节活动度状态>」。\n"
@@ -164,8 +161,10 @@ COMPACT_CLINICAL_SYSTEM_PROMPT = (
     "核心原则：所有判断必须来自输入数值；不得修改数值；Brunnstrom 分期必须严格使用"
     "输入的 stage_roman；marker_text 只能覆盖 marker_keys 中列出的生物标志物，禁止加入"
     "FMA_UE、hand_tone、hand_function 等临床预测项。\n"
-    "重要：多数 EMG/EEG/IMU 生物标志物是设备/协议特异量，文献没有标准绝对阈值；"
-    "写作时应说明方向、趋势和随访意义，不要硬判“正常/超标”。\n"
+    "重要：多数 EMG/EEG/IMU 生物标志物是设备/协议特异量。只要"
+    "reference.absolute_comparison_applicable=false，就不得写偏高、偏低、正常、异常、"
+    "超标、范围内或募集不足；单次值不能证明变化方向，也不得声称已做队列排名。应说明本次"
+    "记录值和同设备同流程复测要求，训练建议必须结合量表、动作表现或复测结果。\n"
     "字段规则：\n"
     "1) overall_interpretation：1 句，80 字内。\n"
     "2) marker_text：对象；每个 key 的值必须是二元数组 [interpretation, treatment_advice]，"

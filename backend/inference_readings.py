@@ -11,7 +11,7 @@ from typing import Dict
 
 # Hand MAS (Modified Ashworth) — 6 ordinal grades.
 HAND_TONE_READING: Dict[str, str] = {
-    "0": "肌张力正常，被动活动全程无阻力增加",
+    "0": "被动活动时未见肌张力增加",
     "1": "肌张力轻度增高，被动活动末端可触及轻微卡顿",
     "1+": "肌张力轻中度增高，被动活动前半程出现卡顿、后半程仍可活动",
     "2": "肌张力中度增高，整个活动范围内阻力明显，但肢体仍易于被动活动",

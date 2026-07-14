@@ -5,7 +5,7 @@ interface Props {
 }
 
 const HAND_TONE_DESC: Record<string, string> = {
-  '0': '正常张力',
+  '0': '未见肌张力增高',
   '1': '轻度增高',
   '1+': '轻中度增高',
   '2': '中度增高',

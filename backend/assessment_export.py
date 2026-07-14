@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from biomarker_refs import marker_ref
+
 SCHEMA_VERSION = "rehab.assessment_result.v2"
 
 _GROUP_LABELS = {
@@ -35,6 +37,11 @@ _GROUP_DESCRIPTIONS = {
 }
 
 _GROUP_ORDER = {"emg": 0, "eeg": 1, "imu": 2}
+
+_BIOMARKER_DISPLAY_NOTE = (
+    "生物标志物受设备与采集流程影响，仅用于同一患者在相同设备、相同采集流程下的连续变化观察，"
+    "不作为正常或异常的诊断阈值。"
+)
 
 
 def export_root() -> Path:
@@ -206,8 +213,23 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
                             group_map[row[0]] = {
                                 "current_value_text": row[1],
                                 "reference_range_text": row[2],
-                                "interpretation": row[3],
-                                "treatment_advice": row[4],
+                                "interpretation": None,
+                                "treatment_advice": None,
+                                "legacy_reference_rule": True,
+                            }
+                elif (
+                    headers[:3] == ["标志物", "当前值", "解读"]
+                    and len(headers) >= 4
+                    and headers[3] in {"训练/随访建议", "治疗建议"}
+                    and current_group
+                ):
+                    group_map = parsed["biomarker_text"].setdefault(current_group, {})
+                    for row in rows:
+                        if len(row) >= 4:
+                            group_map[row[0]] = {
+                                "current_value_text": row[1],
+                                "interpretation": row[2],
+                                "treatment_advice": row[3],
                             }
                 elif "手势名称" in headers:
                     name_idx = headers.index("手势名称")
@@ -308,6 +330,23 @@ def _biomarker_sections(assessment: Dict[str, Any], parsed: Dict[str, Any]) -> L
         marker_name = marker.get("marker_name") or marker.get("marker_key") or "未命名指标"
         row_text = (text_by_group.get(group_key) or {}).get(marker_name, {})
         current_value_text = _value_text(marker.get("value_text"), marker.get("unit"))
+        ref = marker_ref(str(marker.get("marker_key") or ""))
+        reference_metadata = {
+            "display": False,
+            "text": None,
+            "type": ref["reference_type"] if ref else "unknown",
+            "absolute_comparison_applicable": bool(ref and ref["absolute_comparison_applicable"]),
+            "expected_direction": ref["expected_direction"] if ref else "n/a",
+            "range": (
+                {"low": ref["lo"], "high": ref["hi"]}
+                if ref and (ref["lo"] is not None or ref["hi"] is not None)
+                else None
+            ),
+            "confidence": ref["confidence"] if ref else "none",
+            "source_ids": list(ref["source"]) if ref else [],
+            "note": ref["note"] if ref else None,
+            "stored_summary": marker.get("ref_range") or row_text.get("reference_range_text"),
+        }
         indicator = {
             "indicator_key": marker.get("marker_key"),
             "indicator_name": marker_name,
@@ -316,12 +355,17 @@ def _biomarker_sections(assessment: Dict[str, Any], parsed: Dict[str, Any]) -> L
                 "unit": marker.get("unit"),
                 "text": row_text.get("current_value_text") or current_value_text,
             },
-            "reference_range": {
-                "text": row_text.get("reference_range_text") or marker.get("ref_range") or "—",
-            },
+            "reference_range": reference_metadata,
             "valid_trial_count": marker.get("n_valid"),
             "interpretation": row_text.get("interpretation"),
             "treatment_advice": row_text.get("treatment_advice"),
+            "interpretation_status": (
+                "legacy_hidden"
+                if row_text.get("legacy_reference_rule")
+                else "available"
+                if row_text.get("interpretation") and row_text.get("treatment_advice")
+                else "not_available"
+            ),
         }
         if marker.get("note"):
             indicator["note"] = marker.get("note")
@@ -420,12 +464,18 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
             "brunnstrom_stage": {
                 "stage": stage_roman,
                 "stage_number": stage,
-                "assessment_region": f"{assessment.get('paralysis_side')}上肢" if assessment.get("paralysis_side") else None,
+                "assessment_region": f"{assessment.get('paralysis_side')}手部" if assessment.get("paralysis_side") else None,
                 "clinical_interpretation": parsed.get("overall_interpretation"),
             }
         },
         "clinical_scores": _clinical_scores(assessment),
         "biomarker_coverage": coverage,
+        "biomarker_interpretation_policy": {
+            "user_facing_reference_range": "hidden",
+            "comparison_basis": "same_patient_same_device_same_protocol_longitudinal",
+            "single_measurement_rule": "do_not_classify_normal_abnormal",
+            "display_note": _BIOMARKER_DISPLAY_NOTE,
+        },
         "biomarker_sections": _biomarker_sections(assessment, parsed),
         "subtype_classification_and_treatment_strategy": {
             "subtype_classification": {
@@ -609,23 +659,32 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
             "数据不足或当前采集格式暂不支持的指标不生成临床解读。",
             note,
         ),
+        p(_BIOMARKER_DISPLAY_NOTE, note),
     ])
     for section in payload.get("biomarker_sections", []) or []:
         story.append(p(section.get("section_name"), h3))
         if section.get("subtype"):
             story.append(p(f"亚型界定：{section.get('subtype')}", note))
-        rows = [["指标", "当前值", "参考范围", "解读", "治疗建议"]]
-        for marker in section.get("indicators", []):
+        indicators = section.get("indicators", []) or []
+        legacy_only = bool(indicators) and all(
+            marker.get("interpretation_status") == "legacy_hidden" for marker in indicators
+        )
+        rows = [["指标", "当前值"]] if legacy_only else [["指标", "当前值", "解读", "训练/随访建议"]]
+        for marker in indicators:
             current = marker.get("current_value") or {}
-            ref = marker.get("reference_range") or {}
-            rows.append([
-                marker.get("indicator_name"),
-                current.get("text"),
-                ref.get("text"),
-                marker.get("interpretation"),
-                marker.get("treatment_advice"),
-            ])
-        story.append(kv_table(rows, [34 * mm, 28 * mm, 36 * mm, 42 * mm, 42 * mm], font_size=8))
+            if legacy_only:
+                rows.append([marker.get("indicator_name"), current.get("text")])
+            else:
+                rows.append([
+                    marker.get("indicator_name"),
+                    current.get("text"),
+                    marker.get("interpretation"),
+                    marker.get("treatment_advice"),
+                ])
+        widths = [92 * mm, 90 * mm] if legacy_only else [42 * mm, 30 * mm, 54 * mm, 56 * mm]
+        story.append(kv_table(rows, widths, font_size=8))
+        if legacy_only:
+            story.append(p("该历史报告采用旧版参考规则，单次高低判断已隐藏。", note))
 
     strategy = payload.get("subtype_classification_and_treatment_strategy") or {}
     subtype = (strategy.get("subtype_classification") or {}).get("overall_subtype")

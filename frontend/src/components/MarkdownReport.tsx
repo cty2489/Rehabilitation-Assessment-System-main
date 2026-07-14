@@ -37,6 +37,9 @@ function splitRow(line: string): string[] {
 const isTableSep = (line: string): boolean =>
   /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line)
 
+const LEGACY_BIOMARKER_NOTE =
+  '该历史报告采用旧版参考规则，当前不展示单次高低判断；请以同一设备、同一采集流程下的复测趋势为准。'
+
 export default function MarkdownReport({ text }: { text: string }) {
   const lines = text.split('\n')
   const blocks: JSX.Element[] = []
@@ -66,20 +69,29 @@ export default function MarkdownReport({ text }: { text: string }) {
         rows.push(splitRow(lines[i]))
         i++
       }
+      const legacyBiomarkerTable = headers.includes('标志物') && headers.includes('参考范围')
+      const visibleIndexes = legacyBiomarkerTable
+        ? [headers.indexOf('标志物'), headers.indexOf('当前值')]
+        : headers.map((_, index) => index)
+      const visibleHeaders = visibleIndexes.map((index) => headers[index])
+      const visibleRows = rows.map((row) => visibleIndexes.map((index) => row[index] || '—'))
       blocks.push(
         <div key={key++} className="md-table-wrap">
           <table className="md-table">
             <thead>
-              <tr>{headers.map((hd, c) => <th key={c}>{renderInline(hd)}</th>)}</tr>
+              <tr>{visibleHeaders.map((hd, c) => <th key={c}>{renderInline(hd)}</th>)}</tr>
             </thead>
             <tbody>
-              {rows.map((r, ri) => (
+              {visibleRows.map((r, ri) => (
                 <tr key={ri}>{r.map((cell, c) => <td key={c}>{renderInline(cell)}</td>)}</tr>
               ))}
             </tbody>
           </table>
         </div>,
       )
+      if (legacyBiomarkerTable) {
+        blocks.push(<blockquote key={key++} className="md-quote">{LEGACY_BIOMARKER_NOTE}</blockquote>)
+      }
       continue
     }
 
