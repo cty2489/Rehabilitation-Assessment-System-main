@@ -5,7 +5,7 @@ import ProgressSteps from '../components/ProgressSteps'
 import ResultsPanel from '../components/ResultsPanel'
 import ReportDisplay from '../components/ReportDisplay'
 import { useRoute } from '../app/AppContext'
-import { authHeaders } from '../api'
+import { authHeaders, parseError } from '../api'
 import {
   PatientInfo,
   PredictionEntry,
@@ -170,8 +170,7 @@ export default function AssessmentPage() {
         body: form,
       })
       if (!res.ok) {
-        const detail = await res.json().catch(() => ({ detail: res.statusText }))
-        throw new Error(detail.detail || `HTTP ${res.status}`)
+        throw await parseError(res)
       }
       const data: { session_id: string } = await res.json()
       setSessionId(data.session_id)

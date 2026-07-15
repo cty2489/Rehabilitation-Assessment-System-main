@@ -12,6 +12,7 @@ trained ``.pth`` checkpoints.)
 from __future__ import annotations
 
 import importlib.util
+import os
 import queue
 import sys
 import time
@@ -84,6 +85,7 @@ from inference_readings import (  # noqa: E402
     BRUNNSTROM_READING as _BRUNNSTROM_READING,
     HAND_TONE_READING as _HAND_TONE_READING,
 )
+from inference_sampling import deterministic_bag_indices, trial_embedding_indices  # noqa: E402
 
 # The backend biomarker module (``backend/biomarkers.py``) shares its name with
 # the project-root ``biomarkers/`` package, so ``import biomarkers`` is ambiguous
@@ -106,38 +108,33 @@ def _load_backend_biomarkers():
 
 
 def _fma_reading(value: float) -> str:
-    """FMA-UE hand subscore (0–20) → upper-limb motor impairment band."""
+    """Describe the served 0–20 hand score without inventing severity cutoffs."""
     v = float(value)
-    if v <= 5:
-        band = "重度上肢运动功能障碍，手部几乎无有效随意运动"
-    elif v <= 10:
-        band = "中重度上肢运动功能障碍，仅能完成少量粗大随意运动"
-    elif v <= 15:
-        band = "中度上肢运动功能障碍，存在部分分离运动但精细控制不足"
-    else:
-        band = "轻度上肢运动功能障碍，手部随意与分离运动大部分保留"
-    return f"FMA手部评分 {v:.0f}/20 分，提示{band}"
+    return (
+        f"FMA手部模型评分 {v:.0f}/20 分；分数越高表示本系统所覆盖的手部运动项目"
+        "完成度越高，正式解读前应由专业人员使用对应量表人工核验"
+    )
 
 
 def clinical_reasoning(task: str, value: Any) -> str:
-    """Render a one-line physician-readable reading of a predicted score.
+    """Render a one-line physician-readable explanation of a predicted score.
 
     Combines the actual predicted value with its clinical meaning so the
     reasoning shown to the physician is patient-specific rather than generic.
     """
     if task == "FMA_UE":
-        return "临床推理 · " + _fma_reading(value)
+        return "指标说明 · " + _fma_reading(value)
     if task == "hand_tone":
         reading = _HAND_TONE_READING.get(str(value), "肌张力分级结果")
-        return f"临床推理 · 手部肌张力 Hand MAS {value} 级，{reading}"
+        return f"指标说明 · 手部肌张力 Hand MAS {value} 级，{reading}"
     if task == "hand_function":
         try:
             stage = int(value)
         except (TypeError, ValueError):
             stage = value  # type: ignore[assignment]
         reading = _BRUNNSTROM_READING.get(stage, "手功能分期结果")  # type: ignore[arg-type]
-        return f"临床推理 · 手功能分期 Brunnstrom {value} 期，{reading}"
-    return f"临床推理 · {task} = {value}"
+        return f"指标说明 · 手功能分期 Brunnstrom {value} 期，{reading}"
+    return f"指标说明 · {task} = {value}"
 
 
 # Default inference loader knobs, matching `predict.py` defaults so the saved
@@ -147,6 +144,15 @@ DTW_LENGTH = 32
 ALIGNMENT_MODE = "adk"
 
 SENTINEL: Dict[str, Any] = {"__sentinel__": True}
+
+
+class AssessmentCancelled(RuntimeError):
+    pass
+
+
+def _check_cancel(cancel_event: Optional[Any]) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise AssessmentCancelled("评估任务已取消")
 
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +191,18 @@ class LoadedModel:
     task_type: str       # "regression" | "classification"
     encoder: Any = None  # LabelEncoder | None
     head_kind: str = "ce"  # "ce" | "corn" — governs classification decoding
+    eval_bag_size: int = 4
+    eval_bags: int = 60
+    eval_seed: int = 2031
+    eval_batch_size: int = 8
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _load_one(name: str, ckpt: Path, device: torch.device) -> LoadedModel:
@@ -220,12 +238,23 @@ def _load_one(name: str, ckpt: Path, device: torch.device) -> LoadedModel:
 
     spec = get_task(name)
     encoder = get_encoder(name) if spec.task_type == "classification" else None
+    inference_cfg = payload.get("inference_config") or {}
     return LoadedModel(
         name=name,
         model=model,
         task_type=spec.task_type,
         encoder=encoder,
         head_kind=head_kind,
+        eval_bag_size=_positive_int(
+            os.environ.get("INFERENCE_EVAL_BAG_SIZE", inference_cfg.get("eval_bag_size")), 4
+        ),
+        eval_bags=_positive_int(
+            os.environ.get("INFERENCE_EVAL_BAGS", inference_cfg.get("eval_bags")), 60
+        ),
+        eval_seed=_positive_int(
+            os.environ.get("INFERENCE_EVAL_SEED", inference_cfg.get("eval_seed")), 2031
+        ),
+        eval_batch_size=_positive_int(os.environ.get("INFERENCE_BAG_BATCH_SIZE"), 8),
     )
 
 
@@ -240,7 +269,15 @@ class ModelRegistry:
         for name in SERVED_TASKS:
             self.models[name] = _load_one(name, CHECKPOINTS[name], self.device)
 
-    def predict(self, name: str, eeg: torch.Tensor, emg: torch.Tensor, imu: torch.Tensor) -> Any:
+    def predict(
+        self,
+        name: str,
+        eeg: torch.Tensor,
+        emg: torch.Tensor,
+        imu: torch.Tensor,
+        task_ids: torch.Tensor,
+        trial_ids: torch.Tensor,
+    ) -> Any:
         """Predict for ONE subject given aligned tri-modal trials (B, S, C, T).
 
         - regression  → float scalar (already clipped)
@@ -250,32 +287,50 @@ class ModelRegistry:
         model = bundle.model
         device = self.device
 
-        # Trial / task embedding indices: we lack the original manifest at inference,
-        # so feed neutral defaults (0) — they live behind nn.Embedding clamping.
         b, s = eeg.shape[:2]
-        task_id = torch.zeros((b, s), dtype=torch.long, device=device)
-        trial_id = torch.arange(s, dtype=torch.long, device=device).expand(b, s).contiguous()
+        if b != 1:
+            raise ValueError(f"online predict expects one subject, received batch={b}")
+        if task_ids.numel() != s or trial_ids.numel() != s:
+            raise ValueError("trial metadata count does not match aligned signal count")
+
+        bag_rows = deterministic_bag_indices(
+            s, bundle.eval_bag_size, bundle.eval_bags, bundle.eval_seed
+        )
+        base_eeg, base_emg, base_imu = eeg[0], emg[0], imu[0]
+        regression_values: List[float] = []
+        probability_rows: List[np.ndarray] = []
 
         with torch.no_grad():
-            out = model(eeg.to(device), emg.to(device), imu.to(device), task_id, trial_id)
+            for offset in range(0, len(bag_rows), bundle.eval_batch_size):
+                row_index = torch.from_numpy(bag_rows[offset:offset + bundle.eval_batch_size]).long()
+                out = model(
+                    base_eeg[row_index].to(device),
+                    base_emg[row_index].to(device),
+                    base_imu[row_index].to(device),
+                    task_ids[row_index].to(device),
+                    trial_ids[row_index].to(device),
+                )
+                if bundle.task_type == "regression":
+                    if isinstance(out, dict):
+                        out = out["pred"]
+                    regression_values.extend(out.detach().cpu().reshape(-1).tolist())
+                elif bundle.head_kind == "corn":
+                    cond = torch.sigmoid(out)
+                    cumulative = torch.cumprod(cond, dim=1)
+                    ones = torch.ones_like(cumulative[:, :1])
+                    zeros = torch.zeros_like(cumulative[:, :1])
+                    padded = torch.cat([ones, cumulative, zeros], dim=1)
+                    probs = (padded[:, :-1] - padded[:, 1:]).clamp_min(1e-6)
+                    probability_rows.extend(probs.detach().cpu().numpy())
+                else:
+                    probability_rows.extend(torch.softmax(out, dim=1).detach().cpu().numpy())
 
         spec = get_task(name)
         if spec.task_type == "regression":
-            if isinstance(out, dict):
-                out = out["pred"]
-            raw = float(out.detach().cpu().numpy().mean())
+            raw = float(np.median(np.asarray(regression_values, dtype=np.float64)))
             return clip_regression(name, raw)
 
-        # Classification: decode the single-subject logits to a class index, then
-        # map back to the original label. CORN heads emit K-1 *conditional*
-        # logits, so argmax is meaningless — decode by the CORN cumprod rule
-        # (matches train.py's _corn_decode); CE heads use plain argmax.
-        if bundle.head_kind == "corn":
-            cond = torch.sigmoid(out)            # P(y>k | y>k-1)
-            cum = torch.cumprod(cond, dim=1)     # P(y>k)
-            cls_idx = int((cum > 0.5).long().sum(dim=1).detach().cpu().numpy()[0])
-        else:
-            cls_idx = int(out.argmax(dim=1).detach().cpu().numpy()[0])
+        cls_idx = int(np.asarray(probability_rows, dtype=np.float64).mean(axis=0).argmax())
         assert bundle.encoder is not None
         return bundle.encoder.decode(cls_idx)
 
@@ -333,6 +388,8 @@ def run_pipeline(
     q: "queue.Queue[Dict[str, Any]]",
     affected_side: Optional[str] = None,
     institution: str = "hospital",
+    trial_details: Optional[Sequence[Dict[str, Any]]] = None,
+    cancel_event: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run the full 6-step inference pipeline and emit progress events.
 
@@ -343,7 +400,11 @@ def run_pipeline(
     prediction_value} for the served tasks.
     """
     try:
-        return _run_pipeline_inner(eeg_paths, emg_paths, registry, q, affected_side, institution)
+        return _run_pipeline_inner(
+            eeg_paths, emg_paths, registry, q, affected_side, institution, trial_details, cancel_event
+        )
+    except AssessmentCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
         q.put(error_event(f"推理失败：{exc}"))
         raise
@@ -356,7 +417,10 @@ def _run_pipeline_inner(
     q: "queue.Queue[Dict[str, Any]]",
     affected_side: Optional[str] = None,
     institution: str = "hospital",
+    trial_details: Optional[Sequence[Dict[str, Any]]] = None,
+    cancel_event: Optional[Any] = None,
 ) -> Dict[str, Any]:
+    _check_cancel(cancel_event)
     is_device = str(institution).lower() == "device"
     trial_loader = load_device_trial if is_device else load_bjh_trial
     trial_eeg_fs = 512.0 if is_device else EEG_FS_DEFAULT
@@ -402,10 +466,57 @@ def _run_pipeline_inner(
         q.put(step_detail("preprocess", line))
 
     trials: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-    for eeg_p, emg_p in zip(eeg_paths, emg_paths):
+    trial_quality: List[Dict[str, Any]] = []
+    for trial_index, (eeg_p, emg_p) in enumerate(zip(eeg_paths, emg_paths)):
+        _check_cancel(cancel_event)
         sig = trial_loader(eeg_p, emg_p, eeg_fs=trial_eeg_fs, preprocess=True)
         trials.append((sig.eeg, sig.emg, sig.imu))
+        meta = dict(sig.metadata or {})
+        duration = float(meta.get("common_window_s", sig.duration) or 0.0)
+        corr = meta.get("sync_peak_corr")
+        detail = trial_details[trial_index] if trial_details and trial_index < len(trial_details) else {}
+        sampling_warnings: List[str] = []
+        for modality, observed_key, declared_key in (
+            ("EMG", "emg_fs", "declared_emg_fs"),
+            ("IMU", "imu_fs", "declared_imu_fs"),
+        ):
+            observed = meta.get(observed_key)
+            declared = detail.get(declared_key)
+            try:
+                observed_value = float(observed)
+                declared_value = float(declared)
+            except (TypeError, ValueError):
+                continue
+            if declared_value > 0 and abs(observed_value - declared_value) / declared_value > 0.1:
+                sampling_warnings.append(
+                    f"{modality} 实测 {observed_value:.2f} Hz 与 manifest 声明 "
+                    f"{declared_value:.2f} Hz 不一致"
+                )
+        trial_quality.append({
+            "duration_s": round(duration, 4),
+            "sync_peak_corr": round(float(corr), 4) if corr is not None and np.isfinite(corr) else None,
+            "sync_fallback": bool(meta.get("sync_fallback", False)),
+            "emg_fs": round(float(meta["emg_fs"]), 3) if meta.get("emg_fs") else None,
+            "imu_fs": round(float(meta["imu_fs"]), 3) if meta.get("imu_fs") else None,
+            "sampling_rate_warnings": sampling_warnings,
+        })
     q.put(step_done("preprocess"))
+
+    short_trials = sum(item["duration_s"] < 1.0 for item in trial_quality)
+    sync_fallbacks = sum(item["sync_fallback"] for item in trial_quality)
+    sampling_rate_mismatches = sum(bool(item["sampling_rate_warnings"]) for item in trial_quality)
+    quality_status = (
+        "needs_review" if short_trials or sync_fallbacks or sampling_rate_mismatches else "pass"
+    )
+    quality = {
+        "status": quality_status,
+        "trial_count": n_trials,
+        "short_trial_count": short_trials,
+        "sync_fallback_count": sync_fallbacks,
+        "sampling_rate_mismatch_count": sampling_rate_mismatches,
+        "trials": trial_quality,
+    }
+    q.put({"type": "signal_quality", **quality})
 
     # ── Step 3: tri-modal temporal alignment ──────────────────────────────── #
     q.put(step_start("alignment", "脑–肌–肢信号同步"))
@@ -417,6 +528,7 @@ def _run_pipeline_inner(
     aligned_emg: List[np.ndarray] = []
     aligned_imu: List[np.ndarray] = []
     for eeg, emg, imu in trials:
+        _check_cancel(cancel_event)
         a = align_by_strategy_tri(eeg, emg, imu, ALIGNMENT_MODE, cfg)
         aligned_eeg.append(a.eeg_aligned)
         aligned_emg.append(a.emg_aligned)
@@ -453,6 +565,9 @@ def _run_pipeline_inner(
     eeg_bag = torch.from_numpy(np.stack(aligned_eeg, axis=0)).unsqueeze(0).float()
     emg_bag = torch.from_numpy(np.stack(aligned_emg, axis=0)).unsqueeze(0).float()
     imu_bag = torch.from_numpy(np.stack(aligned_imu, axis=0)).unsqueeze(0).float()
+    task_np, trial_np = trial_embedding_indices(trial_details, n_trials)
+    task_ids = torch.from_numpy(task_np).long()
+    trial_ids = torch.from_numpy(trial_np).long()
 
     # ── Step 6: per-task inference ───────────────────────────────────────── #
     q.put(step_start("inference", "康复指标评估"))
@@ -463,8 +578,9 @@ def _run_pipeline_inner(
         "hand_function": "正在评估手功能 Brunnstrom 分期...",
     }
     for task in SERVED_TASKS:
+        _check_cancel(cancel_event)
         q.put(step_detail("inference", task_detail[task]))
-        value = registry.predict(task, eeg_bag, emg_bag, imu_bag)
+        value = registry.predict(task, eeg_bag, emg_bag, imu_bag, task_ids, trial_ids)
         results[task] = value
         q.put(prediction_event(task, value))
         # Patient-specific clinical reading of the score just produced.
@@ -475,8 +591,9 @@ def _run_pipeline_inner(
     # Re-derive clinical biomarkers (IEMG µV·s, ERD%, ROM°, …) from the RAW
     # signals (biomarkers.extract re-loads them pre-normalisation), using the
     # predicted Brunnstrom stage to pick the per-stage reference ranges. Failure
-    # here must NOT break the 4-indicator result, so it's isolated.
+    # here must NOT break the three served functional indicators, so it is isolated.
     try:
+        _check_cancel(cancel_event)
         # NOTE: a plain ``import biomarkers`` is ambiguous — the project root's
         # ``biomarkers/`` *package* (the 26-formula program, no ``extract``) can
         # shadow this backend module ``backend/biomarkers.py`` depending on
@@ -492,7 +609,6 @@ def _run_pipeline_inner(
         cov = bm.get("coverage") or {}
         if cov:
             # Surface how many of the 26 markers were actually computed so the UI
-            # can show "N/26" — device bundles legitimately cover only a subset.
             q.put({"type": "biomarker_coverage",
                    "available": cov.get("available"),
                    "total": cov.get("total"),
@@ -506,6 +622,8 @@ def _run_pipeline_inner(
             f"运动平滑度SPARC {flat.get('movement_smoothness_sparc', '—')}、"
             f"屈/伸肌IEMG比 {flat.get('flexor_extensor_iemg_ratio', '—')}...",
         ))
+    except AssessmentCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
         # Print the FULL traceback (not just the message) and surface a concise
         # reason on the SSE stream so a silent empty biomarker section never
@@ -518,4 +636,8 @@ def _run_pipeline_inner(
         ))
         results["_biomarkers"] = None
 
+    results["_quality"] = quality
+    results["_validation_status"] = (
+        "engineering_validation_only" if is_device else "research_assessment"
+    )
     return results

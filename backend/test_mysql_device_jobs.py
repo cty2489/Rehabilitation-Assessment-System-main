@@ -93,6 +93,14 @@ class DeviceJobSqlTests(unittest.TestCase):
         self.assertIn("attempt_count=attempt_count+1", update_sql)
         self.assertIn("started_at=NULL", update_sql)
 
+    def test_idempotency_lookup_is_scoped_to_device(self):
+        with patch.object(mysql_db, "get_conn", return_value=self.conn):
+            mysql_db.find_device_job_by_idempotency_key("same-key", "device_001")
+
+        sql, params = self.conn.cursor_obj.queries[0]
+        self.assertIn("device_id <=> %s", sql)
+        self.assertEqual(params, ("same-key", "device_001"))
+
 
 if __name__ == "__main__":
     unittest.main()

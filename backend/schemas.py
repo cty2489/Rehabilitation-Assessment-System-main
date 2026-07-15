@@ -3,17 +3,25 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PatientInfo(BaseModel):
-    patient_id: str = Field(..., description="患者编号")
-    name: str = Field(..., description="姓名")
+    patient_id: str = Field(..., min_length=1, max_length=64, description="患者编号")
+    name: str = Field(..., min_length=1, max_length=128, description="姓名")
     sex: Literal["男", "女"]
     age: Optional[int] = Field(None, ge=0, le=120)
-    diagnosis: str = Field(..., description="诊断")
+    diagnosis: str = Field(..., min_length=1, max_length=255, description="诊断")
     disease_days: Optional[int] = Field(None, ge=0)
     paralysis_side: Literal["左", "右"]
+
+    @field_validator("patient_id", "name", "diagnosis", mode="before")
+    @classmethod
+    def validate_text(cls, value: Any) -> str:
+        text = str(value or "").strip()
+        if any(ord(char) < 32 for char in text):
+            raise ValueError("文本中不能包含控制字符")
+        return text
 
 
 class PredictionResult(BaseModel):
@@ -33,6 +41,8 @@ class AssessmentResult(BaseModel):
     patient_info: PatientInfo
     predictions: PredictionResult
     report: Optional[str] = None
+    quality: Dict[str, Any] = Field(default_factory=dict)
+    validation_status: str = "research_assessment"
 
 
 class ErrorEvent(BaseModel):
@@ -41,14 +51,13 @@ class ErrorEvent(BaseModel):
 
 
 class AuthLoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=512)
 
 
 class AuthLoginResponse(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"] = "bearer"
     user: str
+    expires_in: int = Field(..., ge=1)
 
 
 class LlmSettingsUpdate(BaseModel):
@@ -118,8 +127,11 @@ class AssessmentRecord(BaseModel):
     model_version: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
-    trials: List[Dict[str, Any]] = []
-    biomarker_items: List[Dict[str, Any]] = []
+    quality_json: Optional[Any] = None
+    validation_status: Optional[str] = None
+    report_generation: Optional[str] = None
+    trials: List[Dict[str, Any]] = Field(default_factory=list)
+    biomarker_items: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class PatientSummary(BaseModel):
@@ -142,7 +154,7 @@ class PatientSummary(BaseModel):
 
 
 class PatientDetail(PatientSummary):
-    assessments: List[AssessmentRecord] = []
+    assessments: List[AssessmentRecord] = Field(default_factory=list)
 
 
 class AssessmentOverviewItem(BaseModel):
@@ -189,7 +201,7 @@ class EnrollmentRequest(BaseModel):
 
     # 第一次评估记录（医院给出，手工录入；可全空表示仅入组基本信息）
     fma_ue: Optional[float] = Field(None, ge=0.0, le=20.0)
-    hand_tone: Optional[str] = None
+    hand_tone: Optional[Literal["0", "1", "1+", "2", "3", "4"]] = None
     hand_function: Optional[int] = Field(None, ge=1, le=6)
     assessment_time: Optional[str] = None
     report: Optional[str] = None
@@ -216,6 +228,8 @@ class MysqlAssessmentItem(BaseModel):
     model_version: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    validation_status: Optional[str] = None
+    report_generation: Optional[str] = None
 
 
 class MysqlAssessmentDetail(MysqlAssessmentItem):
@@ -224,12 +238,13 @@ class MysqlAssessmentDetail(MysqlAssessmentItem):
     diagnosis: Optional[str] = None
     paralysis_side: Optional[str] = None
     disease_days: Optional[int] = None
+    quality_json: Optional[Any] = None
     report: Optional[str] = None
     biomarkers: Optional[Any] = None
     parse_warnings: Optional[Any] = None
     prediction_json: Optional[Any] = None
-    trials: List[Dict[str, Any]] = []
-    biomarker_items: List[Dict[str, Any]] = []
+    trials: List[Dict[str, Any]] = Field(default_factory=list)
+    biomarker_items: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class MysqlAssessmentList(BaseModel):

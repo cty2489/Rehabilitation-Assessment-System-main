@@ -40,6 +40,8 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from device_timebase import infer_device_timebase
+
 from .bjh_loader import (
     EEG_CHANNELS_BDF_30,
     EEG_FS_BDF_OUT,
@@ -92,18 +94,12 @@ def _resolve_col(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
     return None
 
 
+_timebase_from_time = infer_device_timebase
+
+
 def _fs_from_time(t: np.ndarray, default: float) -> float:
-    t = np.asarray(t, dtype=np.float64)
-    t = t[np.isfinite(t)]
-    if t.size < 2:
-        return default
-    dt = np.median(np.diff(t))
-    if not np.isfinite(dt) or dt <= 0:
-        return default
-    fs = 1.0 / dt
-    # Heuristic: device timestamps may be in milliseconds → fs would land ~1000×
-    # too low; if so, assume ms and rescale. Kept defensive, not authoritative.
-    return float(fs)
+    """Backward-compatible sampling-rate helper."""
+    return _timebase_from_time(t, default)[0]
 
 
 def load_device_emg_imu(
@@ -151,13 +147,23 @@ def load_device_emg_imu(
     imu6, t_imu = _strip_padding(imu6_raw, t_imu_raw)
     imu = np.tile(imu6, (1, _N_IMU_MUSCLES))             # replicate 6 axes across 4 slots → 24
 
-    emg_fs = _fs_from_time(t_emg, DEVICE_EMG_FS_DEFAULT)
-    imu_fs = _fs_from_time(t_imu, DEVICE_IMU_FS_DEFAULT)
+    emg_fs, emg_time_scale, emg_time_unit = _timebase_from_time(
+        t_emg, DEVICE_EMG_FS_DEFAULT
+    )
+    imu_fs, imu_time_scale, imu_time_unit = _timebase_from_time(
+        t_imu, DEVICE_IMU_FS_DEFAULT
+    )
     meta = {
         "emg_fs": emg_fs,
         "imu_fs": imu_fs,
-        "duration_emg": float(t_emg[-1] - t_emg[0]) if t_emg.size else 0.0,
-        "duration_imu": float(t_imu[-1] - t_imu[0]) if t_imu.size else 0.0,
+        "emg_time_unit": emg_time_unit,
+        "imu_time_unit": imu_time_unit,
+        "duration_emg": (
+            float(t_emg[-1] - t_emg[0]) * emg_time_scale if t_emg.size else 0.0
+        ),
+        "duration_imu": (
+            float(t_imu[-1] - t_imu[0]) * imu_time_scale if t_imu.size else 0.0
+        ),
         "n_emg_samples": int(emg.shape[0]),
         "n_imu_samples": int(imu.shape[0]),
         "n_emg_channels_raw": int(emg_all.shape[1]),
@@ -290,4 +296,8 @@ def load_device_trial(
     )
 
 
-__all__ = ["load_device_emg_imu", "load_device_eeg_bdf", "load_device_trial"]
+__all__ = [
+    "load_device_emg_imu",
+    "load_device_eeg_bdf",
+    "load_device_trial",
+]

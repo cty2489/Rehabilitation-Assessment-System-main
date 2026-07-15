@@ -216,6 +216,21 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("具体方法", md)
         self.assertNotIn("健侧镜像", md)
 
+    def test_device_engineering_and_quality_warnings_are_prominent(self) -> None:
+        context = report_builder.build_context(
+            _patient(),
+            _predictions(6),
+            _biomarkers(),
+            assessment_context={
+                "validation_status": "engineering_validation_only",
+                "quality": {"status": "needs_review"},
+            },
+        )
+        md = report_builder.render_markdown(context, _valid_clinical("VI"))
+        self.assertIn("设备端工程验证提示", md)
+        self.assertIn("不能替代", md)
+        self.assertIn("采样率不一致", md)
+
 
 class PromptTests(unittest.TestCase):
     def test_prompt_is_fewshot_free_and_stage_grounded(self) -> None:

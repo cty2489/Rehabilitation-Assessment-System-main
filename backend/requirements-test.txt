@@ -1,0 +1,6 @@
+# Lightweight dependencies for the GPU-free unit-test suite and CI.
+-r requirements-dev.txt
+pydantic>=2.6.0
+numpy>=1.26.0
+reportlab>=4.2.0
+httpx>=0.27,<1.0

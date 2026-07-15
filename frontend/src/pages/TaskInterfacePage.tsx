@@ -149,7 +149,7 @@ export default function TaskInterfacePage() {
 
     const form = new FormData()
     form.append('institution', institution)
-    form.append('package', zipFile)
+    form.append('upload_id', parsed.upload_id)
     form.append('patient_id', patient.patient_id)
     form.append('name', patient.name)
     form.append('sex', patient.sex)

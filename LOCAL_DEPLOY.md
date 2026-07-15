@@ -167,11 +167,11 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 ### 登录后接口仍然 401
 
-清理浏览器 localStorage 后重新登录，或确认 `APP_AUTH_TOKEN` 已配置且后端已重启。
+清理当前站点 Cookie 后重新登录，并确认 `APP_AUTH_TOKEN` 已配置且后端已重启。浏览器不再从 localStorage 读取管理员 token。
 
 ### 统计接口检查失败
 
-新版本统计接口需要 Bearer token。请用更新后的 `scripts/check-local.ps1`，不要直接裸访问 `/api/stats/summary` 判断服务是否正常。
+新版本统计接口需要登录会话。请用 `/api/health` 和 `/api/ready` 判断服务状态，不要直接裸访问 `/api/stats/summary`。
 
 ### 前端能打开但接口报错
 

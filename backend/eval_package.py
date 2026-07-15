@@ -73,14 +73,14 @@ def safe_extract_zip(zip_path: Path, dest_dir: Path) -> Path:
             if name.startswith("/") or ".." in Path(name).parts:
                 raise ValueError(f"压缩包包含非法路径，已拒绝解压：{member}")
             target = (dest_root / name).resolve()
-            if not str(target).startswith(str(dest_root)):
+            if target != dest_root and dest_root not in target.parents:
                 raise ValueError(f"压缩包路径越界，已拒绝解压：{member}")
         zf.extractall(dest_root)
 
-    return _locate_manifest_root(dest_root)
+    return locate_manifest_root(dest_root)
 
 
-def _locate_manifest_root(extracted: Path) -> Path:
+def locate_manifest_root(extracted: Path) -> Path:
     """Find the directory containing manifest.json (shallowest match wins)."""
     if (extracted / "manifest.json").is_file():
         return extracted
@@ -114,7 +114,7 @@ def _patient_prefill(manifest: Dict[str, Any]) -> Dict[str, Any]:
     manifest and must be supplied by the clinician.
     """
     gender_raw = str(manifest.get("patient_gender") or "").strip()
-    sex = "男" if gender_raw.startswith("男") else "女" if gender_raw.startswith("女") else "男"
+    sex = "男" if gender_raw.startswith("男") else "女" if gender_raw.startswith("女") else ""
 
     age: Optional[int] = None
     age_match = re.search(r"\d+", str(manifest.get("patient_age") or ""))
@@ -128,7 +128,7 @@ def _patient_prefill(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "age": age,
         "diagnosis": "",
         "disease_days": None,
-        "paralysis_side": "左",
+        "paralysis_side": "",
     }
 
 
@@ -142,6 +142,9 @@ def _manifest_summary(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "actions_per_type": dd.get("actions_per_type"),
         "trials_per_action": dd.get("trials_per_action"),
         "emg_sampling_rate_hz": dd.get("emg_sampling_rate_hz"),
+        "imu_sampling_rate_hz": (
+            dd.get("imu_sampling_rate_hz") or dd.get("imu-sampling_rate_hz")
+        ),
         "eeg_sampling_rate_hz": dd.get("eeg_sampling_rate_hz"),
         "eeg_channel_count": dd.get("eeg_channel_count"),
     }
@@ -154,6 +157,32 @@ def _is_usable(path: Path) -> Tuple[bool, str]:
     if path.stat().st_size == 0:
         return False, "文件为空(0字节)占位"
     return True, ""
+
+
+def _bundle_file(root: Path, relative_path: Any) -> Path:
+    """Resolve one manifest file while keeping it inside the extracted bundle."""
+    raw = str(relative_path or "").strip()
+    rel = Path(raw)
+    if not raw or rel.is_absolute():
+        raise ValueError(f"manifest 包含非法文件路径：{raw or '<empty>'}")
+    root_resolved = root.resolve()
+    resolved = (root_resolved / rel).resolve()
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        raise ValueError(f"manifest 文件路径越界：{raw}")
+    return resolved
+
+
+def _model_task_index(block: Dict[str, Any], block_index: int) -> int:
+    """Map manifest action/task identifiers to the model's zero-based embedding."""
+    explicit = block.get("task_id")
+    if explicit not in (None, ""):
+        try:
+            return max(int(explicit) - 1, 0)
+        except (TypeError, ValueError):
+            pass
+    action_id = str(block.get("action_id") or "")
+    match = re.search(r"(\d+)\s*$", action_id)
+    return max(int(match.group(1)) - 1, 0) if match else block_index
 
 
 def read_eval_package(
@@ -175,16 +204,22 @@ def read_eval_package(
 
     root = Path(root)
     manifest = _load_manifest(root)
+    manifest_summary = _manifest_summary(manifest)
     warnings: List[str] = []
 
     eeg_paths: List[Path] = []
     emg_paths: List[Path] = []
     trial_details: List[Dict[str, Any]] = []
     n_active_trials = 0
-    for block in manifest.get("assessments", []) or []:
-        if str(block.get("assessment_type", "")).lower() != assessment_type:
-            continue
+    active_blocks = [
+        block
+        for block in (manifest.get("assessments", []) or [])
+        if str(block.get("assessment_type", "")).lower() == assessment_type
+    ]
+    for block_index, block in enumerate(active_blocks):
         action = block.get("action_name") or block.get("action_id") or "?"
+        action_id = str(block.get("action_id") or "").strip()
+        task_index = _model_task_index(block, block_index)
         for trial in block.get("trials", []) or []:
             n_active_trials += 1
             eeg_rel = trial.get("eeg_file")
@@ -192,8 +227,8 @@ def read_eval_package(
             if not eeg_rel or not emg_rel:
                 warnings.append(f"{action} trial{trial.get('trial_index', '?')}: manifest 缺少文件路径，已跳过")
                 continue
-            eeg_p = (root / eeg_rel).resolve()
-            emg_p = (root / emg_rel).resolve()
+            eeg_p = _bundle_file(root, eeg_rel)
+            emg_p = _bundle_file(root, emg_rel)
             eeg_ok, eeg_why = _is_usable(eeg_p)
             emg_ok, emg_why = _is_usable(emg_p)
             if not eeg_ok or not emg_ok:
@@ -205,8 +240,14 @@ def read_eval_package(
             trial_details.append(
                 {
                     "assessment_type": assessment_type,
+                    "action_id": action_id,
                     "action_name": str(action),
                     "trial_index": trial.get("trial_index"),
+                    "model_task_index": task_index,
+                    "model_trial_index": max(int(trial.get("trial_index") or 1) - 1, 0),
+                    "declared_emg_fs": manifest_summary.get("emg_sampling_rate_hz"),
+                    "declared_imu_fs": manifest_summary.get("imu_sampling_rate_hz"),
+                    "declared_eeg_fs": manifest_summary.get("eeg_sampling_rate_hz"),
                     "eeg_file": str(eeg_rel),
                     "emg_imu_file": str(emg_rel),
                     "eeg_name": Path(str(eeg_rel)).name,
@@ -226,10 +267,16 @@ def read_eval_package(
         eeg_paths=eeg_paths,
         emg_paths=emg_paths,
         patient_prefill=_patient_prefill(manifest),
-        manifest_summary=_manifest_summary(manifest),
+        manifest_summary=manifest_summary,
         trial_details=trial_details,
         warnings=warnings,
     )
 
 
-__all__ = ["EvalPackage", "safe_extract_zip", "read_eval_package", "INSTITUTIONS"]
+__all__ = [
+    "EvalPackage",
+    "safe_extract_zip",
+    "locate_manifest_root",
+    "read_eval_package",
+    "INSTITUTIONS",
+]

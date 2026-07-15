@@ -1094,6 +1094,11 @@ def train_one_task(args: argparse.Namespace) -> Dict[str, float]:
             "bin_step": spec.bin_step,
             "head_kind": head_kind,
         },
+        "inference_config": {
+            "eval_bag_size": args.eval_bag_size,
+            "eval_bags": args.eval_bags,
+            "eval_seed": args.seed + 7,
+        },
         "metrics": {k: v for k, v in final_m.items() if k != "confusion_matrix"},
     }
     torch.save(payload, ckpt_path)

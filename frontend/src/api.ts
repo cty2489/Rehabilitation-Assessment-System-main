@@ -17,26 +17,14 @@ import {
   StatsSummary,
 } from './types'
 
-const AUTH_TOKEN_KEY = 'rehab_auth_token'
-
-export function getAuthToken(): string | null {
-  return localStorage.getItem(AUTH_TOKEN_KEY)
-}
-
-export function setAuthToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_KEY, token)
-}
-
-export function clearAuthToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_KEY)
-}
-
 export function authHeaders(): Record<string, string> {
-  const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return {}
 }
 
-async function parseError(res: Response): Promise<Error> {
+export async function parseError(res: Response): Promise<Error> {
+  if (res.status === 401 || res.status === 403) {
+    window.dispatchEvent(new Event('rehab:unauthorized'))
+  }
   const detail = await res.json().catch(() => ({ detail: res.statusText }))
   return new Error(detail.detail || `HTTP ${res.status}`)
 }
@@ -59,6 +47,18 @@ export async function loginUser(username: string, password: string): Promise<Aut
     throw await parseError(res)
   }
   return res.json()
+}
+
+export async function logoutUser(): Promise<void> {
+  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined)
+}
+
+export function fetchAuthSession(): Promise<{ user: string }> {
+  return getJSON('/api/auth/session')
+}
+
+export async function cancelAssessment(sessionId: string): Promise<void> {
+  await fetch(`/api/assess/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }).catch(() => undefined)
 }
 
 export function fetchPatients(): Promise<PatientSummary[]> {
@@ -228,6 +228,7 @@ export interface EvalPackageParse {
   manifest_summary: Record<string, unknown>
   warnings: string[]
   package_hash: string
+  upload_id: string
   enrolled: boolean
 }
 

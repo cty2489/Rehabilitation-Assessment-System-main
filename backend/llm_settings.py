@@ -336,7 +336,7 @@ def decorate_model(model: Dict[str, Any], active_id: str, probe: bool = True) ->
         available = False
 
     out["available"] = available
-    if out["is_active"]:
+    if out["is_active"] and available:
         out["status"] = "active"
     elif available:
         out["status"] = "ready"

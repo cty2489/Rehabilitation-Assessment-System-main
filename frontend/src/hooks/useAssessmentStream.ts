@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { cancelAssessment } from '../api'
 import {
   BiomarkerCoverage,
   PredictionEntry,
@@ -86,6 +87,12 @@ export function useAssessmentStream() {
           setReportStreaming(false)
           esRef.current?.close()
           break
+        case 'cancelled':
+          setError(event.message || '评估任务已取消')
+          setPhase('idle')
+          setReportStreaming(false)
+          esRef.current?.close()
+          break
         case 'error':
           setError(event.message)
           break
@@ -124,6 +131,7 @@ export function useAssessmentStream() {
   )
 
   const reset = useCallback(() => {
+    if (phase === 'processing' && sessionId) void cancelAssessment(sessionId)
     esRef.current?.close()
     esRef.current = null
     setPhase('idle')
@@ -135,7 +143,7 @@ export function useAssessmentStream() {
     setCoverage(null)
     setError(null)
     setSessionId(null)
-  }, [])
+  }, [phase, sessionId])
 
   return {
     phase,

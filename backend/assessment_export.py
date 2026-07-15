@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -465,6 +466,9 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
             "created_at": assessment.get("created_at"),
             "assessment_time": assessment.get("assessment_time"),
             "report_status": assessment.get("report_status"),
+            "report_generation": assessment.get("report_generation"),
+            "validation_status": assessment.get("validation_status"),
+            "signal_quality": assessment.get("quality_json") or {},
             "parse_warnings": assessment.get("parse_warnings") or [],
             "model": model,
         },
@@ -629,6 +633,19 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     story: List[Any] = [
         p("智能康复评估结果报告", title),
         p(f"导出时间：{payload['exported_at']}"),
+    ]
+    if meta.get("validation_status") == "engineering_validation_only":
+        story.append(p(
+            "设备端工程验证提示：当前设备通道布局与医院训练数据不同，本结果仅用于接口联调和同条件复测观察，不能替代临床量表或作为诊疗依据。",
+            note,
+        ))
+    quality = meta.get("signal_quality") or {}
+    if quality.get("status") == "needs_review":
+        story.append(p(
+            "信号质量复核：本次存在同步回退、时长不足或采样率不一致的试次，请复核原始信号后再解读。",
+            note,
+        ))
+    story.extend([
         Spacer(1, 4 * mm),
         p("患者与评估信息", h2),
         kv_table(
@@ -659,7 +676,7 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
             f"（{_pdf_text(stage.get('assessment_region'))}）："
             f"{_pdf_text(stage.get('clinical_interpretation'))}"
         ),
-    ]
+    ])
 
     story.extend([
         p("关键生物标志物输出与解读", h2),
@@ -776,7 +793,27 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
     manifest_json = root / "manifest.json"
     export_zip = root / "export.zip"
 
-    if force or not result_json.exists() or not report_pdf.exists():
+    source_payload = {
+        key: assessment.get(key)
+        for key in (
+            "id", "patient_id", "name", "sex", "age", "diagnosis", "paralysis_side",
+            "disease_days", "assessment_id", "assessment_time", "fma_ue", "hand_tone",
+            "hand_function", "report", "report_status", "report_generation", "biomarkers",
+            "prediction_json", "model_version", "llm_provider", "llm_model", "quality_json",
+            "validation_status",
+        )
+    }
+    source_sha256 = hashlib.sha256(
+        json.dumps(source_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    cached_source = None
+    if manifest_json.exists():
+        try:
+            cached_source = json.loads(manifest_json.read_text(encoding="utf-8")).get("source_sha256")
+        except (OSError, json.JSONDecodeError):
+            cached_source = None
+
+    if force or cached_source != source_sha256 or not result_json.exists() or not report_pdf.exists():
         payload = build_result_payload(assessment)
         _write_json(result_json, payload)
         write_report_pdf(report_pdf, payload)
@@ -792,6 +829,7 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
         "assessment_db_id": assessment_db_id,
         "patient_id": assessment.get("patient_id"),
         "assessment_id": assessment.get("assessment_id"),
+        "source_sha256": source_sha256,
         "files": file_entries,
     }
     _write_json(manifest_json, manifest)
@@ -803,3 +841,12 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
         zf.write(manifest_json, "manifest.json")
     tmp_zip.replace(export_zip)
     return ExportBundle(root, result_json, report_pdf, manifest_json, export_zip, manifest)
+
+
+def delete_assessment_export(assessment_db_id: int) -> None:
+    """Remove every persisted export artifact for one assessment."""
+    root = (export_root() / "assessments" / str(int(assessment_db_id))).resolve()
+    allowed = (export_root() / "assessments").resolve()
+    if allowed not in root.parents:
+        raise ValueError("refusing to delete an export path outside EXPORT_ROOT")
+    shutil.rmtree(root, ignore_errors=True)

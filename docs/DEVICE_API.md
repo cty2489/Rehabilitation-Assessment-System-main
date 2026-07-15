@@ -19,7 +19,7 @@
 所有 `/api/device/v1/*` 接口都需要设备端 token：
 
 ```http
-Authorization: Bearer <DEVICE_API_TOKEN>
+Authorization: Bearer <DEVICE_TOKEN>
 ```
 
 上传接口另外建议携带：
@@ -31,13 +31,15 @@ Idempotency-Key: <device_id>:<assessment_id>
 云端在 `backend/.env` 中配置：
 
 ```env
-DEVICE_API_TOKEN=generate-a-different-long-random-token
+ALLOW_LEGACY_DEVICE_TOKEN=0
+DEVICE_API_TOKEN=
 DEVICE_API_TOKENS_JSON='{"device_002":"generate-device-002-token","device_003":"generate-device-003-token"}'
 ```
 
 设备端 token 应与页面管理员 token `APP_AUTH_TOKEN` 分开。
-`DEVICE_API_TOKEN` 是为已有设备保留的旧共享凭证；新设备应使用
-`DEVICE_API_TOKENS_JSON` 中按 `device_id` 独立分配的 token。独立凭证提交任务时
+`DEVICE_API_TOKEN` 是旧共享凭证且默认禁用；仅在短期迁移时设置
+`ALLOW_LEGACY_DEVICE_TOKEN=1`。新设备应由管理员在网页生成按 `device_id`
+独立分配的 token，也可由 `DEVICE_API_TOKENS_JSON` 在首次启动时导入。独立凭证提交任务时
 会自动绑定设备ID，并且只能查询、下载和ACK本设备创建的任务。设备端若同时传入
 `device_id`，它必须与凭证绑定的ID一致，否则返回 HTTP 403。
 
@@ -87,7 +89,7 @@ patient_P001_eval_20260629/
     "emg_sampling_rate_hz": 200,
     "eeg_sampling_rate_hz": 512,
     "imu_included_in_emg_csv": true,
-    "imu-sampling_rate_hz": 50
+    "imu_sampling_rate_hz": 50
   },
   "assessments": [
     {
@@ -107,6 +109,8 @@ patient_P001_eval_20260629/
 ```
 
 第一版云端只纳入 `active_assessment` 做深度学习评分。`passive_assessment` 可继续放在包内，后续用于被动活动范围、肌张力、痉挛相关分析。
+
+当前设备格式到云端的传输、排队、推理和文件回传已完成工程链路验证，但设备通道与肌肉对应、跨设备域偏移以及临床效度尚未完成正式验证。因此设备端 JSON/PDF 会标注 `validation_status=engineering_validation_only`；该结果不能直接作为诊断或治疗决定，必须由康复专业人员结合量表、动作表现和信号质控复核。
 
 `trial_*_emg_imu.csv` 当前格式：
 
@@ -440,6 +444,10 @@ curl -X POST "https://<cloud-host>/api/device/v1/jobs/${JOB_ID}/ack" \
 云端会把任务状态更新为 `delivered` 并记录 `delivered_at`。
 ACK 成功后，云端会删除用于任务恢复的原始上传副本；结构化评估记录和
 `result.json` / `report.pdf` / `export.zip` 仍然保留。
+
+若设备始终未 ACK，已完成或失败任务的原始上传副本也会在
+`DEVICE_INPUT_TTL_HOURS`（默认 168 小时）后清理，避免磁盘无限增长；数据库记录和
+导出结果不受影响。因此设备端仍应在校验并持久化三种结果文件后及时 ACK。
 
 ## 7. 联调建议
 

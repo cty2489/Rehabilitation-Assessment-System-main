@@ -190,8 +190,8 @@ _BIOMARKER_META: Dict[str, Dict[str, str]] = {
 
 _GROUP_ORDER = ("emg", "eeg", "imu")
 _GROUP_LABELS = {
-    "emg": "肌电标志物（基于患侧被动评估）",
-    "eeg": "脑电标志物（基于运动想象任务）",
+    "emg": "肌电标志物（基于本次主动动作评估）",
+    "eeg": "脑电标志物（基于本次主动动作评估）",
     "imu": "运动学标志物（IMU）",
 }
 

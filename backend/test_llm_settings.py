@@ -1,6 +1,11 @@
 import json
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError as exc:  # unittest discovery without dev dependencies
+    import unittest
+
+    raise unittest.SkipTest("install backend/requirements-dev.txt to run pytest tests") from exc
 
 import llm_settings
 import report

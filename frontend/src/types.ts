@@ -29,9 +29,8 @@ export type Route =
 export type ReportStatus = 'generated' | 'failed' | 'manual'
 
 export interface AuthLoginResponse {
-  access_token: string
-  token_type: 'bearer'
   user: string
+  expires_in: number
 }
 
 export interface LlmModelHealth {
@@ -140,6 +139,9 @@ export interface AssessmentRecord {
   model_version?: string | null
   llm_provider?: string | null
   llm_model?: string | null
+  quality_json?: unknown
+  validation_status?: string | null
+  report_generation?: string | null
   trials?: AssessmentTrial[]
   biomarker_items?: AssessmentBiomarkerItem[]
 }
@@ -275,6 +277,8 @@ export interface MysqlAssessmentItem {
   model_version: string | null
   llm_provider: string | null
   llm_model: string | null
+  validation_status: string | null
+  report_generation: string | null
 }
 
 export interface MysqlAssessmentDetail extends MysqlAssessmentItem {
@@ -287,6 +291,7 @@ export interface MysqlAssessmentDetail extends MysqlAssessmentItem {
   biomarkers: unknown
   parse_warnings: unknown
   prediction_json: unknown
+  quality_json: unknown
   trials?: AssessmentTrial[]
   biomarker_items?: AssessmentBiomarkerItem[]
 }
@@ -345,6 +350,7 @@ export type SSEEvent =
       missing_keys: string[]
     }
   | { type: 'done' }
+  | { type: 'cancelled'; message?: string }
   | { type: 'error'; message: string }
 
 export interface BiomarkerCoverage {

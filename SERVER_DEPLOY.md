@@ -159,7 +159,9 @@ cp backend/.env.example backend/.env
 APP_ADMIN_USER=your_admin_user
 APP_ADMIN_PASSWORD=change-this-password
 APP_AUTH_TOKEN=generate-a-long-random-token
-DEVICE_API_TOKEN=generate-a-different-long-random-token
+ALLOW_LEGACY_ADMIN_BEARER=0
+ALLOW_LEGACY_DEVICE_TOKEN=0
+DEVICE_API_TOKEN=
 DEVICE_API_TOKENS_JSON='{"device_002":"generate-device-002-token","device_003":"generate-device-003-token"}'
 
 LLM_PROVIDER=local
@@ -190,10 +192,13 @@ PY
 上传限额也在 `.env` 中配置。默认值适合演示环境：
 
 ```env
-MAX_UPLOAD_FILE_BYTES=2147483648
-MAX_ZIP_BYTES=4294967296
-MAX_ZIP_EXTRACTED_BYTES=10737418240
-MAX_ZIP_MEMBERS=2000
+MAX_UPLOAD_FILE_BYTES=536870912
+MAX_SESSION_UPLOAD_BYTES=2147483648
+MAX_ZIP_BYTES=1073741824
+MAX_ZIP_EXTRACTED_BYTES=4294967296
+MAX_ZIP_MEMBERS=500
+MAX_ZIP_COMPRESSION_RATIO=200
+MIN_FREE_DISK_BYTES=2147483648
 MAX_TRIALS=30
 SESSION_TTL_HOURS=168
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
@@ -281,6 +286,16 @@ LLM_SETTINGS_PATH=/data/rehab_config/llm_settings.json
 推荐内容：
 
 ```nginx
+map $http_x_forwarded_proto $rehab_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+map $http_x_forwarded_host $rehab_forwarded_host {
+    default $http_x_forwarded_host;
+    ""      $http_host;
+}
+
 server {
     listen 6006;
     server_name _;
@@ -288,16 +303,25 @@ server {
     root /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/frontend/dist;
     index index.html;
 
-    client_max_body_size 4g;
+    # Nginx 只做外层上限；后端仍按文件类型执行更严格的限制。
+    client_max_body_size 3g;
     client_body_timeout 1800s;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'" always;
 
     location /api/ {
         proxy_pass http://127.0.0.1:8000/api/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $rehab_forwarded_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $rehab_forwarded_proto;
         proxy_connect_timeout 60s;
         proxy_send_timeout 1800s;
         proxy_read_timeout 1800s;
@@ -311,7 +335,7 @@ server {
 }
 ```
 
-当前推荐不使用 Nginx Basic Auth，避免浏览器反复弹框。系统身份验证由页面登录和后端 Bearer token 完成。
+当前推荐不使用 Nginx Basic Auth，避免浏览器反复弹框。页面登录后由后端签发短时 HttpOnly 会话 Cookie；浏览器不保存长期管理员 token。
 
 ## 7. 一键启动
 
@@ -381,14 +405,15 @@ GET  /api/mysql/assessments/{id}/export.zip
 POST /api/mysql/assessments/{id}/exports/regenerate
 ```
 
-这些接口都需要页面登录后的 Bearer token。设备端自动对接时，推荐优先拉取 `export.zip`。
+这些接口都需要页面登录后的会话。设备端自动对接时，推荐优先拉取 `export.zip`。
 
 ## 9. 设备端 HTTPS 对接
 
-训练设备端不要使用页面管理员账号。云端为设备端提供独立 token：
+训练设备端不要使用页面管理员账号。管理员应在“系统管理 → 设备凭证”为每台设备生成独立 token。环境变量只建议用于首次引导或旧设备迁移：
 
 ```env
-DEVICE_API_TOKEN=generate-a-different-long-random-token
+ALLOW_LEGACY_DEVICE_TOKEN=0
+DEVICE_API_TOKEN=
 ```
 
 第一版设备端流程：
@@ -406,18 +431,21 @@ POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
 `queue_ahead`、`progress_percent` 和 `poll_after_seconds`。设备 ZIP 默认持久化到
 `/root/autodl-tmp/rehab_project/device_jobs`，服务重启后会恢复未完成任务。
 设备ACK成功后该任务的原始上传副本会清理，导出的结果文件和数据库记录继续保留。
+未 ACK 的终态任务原始包默认保留 168 小时，之后按 `DEVICE_INPUT_TTL_HOURS` 清理；
+这不会删除结构化评估记录或导出结果。
 
 统一队列是单进程调度器，生产环境必须保持一个 Uvicorn worker；不要给启动命令
 增加 `--workers 2` 或更高值。同一服务器需要多进程/多GPU时，应改用独立队列服务。
 
-`DEVICE_API_TOKEN` 仅用于兼容已有设备。新增设备应配置在
-`DEVICE_API_TOKENS_JSON`，每台设备一个独立 token；独立 token 只能操作绑定
-`device_id` 的任务。修改凭证后必须重启后端。
+`DEVICE_API_TOKEN` 是旧共享码，默认不会被接受。只有迁移旧设备时才临时设置
+`ALLOW_LEGACY_DEVICE_TOKEN=1`，迁移完成后应恢复为 `0`。新增设备使用网页生成的
+独立 token；也可在首次启动时通过 `DEVICE_API_TOKENS_JSON` 引导导入。独立 token
+只能操作绑定 `device_id` 的任务。
 
 首次启动会把上述环境变量中的设备码导入 MySQL `device_credentials` 表，只保存
 SHA-256 哈希和掩码。数据库中存在凭证后，设备鉴权以数据库为准；管理员可在网页
-“系统管理 → 设备凭证”生成、停用、轮换和撤销。确认迁移成功后可从 `.env` 删除
-`DEVICE_API_TOKEN` 与 `DEVICE_API_TOKENS_JSON` 明文，已有设备码仍继续有效。
+“系统管理 → 设备凭证”生成、停用、轮换和撤销。确认导入成功后可从 `.env` 删除
+`DEVICE_API_TOKEN` 与 `DEVICE_API_TOKENS_JSON` 明文，数据库中的哈希凭证继续有效。
 
 详细协议见 `docs/DEVICE_API.md`。
 
@@ -443,15 +471,20 @@ https://<instance-id>.bjb2.seetacloud.com:8443
 # 前端入口
 curl -I http://127.0.0.1:6006/
 
-# 后端健康检查
+# 后端存活与就绪检查
 curl http://127.0.0.1:8000/api/health
+curl -f http://127.0.0.1:8000/api/ready
 
-# 登录接口
-curl -s -H 'Content-Type: application/json' \
+# 登录并保存 HttpOnly 会话 Cookie（响应正文不会返回会话令牌）
+curl -s -c /tmp/rehab-admin.cookies -H 'Content-Type: application/json' \
   -d '{"username":"your_admin_user","password":"change-this-password"}' \
   http://127.0.0.1:8000/api/auth/login
 
-# 未登录访问业务数据应返回 401 Bearer
+# 使用保存的 Cookie 验证管理员会话
+curl -f -b /tmp/rehab-admin.cookies http://127.0.0.1:8000/api/auth/session
+rm -f /tmp/rehab-admin.cookies
+
+# 未登录访问业务数据应返回 401
 curl -i http://127.0.0.1:8000/api/stats/summary
 
 # 生产端口检查
@@ -482,7 +515,7 @@ nginx -t && nginx -s reload
 
 ### 页面能打开，但列表或统计加载失败
 
-先确认页面内已经登录。后端业务接口需要 Bearer token，未登录访问会返回 `401`。
+先确认页面内已经登录，并检查浏览器是否接受同站 Cookie。后端业务接口需要有效的短时会话，未登录或会话过期会返回 `401/403`。
 
 ### 重启脚本误判 Nginx 失败
 

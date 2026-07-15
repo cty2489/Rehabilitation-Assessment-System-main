@@ -81,7 +81,15 @@ function reportBadge(record: AssessmentRecord) {
   if (record.report_status === 'manual') {
     return <span className="badge badge-neutral">手工记录</span>
   }
+  if (record.report_generation === 'fallback') {
+    return <span className="badge badge-warn">保守后备报告</span>
+  }
   return <span className="badge badge-ok">报告已生成</span>
+}
+
+function needsQualityReview(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  return (value as { status?: unknown }).status === 'needs_review'
 }
 
 function Meta({ label, value, title }: { label: string; value: React.ReactNode; title?: string }) {
@@ -131,6 +139,12 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
             <span className="badge badge-neutral">Biomarker 未记录</span>
           )}
           {record.n_trials != null && <span className="badge badge-neutral">{record.n_trials} trials</span>}
+          {record.validation_status === 'engineering_validation_only' && (
+            <span className="badge badge-warn">仅工程验证</span>
+          )}
+          {needsQualityReview(record.quality_json) && (
+            <span className="badge badge-warn">信号待复核</span>
+          )}
         </div>
         <div className="record-export-actions" aria-label="导出评估结果">
           <button className="button secondary" onClick={() => download('json')} disabled={!!downloading}>
@@ -146,6 +160,27 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
       </div>
 
       {downloadError && <div className="error-banner">导出失败：{downloadError}</div>}
+
+      {record.validation_status === 'engineering_validation_only' && (
+        <div className="record-warning-strip">
+          <strong>设备端工程验证：</strong>
+          当前设备通道布局与医院训练数据不同，本结果不能替代临床量表或作为诊疗依据。
+        </div>
+      )}
+
+      {record.report_generation === 'fallback' && (
+        <div className="record-warning-strip">
+          <strong>报告生成方式：</strong>
+          大模型结构化输出未通过校验，本报告由保守后备规则生成，需人工复核。
+        </div>
+      )}
+
+      {needsQualityReview(record.quality_json) && (
+        <div className="record-warning-strip">
+          <strong>信号质量：</strong>
+          存在同步回退、时长不足或采样率不一致的试次，请先复核原始信号。
+        </div>
+      )}
 
       <div className="record-meta-grid">
         <Meta label="数据来源" value={source} />

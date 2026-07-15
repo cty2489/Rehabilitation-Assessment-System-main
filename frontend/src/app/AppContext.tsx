@@ -2,20 +2,20 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   ReactNode,
 } from 'react'
-import { clearAuthToken, getAuthToken, loginUser, setAuthToken } from '../api'
+import { fetchAuthSession, loginUser, logoutUser } from '../api'
 import { Route } from '../types'
 
-const USER_KEY = 'rehab_user'
-
 // --------------------------------------------------------------------------- //
-// Auth. The backend issues a demo-scoped bearer token after password login.    //
+// Auth. The backend stores a short-lived signed session in an HttpOnly cookie. //
 // --------------------------------------------------------------------------- //
 interface AuthValue {
   user: string | null
+  ready: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => void
 }
@@ -35,24 +35,50 @@ interface RouteValue {
 const RouteContext = createContext<RouteValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<string | null>(
-    () => (getAuthToken() ? localStorage.getItem(USER_KEY) : null),
-  )
+  const [user, setUser] = useState<string | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const [route, setRoute] = useState<Route>('dashboard')
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void fetchAuthSession()
+      .then((session) => {
+        if (!active) return
+        setUser(session.user)
+      })
+      .catch(() => {
+        if (!active) return
+        setUser(null)
+      })
+      .finally(() => {
+        if (active) setAuthReady(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const clearExpiredSession = () => {
+      setUser(null)
+      setAuthReady(true)
+    }
+    window.addEventListener('rehab:unauthorized', clearExpiredSession)
+    return () => window.removeEventListener('rehab:unauthorized', clearExpiredSession)
+  }, [])
 
   const login = useCallback(async (username: string, password: string) => {
     const resp = await loginUser(username.trim(), password)
     const name = resp.user || username.trim() || '医生'
-    setAuthToken(resp.access_token)
-    localStorage.setItem(USER_KEY, name)
+    localStorage.removeItem('rehab_auth_token')
     setUser(name)
+    setAuthReady(true)
     setRoute('dashboard')
   }, [])
 
   const logout = useCallback(() => {
-    clearAuthToken()
-    localStorage.removeItem(USER_KEY)
+    void logoutUser()
     setUser(null)
   }, [])
 
@@ -61,7 +87,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedPatientId(patientId)
   }, [])
 
-  const authValue = useMemo<AuthValue>(() => ({ user, login, logout }), [user, login, logout])
+  const authValue = useMemo<AuthValue>(
+    () => ({ user, ready: authReady, login, logout }),
+    [user, authReady, login, logout],
+  )
   const routeValue = useMemo<RouteValue>(
     () => ({ route, selectedPatientId, navigate }),
     [route, selectedPatientId, navigate],

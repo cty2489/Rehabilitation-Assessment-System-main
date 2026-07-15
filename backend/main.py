@@ -5,8 +5,8 @@ Three endpoints:
   GET  /api/assess/{session_id}/stream   — SSE stream of progress events
   GET  /api/assess/{session_id}/result   — cached final result (reconnect fallback)
 
-The full inference pipeline runs in a worker thread; events are pushed onto a
-per-session queue.Queue that the SSE coroutine drains asynchronously.
+The full inference pipeline runs in a worker thread; events are appended to a
+per-session replayable stream consumed by the SSE endpoint.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import asyncio
 import hashlib
 import json
 import os
-import queue
+import re
 import secrets
 import shutil
 import time
@@ -34,8 +34,14 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 import llm_settings
 import mysql_db
+from admin_auth import browser_origin_allowed, issue_session_token, verify_session_token
 from assessment_queue import AssessmentQueue
-from assessment_export import ensure_assessment_export, export_filename, file_info
+from assessment_export import (
+    delete_assessment_export,
+    ensure_assessment_export,
+    export_filename,
+    file_info,
+)
 from device_auth import (
     DeviceCredential,
     DeviceTokenConfigError,
@@ -46,8 +52,15 @@ from device_auth import (
     token_digest,
     token_hint,
 )
-from eval_package import INSTITUTIONS, read_eval_package, safe_extract_zip
-from inference import CHECKPOINTS, SENTINEL, ModelRegistry, error_event, run_pipeline
+from eval_package import INSTITUTIONS, locate_manifest_root, read_eval_package, safe_extract_zip
+from inference import (
+    CHECKPOINTS,
+    SENTINEL,
+    AssessmentCancelled,
+    ModelRegistry,
+    error_event,
+    run_pipeline,
+)
 from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url, stream_report
 from schemas import (
     AssessmentOverview,
@@ -69,8 +82,12 @@ from schemas import (
     PredictionResult,
     StatsSummary,
 )
+from session_events import SessionEventStream
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+APP_VERSION = os.environ.get("APP_VERSION", "unreleased").strip() or "unreleased"
+APP_BUILD_COMMIT = os.environ.get("APP_BUILD_COMMIT", "unknown").strip() or "unknown"
 
 SESSION_ROOT = Path(tempfile.gettempdir()) / "rehab_sessions"
 SESSION_ROOT.mkdir(parents=True, exist_ok=True)
@@ -96,13 +113,35 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
-MAX_UPLOAD_FILE_BYTES = _env_int("MAX_UPLOAD_FILE_BYTES", 2 * 1024 * 1024 * 1024)
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+ADMIN_SESSION_COOKIE = os.environ.get("APP_SESSION_COOKIE_NAME", "rehab_admin_session").strip()
+ADMIN_SESSION_TTL_SECONDS = _env_int("APP_SESSION_TTL_SECONDS", 8 * 60 * 60)
+ALLOW_LEGACY_ADMIN_BEARER = _env_flag("ALLOW_LEGACY_ADMIN_BEARER")
+ALLOW_LEGACY_DEVICE_TOKEN = _env_flag("ALLOW_LEGACY_DEVICE_TOKEN")
+LOGIN_RATE_LIMIT = _env_int("APP_LOGIN_RATE_LIMIT", 5)
+LOGIN_RATE_WINDOW_SECONDS = _env_int("APP_LOGIN_RATE_WINDOW_SECONDS", 5 * 60)
+_LOGIN_FAILURES: Dict[str, List[float]] = {}
+_LOGIN_FAILURES_LOCK = threading.Lock()
+
+
+MAX_UPLOAD_FILE_BYTES = _env_int("MAX_UPLOAD_FILE_BYTES", 512 * 1024 * 1024)
+MAX_SESSION_UPLOAD_BYTES = _env_int("MAX_SESSION_UPLOAD_BYTES", 2 * 1024 * 1024 * 1024)
 MAX_TRIALS = _env_int("MAX_TRIALS", 30)
-MAX_ZIP_BYTES = _env_int("MAX_ZIP_BYTES", 4 * 1024 * 1024 * 1024)
-MAX_ZIP_EXTRACTED_BYTES = _env_int("MAX_ZIP_EXTRACTED_BYTES", 10 * 1024 * 1024 * 1024)
-MAX_ZIP_MEMBERS = _env_int("MAX_ZIP_MEMBERS", 2000)
+MAX_ZIP_BYTES = _env_int("MAX_ZIP_BYTES", 1024 * 1024 * 1024)
+MAX_ZIP_EXTRACTED_BYTES = _env_int("MAX_ZIP_EXTRACTED_BYTES", 4 * 1024 * 1024 * 1024)
+MAX_ZIP_MEMBERS = _env_int("MAX_ZIP_MEMBERS", 500)
+MAX_ZIP_COMPRESSION_RATIO = _env_int("MAX_ZIP_COMPRESSION_RATIO", 200)
+MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 2 * 1024 * 1024 * 1024)
 SESSION_TTL_HOURS = _env_int("SESSION_TTL_HOURS", 168)
+DEVICE_INPUT_TTL_HOURS = _env_int("DEVICE_INPUT_TTL_HOURS", 168)
 _LAST_SESSION_CLEANUP = 0.0
+_LAST_DEVICE_INPUT_CLEANUP = 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -116,7 +155,8 @@ class SessionState:
                  n_trials: Optional[int] = None, package_hash: Optional[str] = None,
                  parse_warnings: Optional[List[str]] = None,
                  trial_details: Optional[List[Dict[str, Any]]] = None,
-                 device_job_id: Optional[str] = None):
+                 device_job_id: Optional[str] = None,
+                 temporary_work_dir: Optional[Path] = None):
         self.session_id = session_id
         self.patient = patient
         self.eeg_paths = eeg_paths
@@ -132,15 +172,31 @@ class SessionState:
         self.parse_warnings = parse_warnings or []
         self.trial_details = trial_details or _trial_details_from_paths(eeg_paths, emg_paths)
         self.device_job_id = device_job_id
+        self.temporary_work_dir = temporary_work_dir
         self.assessment_db_id: Optional[int] = None
-        self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        self.report_provider: Optional[str] = None
+        self.report_model_id: Optional[str] = None
+        self.queue = SessionEventStream()
         self.result: Optional[AssessmentResult] = None
         self.started: bool = False
         self.lock = threading.Lock()
+        self.cancel_event = threading.Event()
+        self.created_monotonic = time.monotonic()
+        self.finished_monotonic: Optional[float] = None
 
 
 def _dl_model_version() -> str:
-    return ";".join(f"{task}:{path.name}" for task, path in CHECKPOINTS.items())
+    versions: List[str] = [f"app:{APP_VERSION}@{APP_BUILD_COMMIT}"]
+    for task, path in CHECKPOINTS.items():
+        if not path.is_file():
+            versions.append(f"{task}:{path.name}@missing")
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(4 * 1024 * 1024), b""):
+                digest.update(chunk)
+        versions.append(f"{task}:{path.name}@{digest.hexdigest()[:12]}")
+    return ";".join(versions)
 
 
 def _llm_model_name() -> str:
@@ -155,6 +211,8 @@ def _trial_details_from_paths(eeg_paths: List[Path], emg_paths: List[Path]) -> L
                 "assessment_type": "active",
                 "action_name": f"trial_{idx}",
                 "trial_index": idx,
+                "model_task_index": idx - 1,
+                "model_trial_index": 0,
                 "eeg_file": eeg_path.name,
                 "emg_imu_file": emg_path.name,
                 "eeg_name": eeg_path.name,
@@ -174,7 +232,7 @@ def _migrate_env_device_credentials() -> None:
     legacy_token = os.environ.get("DEVICE_API_TOKEN", "").strip()
     named_raw = os.environ.get("DEVICE_API_TOKENS_JSON", "")
     named = parse_named_tokens(named_raw)
-    if legacy_token:
+    if legacy_token and ALLOW_LEGACY_DEVICE_TOKEN:
         mysql_db.ensure_device_credential(
             device_id="legacy_shared",
             label="旧共享设备码",
@@ -195,12 +253,16 @@ def _migrate_env_device_credentials() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _cleanup_old_sessions(force=True)
+    app.state.mysql_ready = False
+    app.state.dl_ready = False
+    app.state.report_ready = False
 
     # MySQL is required for patient, assessment, export, and device-job records.
     # Startup warns instead of crashing so /api/health can still explain service
     # state, but business APIs will return a clear 503 if MySQL is unavailable.
     try:
         mysql_db.init_db()
+        app.state.mysql_ready = True
         print("[startup] MySQL ready (business store)")
     except Exception as exc:  # noqa: BLE001
         print(f"[startup][warn] MySQL not ready: {exc}")
@@ -209,10 +271,13 @@ async def lifespan(app: FastAPI):
             _migrate_env_device_credentials()
         except Exception as exc:  # noqa: BLE001
             print(f"[startup][warn] device credential migration failed: {exc}")
+        _cleanup_old_device_inputs(force=True)
 
     registry = ModelRegistry()
     print(f"[startup] loading CMK-AGN models onto {registry.device}...")
     registry.load_all()
+    app.state.dl_ready = len(registry.models) == len(CHECKPOINTS)
+    app.state.dl_model_version = _dl_model_version()
     print(f"[startup] loaded {len(registry.models)} models: {list(registry.models.keys())}")
     app.state.registry = registry
 
@@ -223,14 +288,17 @@ async def lifespan(app: FastAPI):
     app.state.report_model = REPORT_MODEL
     _provider = llm_provider()
     if _provider == "deepseek":
+        app.state.report_ready = bool(os.environ.get("DEEPSEEK_API_KEY", "").strip())
         print("[startup] report: DeepSeek API mode (no local LLM load)")
     elif _provider == "remote":
         _remote = remote_url()
         print(f"[startup] report: remote mode → {_remote} (no local LLM load)")
+        app.state.report_ready = bool(_remote)
     else:
         try:
             print(f"[startup] report: local mode selected, loading active report LLM...")
             REPORT_MODEL.load()
+            app.state.report_ready = REPORT_MODEL.loaded
         except Exception as exc:  # noqa: BLE001
             print(f"[startup][warn] report LLM not loaded: {exc}")
 
@@ -244,13 +312,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rehabilitation Assessment Platform", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_origins = [
+    value.strip()
+    for value in os.environ.get("APP_CORS_ORIGINS", "").split(",")
+    if value.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Device-Token"],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -264,24 +338,75 @@ def _admin_settings() -> tuple[str, str, str]:
     )
 
 
-def _require_admin(authorization: Optional[str] = Header(None)) -> None:
-    _, _, expected_token = _admin_settings()
+def _authoritative_patient(candidate: PatientInfo) -> PatientInfo:
+    """Use an enrolled hospital profile as the patient master for assessments."""
+    try:
+        enrolled = mysql_db.get_patient_by_business_id(candidate.patient_id)
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    if not enrolled:
+        return candidate
+    values = candidate.model_dump()
+    for key in ("name", "sex", "age", "diagnosis", "disease_days", "paralysis_side"):
+        value = enrolled.get(key)
+        if value not in (None, ""):
+            values[key] = value
+    return PatientInfo(**values)
+
+
+def _browser_write_origin_allowed(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    scheme = forwarded_proto or request.url.scheme
+    host = forwarded_host or request.headers.get("host", "")
+    return browser_origin_allowed(
+        request.headers.get("origin", ""),
+        request.headers.get("referer", ""),
+        f"{scheme}://{host}",
+        _cors_origins,
+    )
+
+
+def _require_admin(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> None:
+    expected_user, _, expected_token = _admin_settings()
     if not expected_token:
         raise HTTPException(status_code=503, detail="后端鉴权未配置：缺少 APP_AUTH_TOKEN")
 
-    scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not token:
+    scheme, _, bearer = (authorization or "").partition(" ")
+    bearer = bearer.strip() if scheme.lower() == "bearer" else ""
+    cookie = request.cookies.get(ADMIN_SESSION_COOKIE, "").strip()
+    if not bearer and not cookie:
         raise HTTPException(
             status_code=401,
             detail="请先登录后再执行该操作",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not secrets.compare_digest(token, expected_token):
+    valid_bearer = bool(
+        bearer
+        and (
+            (ALLOW_LEGACY_ADMIN_BEARER and secrets.compare_digest(bearer, expected_token))
+            or verify_session_token(bearer, expected_user, expected_token)
+        )
+    )
+    valid_cookie = bool(
+        cookie and verify_session_token(cookie, expected_user, expected_token)
+    )
+    if not valid_bearer and not valid_cookie:
         raise HTTPException(
             status_code=403,
             detail="登录凭证无效或已过期",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if (
+        valid_cookie
+        and not valid_bearer
+        and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+    ):
+        if not _browser_write_origin_allowed(request):
+            raise HTTPException(status_code=403, detail="请求来源校验失败，请刷新页面后重试")
 
 
 def _require_device(
@@ -315,19 +440,25 @@ def _require_device(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         shared = stored.get("access_scope") == "shared"
+        if shared and not ALLOW_LEGACY_DEVICE_TOKEN:
+            raise HTTPException(
+                status_code=403,
+                detail="旧共享设备码已停用，请在系统管理中为设备生成独立设备码",
+            )
         return DeviceCredential(
             device_id=None if shared else str(stored["device_id"]),
             legacy=shared,
         )
 
+    accepted_legacy_token = legacy_token if ALLOW_LEGACY_DEVICE_TOKEN else ""
     try:
-        configured = credential_count(legacy_token, named_tokens_json)
+        configured = credential_count(accepted_legacy_token, named_tokens_json)
     except DeviceTokenConfigError as exc:
         raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
     if configured == 0:
         raise HTTPException(status_code=503, detail="设备端鉴权未配置")
     try:
-        credential = authenticate_device_token(token, legacy_token, named_tokens_json)
+        credential = authenticate_device_token(token, accepted_legacy_token, named_tokens_json)
     except DeviceTokenConfigError as exc:
         raise HTTPException(status_code=503, detail=f"设备端鉴权配置错误：{exc}") from exc
     if credential is None:
@@ -364,15 +495,67 @@ def _cleanup_old_sessions(force: bool = False) -> None:
                 shutil.rmtree(child, ignore_errors=True)
         except OSError as exc:
             print(f"[cleanup][warn] failed to inspect {child}: {exc}")
+    monotonic_now = time.monotonic()
+    for session_id, state in list(SESSIONS.items()):
+        finished = state.finished_monotonic
+        if finished is not None and monotonic_now - finished > ttl_seconds:
+            SESSIONS.pop(session_id, None)
 
 
-def _save_uploads(files: List[UploadFile], destdir: Path, prefix: str) -> List[Path]:
+def _cleanup_old_device_inputs(force: bool = False) -> None:
+    """Remove terminal/orphaned device uploads after the recovery window."""
+    global _LAST_DEVICE_INPUT_CLEANUP
+    now = time.time()
+    if not force and now - _LAST_DEVICE_INPUT_CLEANUP < 3600:
+        return
+    try:
+        records = {
+            str(row.get("job_id") or ""): row
+            for row in mysql_db.list_device_job_retention_records()
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cleanup][warn] device input retention scan skipped: {exc}")
+        return
+    _LAST_DEVICE_INPUT_CLEANUP = now
+    ttl_seconds = DEVICE_INPUT_TTL_HOURS * 3600
+    terminal = {"completed", "delivered", "failed"}
+    for child in DEVICE_JOB_ROOT.iterdir():
+        if not child.is_dir() or child.is_symlink():
+            continue
+        try:
+            if now - child.stat().st_mtime <= ttl_seconds:
+                continue
+            job = records.get(child.name)
+            if job is not None and str(job.get("status") or "") not in terminal:
+                continue
+            shutil.rmtree(child, ignore_errors=True)
+        except OSError as exc:
+            print(f"[cleanup][warn] failed to remove stale device input {child}: {exc}")
+
+
+def _save_uploads(
+    files: List[UploadFile],
+    destdir: Path,
+    prefix: str,
+    *,
+    byte_budget: Optional[int] = None,
+) -> List[Path]:
     if len(files) > MAX_TRIALS:
         raise HTTPException(status_code=413, detail=f"单次最多上传 {MAX_TRIALS} 组 trial")
     destdir.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(destdir).free < MIN_FREE_DISK_BYTES:
+        raise HTTPException(status_code=507, detail="服务器可用磁盘空间不足，请稍后重试")
     out: List[Path] = []
+    total_written = 0
+    allowed_suffixes = {".csv", ".bdf"} if prefix == "eeg" else {".csv"}
     for i, uf in enumerate(files):
-        suffix = Path(uf.filename or f"{prefix}_{i}.csv").suffix or ".csv"
+        suffix = (Path(uf.filename or f"{prefix}_{i}.csv").suffix or ".csv").lower()
+        if suffix not in allowed_suffixes:
+            allowed = " / ".join(sorted(allowed_suffixes))
+            raise HTTPException(
+                status_code=422,
+                detail=f"{uf.filename or '上传文件'} 格式不支持，{prefix.upper()} 仅接受 {allowed}",
+            )
         target = destdir / f"{prefix}_{i:02d}{suffix}"
         written = 0
         with target.open("wb") as fh:
@@ -381,12 +564,27 @@ def _save_uploads(files: List[UploadFile], destdir: Path, prefix: str) -> List[P
                 if not chunk:
                     break
                 written += len(chunk)
+                total_written += len(chunk)
                 if written > MAX_UPLOAD_FILE_BYTES:
                     fh.close()
                     target.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
                         detail=f"{uf.filename or target.name} 超过单文件限制 {_human_bytes(MAX_UPLOAD_FILE_BYTES)}",
+                    )
+                if byte_budget is not None and total_written > byte_budget:
+                    fh.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"本次评估上传总量超过限制 {_human_bytes(MAX_SESSION_UPLOAD_BYTES)}",
+                    )
+                if shutil.disk_usage(destdir).free - len(chunk) < MIN_FREE_DISK_BYTES:
+                    fh.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=507,
+                        detail="服务器磁盘空间不足，已停止上传并清理临时文件",
                     )
                 fh.write(chunk)
         out.append(target)
@@ -401,6 +599,14 @@ def _read_saved_zip(zip_path: Path, work: Path, institution: str):
         raise HTTPException(status_code=422, detail="压缩包不是有效的 zip 文件") from exc
 
     total_uncompressed = sum(info.file_size for info in members)
+    suspicious = [
+        info.filename
+        for info in members
+        if info.file_size > 0 and info.file_size / max(info.compress_size, 1) > MAX_ZIP_COMPRESSION_RATIO
+    ]
+    if suspicious:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=413, detail="压缩包包含异常压缩比文件，已拒绝解压")
     if len(members) > MAX_ZIP_MEMBERS:
         shutil.rmtree(work, ignore_errors=True)
         raise HTTPException(status_code=413, detail=f"压缩包内文件数超过限制 {MAX_ZIP_MEMBERS}")
@@ -410,6 +616,9 @@ def _read_saved_zip(zip_path: Path, work: Path, institution: str):
             status_code=413,
             detail=f"压缩包解压后超过限制 {_human_bytes(MAX_ZIP_EXTRACTED_BYTES)}",
         )
+    if shutil.disk_usage(work).free - total_uncompressed < MIN_FREE_DISK_BYTES:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=507, detail="磁盘空间不足以安全解压该数据包")
     try:
         root = safe_extract_zip(zip_path, work / "extracted")
         pkg = read_eval_package(root, institution=institution)
@@ -418,11 +627,37 @@ def _read_saved_zip(zip_path: Path, work: Path, institution: str):
     return root, pkg
 
 
+def _cached_upload(upload_id: str, institution: str) -> tuple[Path, Any, str, str]:
+    if not re.fullmatch(r"[0-9a-f]{32}", str(upload_id or "")):
+        raise HTTPException(status_code=422, detail="upload_id 格式无效")
+    work = (SESSION_ROOT / f"upload_{upload_id}").resolve()
+    if SESSION_ROOT.resolve() not in work.parents:
+        raise HTTPException(status_code=422, detail="upload_id 路径无效")
+    metadata_path = work / "upload.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("institution") != institution:
+            raise HTTPException(status_code=409, detail="upload_id 与当前机构类型不一致")
+        root = locate_manifest_root(work / "extracted")
+        pkg = read_eval_package(root, institution=institution)
+        return work, pkg, str(metadata["package_hash"]), str(metadata.get("filename") or "bundle.zip")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="解析缓存已过期，请重新上传数据包") from exc
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail=f"解析缓存损坏：{exc}") from exc
+
+
+class AssessmentPersistenceError(RuntimeError):
+    """The assessment finished computation but could not be committed."""
+
+
 def _device_failure_details(exc: Exception) -> tuple[str, bool]:
     if isinstance(exc, FileNotFoundError):
         return "INPUT_FILE_MISSING", False
     if isinstance(exc, (ValueError, zipfile.BadZipFile)):
         return "INVALID_SIGNAL_DATA", False
+    if isinstance(exc, AssessmentPersistenceError):
+        return "PERSISTENCE_FAILED", True
     return "ANALYSIS_FAILED", True
 
 
@@ -448,6 +683,8 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             state.eeg_paths, state.emg_paths, registry, state.queue,
             affected_side=state.patient.paralysis_side,
             institution=state.institution,
+            trial_details=state.trial_details,
+            cancel_event=state.cancel_event,
         )
 
         predictions = PredictionResult(
@@ -459,6 +696,10 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             hand_function=int(predictions_raw["hand_function"]),
         )
         biomarkers = predictions_raw.get("_biomarkers")
+        quality = predictions_raw.get("_quality") or {}
+        validation_status = str(
+            predictions_raw.get("_validation_status") or "research_assessment"
+        )
 
         if state.device_job_id:
             try:
@@ -483,30 +724,47 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             print(f"[history][warn] {exc}")
             history = None
 
+        if state.cancel_event.is_set():
+            raise AssessmentCancelled("评估任务已取消")
+        report_generation = "failed"
         try:
-            report_text = stream_report(
+            report_text, report_generation = stream_report(
                 state.patient,
                 predictions,
                 state.queue,
                 biomarkers=biomarkers,
                 history=history,
                 report_model=report_model,
+                assessment_context={
+                    "institution": state.institution,
+                    "assessment_type": "active",
+                    "quality": quality,
+                    "validation_status": validation_status,
+                },
             )
+            if state.cancel_event.is_set():
+                raise AssessmentCancelled("评估任务已取消")
+            app.state.report_ready = report_generation == "llm"
+        except AssessmentCancelled:
+            raise
         except Exception:
             # Report generation failed — predictions are still kept and the SSE
             # error event was already emitted by stream_report.
             report_text = None
+            app.state.report_ready = False
 
-        state.result = AssessmentResult(
+        result = AssessmentResult(
             session_id=state.session_id,
             patient_info=state.patient,
             predictions=predictions,
             report=report_text,
+            quality=quality,
+            validation_status=validation_status,
         )
 
-        # Persist. A failed/empty report still saves the record with
-        # report_status='failed' so it shows up in the records list. DB errors
-        # are isolated so they never break the SSE `done` event.
+        # Persist before exposing a completed result. A failed/empty report is
+        # still a valid assessment row with report_status='failed', while a DB
+        # transaction failure must fail the session instead of emitting `done`.
         try:
             if state.device_job_id:
                 mysql_db.update_device_job(
@@ -516,21 +774,14 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                     status_message="正在保存评估结果并准备导出文件",
                 )
             report_status = "generated" if report_text else "failed"
-            bio_json = json.dumps(biomarkers, ensure_ascii=False) if biomarkers else None
-            prediction_json = json.dumps(
-                {
-                    "FMA_UE": predictions.FMA_UE,
-                    "hand_tone": predictions.hand_tone,
-                    "hand_function": predictions.hand_function,
-                },
-                ensure_ascii=False,
-            )
+            prediction_payload = {
+                "FMA_UE": predictions.FMA_UE,
+                "hand_tone": predictions.hand_tone,
+                "hand_function": predictions.hand_function,
+            }
             if store is mysql_db:
-                # Device assessment → MySQL. upsert auto-creates the patient
-                # (source='device-auto') when not yet enrolled by the hospital.
-                pid = mysql_db.upsert_patient(state.patient, source=f"{state.institution}-auto")
-                assessment_db_id = mysql_db.insert_assessment(
-                    pid,
+                assessment_db_id = mysql_db.save_assessment_bundle(
+                    state.patient,
                     state.session_id,
                     predictions,
                     report_text,
@@ -539,21 +790,27 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                     package_name=state.package_name,
                     assessment_id=state.assessment_id,
                     assessment_time=state.assessment_time,
-                    biomarkers=bio_json,
                     institution=state.institution,
                     n_trials=state.n_trials,
                     package_hash=state.package_hash,
-                    parse_warnings=json.dumps(state.parse_warnings, ensure_ascii=False),
-                    prediction_json=prediction_json,
-                    model_version=_dl_model_version(),
-                    llm_provider=llm_provider(),
-                    llm_model=_llm_model_name(),
+                    parse_warnings=state.parse_warnings,
+                    prediction_payload=prediction_payload,
+                    model_version=app.state.dl_model_version,
+                    llm_provider=state.report_provider or llm_provider(),
+                    llm_model=state.report_model_id or _llm_model_name(),
+                    report_generation=report_generation,
+                    trials=state.trial_details,
+                    biomarkers=biomarkers,
+                    quality=quality,
+                    validation_status=validation_status,
                 )
                 state.assessment_db_id = int(assessment_db_id)
-                mysql_db.replace_assessment_trials(assessment_db_id, state.trial_details)
-                mysql_db.replace_assessment_biomarkers(assessment_db_id, biomarkers)
         except Exception as exc:  # noqa: BLE001
-            print(f"[persist][warn] failed to save assessment {state.session_id}: {exc}")
+            raise AssessmentPersistenceError(
+                f"评估结果写入 MySQL 失败：{exc}"
+            ) from exc
+
+        state.result = result
 
         if state.device_job_id:
             try:
@@ -588,6 +845,23 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 print(f"[device_job][warn] failed to mark completed: {exc}")
 
         state.queue.put({"type": "done"})
+    except AssessmentCancelled as exc:
+        if state.device_job_id:
+            try:
+                mysql_db.update_device_job(
+                    state.device_job_id,
+                    status="failed",
+                    phase="cancelled",
+                    progress_percent=100,
+                    status_message="评估任务已取消",
+                    error_message=str(exc),
+                    error_code="CANCELLED",
+                    error_retryable=False,
+                    mark_completed=True,
+                )
+            except Exception as job_exc:  # noqa: BLE001
+                print(f"[device_job][warn] failed to mark cancellation: {job_exc}")
+        state.queue.put({"type": "cancelled", "message": str(exc)})
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         if state.device_job_id:
@@ -608,7 +882,15 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 print(f"[device_job][warn] failed to mark failed: {job_exc}")
         state.queue.put(error_event(f"会话 {state.session_id} 失败：{exc}"))
     finally:
+        state.finished_monotonic = time.monotonic()
         state.queue.put(SENTINEL)
+        if state.temporary_work_dir is not None:
+            try:
+                work = state.temporary_work_dir.resolve()
+                if SESSION_ROOT.resolve() in work.parents:
+                    shutil.rmtree(work, ignore_errors=True)
+            except OSError as exc:
+                print(f"[cleanup][warn] failed to remove session upload: {exc}")
 
 
 def _run_scheduled_state(state: SessionState) -> None:
@@ -621,6 +903,8 @@ def _start_session_worker(state: SessionState) -> None:
     with state.lock:
         if not state.started:
             state.started = True
+            state.report_provider = llm_provider()
+            state.report_model_id = _llm_model_name()
             snapshot = SESSION_SCHEDULER.enqueue(state.session_id, state)
             if snapshot.queue_ahead > 0:
                 state.queue.put({
@@ -664,13 +948,31 @@ async def create_assessment(
             disease_days=disease_days,
             paralysis_side=paralysis_side,  # type: ignore[arg-type]
         )
+        patient = _authoritative_patient(patient)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"患者信息无效：{exc}") from exc
 
-    session_id = uuid.uuid4().hex[:12]
+    session_id = uuid.uuid4().hex
     destdir = SESSION_ROOT / session_id
-    eeg_paths = _save_uploads(eeg_files, destdir / "eeg", "eeg")
-    emg_paths = _save_uploads(emg_files, destdir / "emg", "emg")
+    try:
+        eeg_paths = _save_uploads(
+            eeg_files,
+            destdir / "eeg",
+            "eeg",
+            byte_budget=MAX_SESSION_UPLOAD_BYTES,
+        )
+        eeg_bytes = sum(path.stat().st_size for path in eeg_paths)
+        emg_paths = _save_uploads(
+            emg_files,
+            destdir / "emg",
+            "emg",
+            byte_budget=max(0, MAX_SESSION_UPLOAD_BYTES - eeg_bytes),
+        )
+    except Exception:
+        shutil.rmtree(destdir, ignore_errors=True)
+        raise
 
     SESSIONS[session_id] = SessionState(
         session_id,
@@ -679,6 +981,7 @@ async def create_assessment(
         emg_paths,
         persist_target="mysql",
         institution="hospital",
+        temporary_work_dir=destdir,
     )
     return AssessSessionResponse(session_id=session_id, n_trials=len(eeg_paths))
 
@@ -705,6 +1008,9 @@ def _save_and_extract_zip(
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(work).free < MIN_FREE_DISK_BYTES:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=507, detail="服务器可用磁盘空间不足，请稍后重试")
     zip_path = work / "bundle.zip"
     digest = hashlib.sha256()
     written = 0
@@ -756,6 +1062,9 @@ async def _save_and_extract_raw_zip(
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(work).free < MIN_FREE_DISK_BYTES:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=507, detail="服务器可用磁盘空间不足，请稍后重试")
     zip_path = work / "bundle.zip"
     digest = hashlib.sha256()
     written = 0
@@ -797,7 +1106,22 @@ async def task_interface_parse(
     If the manifest's patient_id is already enrolled in MySQL, the stored basic
     info overrides the manifest prefill and ``enrolled`` is set so the UI shows
     "该患者已入组，已按档案回填"."""
-    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
+    upload_id = uuid.uuid4().hex
+    work = SESSION_ROOT / f"upload_{upload_id}"
+    _root, pkg, package_hash = _save_and_extract_zip(package, institution, work_dir=work)
+    (work / "upload.json").write_text(
+        json.dumps(
+            {
+                "upload_id": upload_id,
+                "institution": institution,
+                "filename": package.filename or "bundle.zip",
+                "package_hash": package_hash,
+                "created_at": int(time.time()),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     prefill = dict(pkg.patient_prefill)
     enrolled = False
     pid = (prefill.get("patient_id") or "").strip()
@@ -819,6 +1143,7 @@ async def task_interface_parse(
         "manifest_summary": pkg.manifest_summary,
         "warnings": pkg.warnings,
         "package_hash": package_hash,
+        "upload_id": upload_id,
         "enrolled": enrolled,
     }
 
@@ -826,7 +1151,8 @@ async def task_interface_parse(
 @app.post("/api/task-interface/offline", response_model=AssessSessionResponse)
 async def task_interface_offline(
     institution: str = Form(...),
-    package: UploadFile = File(...),
+    package: Optional[UploadFile] = File(None),
+    upload_id: Optional[str] = Form(None),
     patient_id: str = Form(...),
     name: str = Form(...),
     sex: str = Form(...),
@@ -843,9 +1169,19 @@ async def task_interface_offline(
     Results from this device-end workflow persist to **MySQL** (not the SQLite
     used by the 康复评估 page). The manifest's assessment_id / time and the zip
     filename are carried into the record for traceability."""
-    _root, pkg, package_hash = _save_and_extract_zip(package, institution)
+    if upload_id and package is not None:
+        raise HTTPException(status_code=422, detail="upload_id 与 package 只能提供一个")
+    if upload_id:
+        work, pkg, package_hash, package_name = _cached_upload(upload_id, institution)
+    elif package is not None:
+        work = SESSION_ROOT / f"upload_{uuid.uuid4().hex}"
+        _root, pkg, package_hash = _save_and_extract_zip(package, institution, work_dir=work)
+        package_name = package.filename or "bundle.zip"
+    else:
+        raise HTTPException(status_code=422, detail="请先解析数据包并提供 upload_id")
     if pkg.n_trials == 0:
         detail = "数据包中没有可用的 trial。" + ("；".join(pkg.warnings) if pkg.warnings else "")
+        shutil.rmtree(work, ignore_errors=True)
         raise HTTPException(status_code=422, detail=detail)
 
     try:
@@ -858,21 +1194,26 @@ async def task_interface_offline(
             disease_days=disease_days,
             paralysis_side=paralysis_side,  # type: ignore[arg-type]
         )
+        patient = _authoritative_patient(patient)
+    except HTTPException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"患者信息无效：{exc}") from exc
 
-    session_id = uuid.uuid4().hex[:12]
+    session_id = uuid.uuid4().hex
     SESSIONS[session_id] = SessionState(
         session_id, patient, pkg.eeg_paths, pkg.emg_paths,
         institution=pkg.institution,
         persist_target="mysql",
-        package_name=package.filename,
+        package_name=package_name,
         assessment_id=pkg.manifest_summary.get("assessment_id"),
         assessment_time=pkg.manifest_summary.get("assessment_time"),
         n_trials=pkg.n_trials,
         package_hash=package_hash,
         parse_warnings=pkg.warnings,
         trial_details=pkg.trial_details,
+        temporary_work_dir=work,
     )
     return AssessSessionResponse(session_id=session_id, n_trials=pkg.n_trials)
 
@@ -903,12 +1244,16 @@ def _nonblank(*values: Any) -> str:
 
 def _valid_sex(value: Any) -> str:
     text = str(value or "").strip()
-    return text if text in {"男", "女"} else "男"
+    if text not in {"男", "女"}:
+        raise ValueError("缺少有效 sex（男/女），请先入组患者或随请求提供")
+    return text
 
 
 def _valid_side(value: Any) -> str:
     text = str(value or "").strip()
-    return text if text in {"左", "右"} else "左"
+    if text not in {"左", "右"}:
+        raise ValueError("缺少有效 paralysis_side（左/右），请先入组患者或随请求提供")
+    return text
 
 
 def _device_job_files(job_id: str) -> Dict[str, str]:
@@ -982,12 +1327,25 @@ def _bound_device_id(credential: DeviceCredential, requested_device_id: Optional
 def _device_job_or_404(job_id: str, credential: DeviceCredential) -> Dict[str, Any]:
     try:
         job = mysql_db.get_device_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="设备任务不存在")
+        if credential.device_id and job.get("device_id") != credential.device_id:
+            raise HTTPException(status_code=403, detail="该设备凭证无权访问此任务")
+        if job and job.get("status") in {"queued", "running"} and job.get("session_id"):
+            saved_assessment_id = mysql_db.assessment_id_for_session(str(job["session_id"]))
+            if saved_assessment_id is not None:
+                job = mysql_db.update_device_job(
+                    job_id,
+                    status="completed",
+                    phase="finished",
+                    progress_percent=100,
+                    status_message="评估已完成，可以下载结果",
+                    assessment_db_id=saved_assessment_id,
+                    clear_error=True,
+                    mark_completed=True,
+                ) or job
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
-    if job is None:
-        raise HTTPException(status_code=404, detail="设备任务不存在")
-    if credential.device_id and job.get("device_id") != credential.device_id:
-        raise HTTPException(status_code=403, detail="该设备凭证无权访问此任务")
     return job
 
 
@@ -1072,16 +1430,20 @@ def _create_device_assessment_job(
     try:
         patient = PatientInfo(
             patient_id=business_pid,
-            name=_nonblank(name, enrolled.get("name"), prefill.get("name"), business_pid),
-            sex=_valid_sex(_nonblank(sex, enrolled.get("sex"), prefill.get("sex"))),
-            age=age if age is not None else enrolled.get("age") or prefill.get("age"),
-            diagnosis=_nonblank(diagnosis, enrolled.get("diagnosis"), prefill.get("diagnosis"), "未填写"),
-            disease_days=(
-                disease_days
-                if disease_days is not None
-                else enrolled.get("disease_days") or prefill.get("disease_days")
+            name=_nonblank(enrolled.get("name"), name, prefill.get("name"), business_pid),
+            sex=_valid_sex(_nonblank(enrolled.get("sex"), sex, prefill.get("sex"))),
+            age=enrolled.get("age") if enrolled.get("age") is not None else (
+                age if age is not None else prefill.get("age")
             ),
-            paralysis_side=_valid_side(_nonblank(paralysis_side, enrolled.get("paralysis_side"), prefill.get("paralysis_side"))),
+            diagnosis=_nonblank(enrolled.get("diagnosis"), diagnosis, prefill.get("diagnosis"), "未填写"),
+            disease_days=(
+                enrolled.get("disease_days")
+                if enrolled.get("disease_days") is not None
+                else disease_days if disease_days is not None else prefill.get("disease_days")
+            ),
+            paralysis_side=_valid_side(
+                _nonblank(enrolled.get("paralysis_side"), paralysis_side, prefill.get("paralysis_side"))
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(input_path.parent, ignore_errors=True)
@@ -1098,7 +1460,7 @@ def _create_device_assessment_job(
 
     try:
         existing = (
-            mysql_db.find_device_job_by_idempotency_key(normalized_key)
+            mysql_db.find_device_job_by_idempotency_key(normalized_key, effective_device_id)
             if normalized_key
             else mysql_db.find_reusable_device_job(
                 package_hash=package_hash,
@@ -1120,7 +1482,7 @@ def _create_device_assessment_job(
             )
         return _device_submission_response(existing, deduplicated=True)
 
-    session_id = uuid.uuid4().hex[:12]
+    session_id = uuid.uuid4().hex
     state = SessionState(
         session_id, patient, pkg.eeg_paths, pkg.emg_paths,
         institution=pkg.institution,
@@ -1160,7 +1522,7 @@ def _create_device_assessment_job(
         if isinstance(exc, mysql_db.MySQLUnavailable):
             raise _mysql_guard(exc) from exc
         if normalized_key:
-            raced = mysql_db.find_device_job_by_idempotency_key(normalized_key)
+            raced = mysql_db.find_device_job_by_idempotency_key(normalized_key, effective_device_id)
             if raced is not None:
                 if raced.get("package_hash") != package_hash:
                     raise HTTPException(
@@ -1284,7 +1646,10 @@ async def device_create_assessment(
     """Device-side machine API: upload one active-assessment zip and start a
     background analysis job. The device polls ``/jobs/{job_id}`` and downloads
     the generated export files when the job reaches ``completed``."""
+    _cleanup_old_device_inputs()
     institution = (institution or "device").strip().lower()
+    if institution != "device":
+        raise HTTPException(status_code=422, detail="设备 API 仅接受 institution=device")
     if package is not None:
         job_id = f"devjob_{uuid.uuid4().hex[:16]}"
         work = DEVICE_JOB_ROOT / job_id
@@ -1311,6 +1676,8 @@ async def device_create_assessment(
         job_id = f"devjob_{uuid.uuid4().hex[:16]}"
         work = DEVICE_JOB_ROOT / job_id
         raw_institution = (_request_text(request, "institution", institution) or "device").strip().lower()
+        if raw_institution != "device":
+            raise HTTPException(status_code=422, detail="设备 API 仅接受 institution=device")
         filename = _request_text(request, "filename") or request.headers.get("X-Filename")
         _root, pkg, package_hash, package_name = await _save_and_extract_raw_zip(
             request, raw_institution, filename=filename, work_dir=work,
@@ -1357,9 +1724,12 @@ async def device_create_assessment_raw(
     query parameters or X-* headers, for example ``?patient_id=P001`` or
     ``X-Device-ID: device_001``.
     """
+    _cleanup_old_device_inputs()
     job_id = f"devjob_{uuid.uuid4().hex[:16]}"
     work = DEVICE_JOB_ROOT / job_id
     raw_institution = (_request_text(request, "institution", "device") or "device").strip().lower()
+    if raw_institution != "device":
+        raise HTTPException(status_code=422, detail="设备 API 仅接受 institution=device")
     filename = _request_text(request, "filename") or request.headers.get("X-Filename")
     _root, pkg, package_hash, package_name = await _save_and_extract_raw_zip(
         request, raw_institution, filename=filename, work_dir=work,
@@ -1464,7 +1834,11 @@ async def device_ack_job(
 
 
 @app.get("/api/assess/{session_id}/stream")
-async def stream_assessment(session_id: str):
+async def stream_assessment(
+    session_id: str,
+    request: Request,
+    _admin: None = Depends(_require_admin),
+):
     state = SESSIONS.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="session 不存在或已过期")
@@ -1472,17 +1846,32 @@ async def stream_assessment(session_id: str):
     # Kick off worker only once per session.
     _start_session_worker(state)
 
+    try:
+        cursor = max(0, int(request.headers.get("last-event-id", "0") or 0))
+    except ValueError:
+        cursor = 0
+
     async def event_generator():
+        nonlocal cursor
         loop = asyncio.get_event_loop()
         while True:
             try:
-                item = await loop.run_in_executor(None, state.queue.get)
+                rows, next_cursor, closed = await loop.run_in_executor(
+                    None, state.queue.wait_after, cursor, 15.0
+                )
             except Exception as exc:  # noqa: BLE001
                 yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
                 break
-            if item is SENTINEL or item.get("__sentinel__"):
+            if not rows and not closed:
+                yield ": keepalive\n\n"
+            for event_id, item in rows:
+                yield (
+                    f"id: {event_id}\n"
+                    f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                )
+            cursor = next_cursor
+            if closed and not rows:
                 break
-            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
 
     headers = {
         "Cache-Control": "no-cache",
@@ -1493,7 +1882,7 @@ async def stream_assessment(session_id: str):
 
 
 @app.get("/api/assess/{session_id}/result", response_model=AssessmentResult)
-async def get_result(session_id: str):
+async def get_result(session_id: str, _admin: None = Depends(_require_admin)):
     state = SESSIONS.get(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="session 不存在")
@@ -1502,8 +1891,28 @@ async def get_result(session_id: str):
     return state.result
 
 
+@app.delete("/api/assess/{session_id}")
+async def cancel_assessment(session_id: str, _admin: None = Depends(_require_admin)):
+    state = SESSIONS.get(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session 不存在或已过期")
+    if state.result is not None:
+        raise HTTPException(status_code=409, detail="评估已经完成，不能取消")
+
+    state.cancel_event.set()
+    removed = SESSION_SCHEDULER.cancel_pending(session_id)
+    if removed or not state.started:
+        state.queue.put({"type": "cancelled", "message": "评估任务已取消"})
+        state.queue.put(SENTINEL)
+        state.finished_monotonic = time.monotonic()
+        if state.temporary_work_dir is not None:
+            shutil.rmtree(state.temporary_work_dir, ignore_errors=True)
+        return {"status": "cancelled"}
+    return {"status": "cancellation_requested"}
+
+
 @app.get("/api/assess/{session_id}/report.docx")
-async def get_report_docx(session_id: str):
+async def get_report_docx(session_id: str, _admin: None = Depends(_require_admin)):
     """Render the session's Markdown report into a downloadable .docx."""
     state = SESSIONS.get(session_id)
     if state is None or state.result is None:
@@ -1525,12 +1934,31 @@ async def get_report_docx(session_id: str):
 
 @app.get("/api/health")
 async def health():
+    mysql_ready = bool(getattr(app.state, "mysql_ready", False) and mysql_db.ping())
+    dl_ready = bool(getattr(app.state, "dl_ready", False))
+    report_ready = bool(getattr(app.state, "report_ready", False))
     return {
-        "status": "ok",
+        "status": "ok" if mysql_ready and dl_ready and report_ready else "degraded",
+        "checks": {
+            "mysql": mysql_ready,
+            "scoring_models": dl_ready,
+            "report_model": report_ready,
+        },
         "models_loaded": list(app.state.registry.models.keys()),
+        "scoring_model_version": getattr(app.state, "dl_model_version", None),
         "report_provider": llm_provider(),
         "report_model": llm_model_name(),
+        "app_version": APP_VERSION,
+        "build_commit": APP_BUILD_COMMIT,
     }
+
+
+@app.get("/api/ready")
+async def ready():
+    payload = await health()
+    if payload["status"] != "ok":
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.get("/api/settings/llm")
@@ -1543,6 +1971,11 @@ async def update_llm_settings(
     payload: LlmSettingsUpdate,
     _admin: None = Depends(_require_admin),
 ):
+    if SESSION_SCHEDULER.has_work():
+        raise HTTPException(
+            status_code=409,
+            detail="当前仍有评估任务运行或排队，请在队列清空后切换报告模型",
+        )
     try:
         llm_settings.update_active_model(payload.active_model_id)
     except KeyError as exc:
@@ -1552,6 +1985,7 @@ async def update_llm_settings(
 
     # The next local report generation should load the newly selected model.
     REPORT_MODEL.reset()
+    app.state.report_ready = False
     return llm_settings.settings_payload(probe=True)
 
 
@@ -1561,6 +1995,11 @@ async def update_llm_model_settings(
     payload: LlmModelSettingsUpdate,
     _admin: None = Depends(_require_admin),
 ):
+    if SESSION_SCHEDULER.has_work():
+        raise HTTPException(
+            status_code=409,
+            detail="当前仍有评估任务运行或排队，请在队列清空后修改模型配置",
+        )
     try:
         llm_settings.update_model_settings(
             model_id,
@@ -1570,6 +2009,7 @@ async def update_llm_model_settings(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     REPORT_MODEL.reset()
+    app.state.report_ready = False
     return llm_settings.settings_payload(probe=True)
 
 
@@ -1676,16 +2116,64 @@ async def admin_revoke_device_credential(
 
 
 @app.post("/api/auth/login", response_model=AuthLoginResponse)
-async def auth_login(payload: AuthLoginRequest):
+async def auth_login(payload: AuthLoginRequest, request: Request, response: Response):
     expected_user, expected_password, token = _admin_settings()
     if not expected_password or not token:
         raise HTTPException(status_code=503, detail="后端鉴权未配置")
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    client_key = real_ip or forwarded or (request.client.host if request.client else "unknown")
+    now = time.time()
+    with _LOGIN_FAILURES_LOCK:
+        recent = [
+            value for value in _LOGIN_FAILURES.get(client_key, [])
+            if now - value < LOGIN_RATE_WINDOW_SECONDS
+        ]
+        _LOGIN_FAILURES[client_key] = recent
+        if len(recent) >= LOGIN_RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="登录尝试过于频繁，请稍后再试",
+                headers={"Retry-After": str(LOGIN_RATE_WINDOW_SECONDS)},
+            )
     if not (
         secrets.compare_digest(payload.username, expected_user)
         and secrets.compare_digest(payload.password, expected_password)
     ):
+        with _LOGIN_FAILURES_LOCK:
+            _LOGIN_FAILURES.setdefault(client_key, []).append(now)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    return AuthLoginResponse(access_token=token, user=expected_user)
+    with _LOGIN_FAILURES_LOCK:
+        _LOGIN_FAILURES.pop(client_key, None)
+    session_token = issue_session_token(expected_user, token, ADMIN_SESSION_TTL_SECONDS)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",", 1)[0].strip().lower()
+    origin_scheme = "https" if request.headers.get("origin", "").lower().startswith("https://") else ""
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        session_token,
+        max_age=ADMIN_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=proto == "https" or origin_scheme == "https",
+        samesite="strict",
+        path="/api",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return AuthLoginResponse(user=expected_user, expires_in=ADMIN_SESSION_TTL_SECONDS)
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    if not _browser_write_origin_allowed(request):
+        raise HTTPException(status_code=403, detail="请求来源校验失败，请刷新页面后重试")
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/api")
+    response.headers["Cache-Control"] = "no-store"
+    return {"ok": True}
+
+
+@app.get("/api/auth/session")
+async def auth_session(_admin: None = Depends(_require_admin)):
+    expected_user, _, _ = _admin_settings()
+    return {"user": expected_user}
 
 
 # --------------------------------------------------------------------------- #
@@ -1905,22 +2393,40 @@ async def mysql_delete_assessment(
     assessment_id: int,
     _admin: None = Depends(_require_admin),
 ):
+    if SESSION_SCHEDULER.has_work():
+        raise HTTPException(status_code=409, detail="当前仍有评估任务运行或排队，请稍后再删除记录")
     try:
+        jobs = mysql_db.device_jobs_for_assessment(assessment_id)
         deleted = mysql_db.delete_assessment(assessment_id)
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
     if deleted == 0:
         raise HTTPException(status_code=404, detail="记录不存在")
+    delete_assessment_export(assessment_id)
+    for job in jobs:
+        _cleanup_delivered_device_input(job)
+    for session_id, state in list(SESSIONS.items()):
+        if state.assessment_db_id == assessment_id:
+            SESSIONS.pop(session_id, None)
     return {"deleted": deleted}
 
 
 @app.delete("/api/mysql/assessments")
 async def mysql_clear_assessments(_admin: None = Depends(_require_admin)):
     """清空全部设备评估记录（测试期清理）。"""
+    if SESSION_SCHEDULER.has_work():
+        raise HTTPException(status_code=409, detail="当前仍有评估任务运行或排队，不能清空记录")
     try:
+        assessment_ids = mysql_db.all_assessment_ids()
+        jobs = mysql_db.completed_device_jobs()
         deleted = mysql_db.delete_all_assessments()
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
+    for assessment_id in assessment_ids:
+        delete_assessment_export(assessment_id)
+    for job in jobs:
+        _cleanup_delivered_device_input(job)
+    SESSIONS.clear()
     return {"deleted": deleted}
 
 
@@ -1930,12 +2436,26 @@ async def mysql_delete_patient(
     _admin: None = Depends(_require_admin),
 ):
     """删除患者及其全部评估记录（级联，测试期清理）。"""
+    if SESSION_SCHEDULER.has_work():
+        raise HTTPException(status_code=409, detail="当前仍有评估任务运行或排队，请稍后再删除患者")
     try:
+        patient_record = mysql_db.get_patient(patient_db_id)
+        assessment_ids = mysql_db.assessment_ids_for_patient(patient_db_id)
+        jobs = mysql_db.device_jobs_for_patient(patient_db_id)
         deleted = mysql_db.delete_patient(patient_db_id)
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
     if deleted == 0:
         raise HTTPException(status_code=404, detail="患者不存在")
+    for assessment_id in assessment_ids:
+        delete_assessment_export(assessment_id)
+    for job in jobs:
+        _cleanup_delivered_device_input(job)
+    removed_ids = set(assessment_ids)
+    business_patient_id = str((patient_record or {}).get("patient_id") or "")
+    for session_id, state in list(SESSIONS.items()):
+        if state.assessment_db_id in removed_ids or state.patient.patient_id == business_patient_id:
+            SESSIONS.pop(session_id, None)
     return {"deleted": deleted}
 
 

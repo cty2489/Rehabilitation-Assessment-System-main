@@ -2,6 +2,8 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。
 
+> `cloud-server-v1.1.15` 仍是最近一次线上稳定标签。当前开发分支包含鉴权、推理一致性、事务、上传和质量追踪加固，尚需在真实 GPU/MySQL 环境完成发布验收后再打新标签。
+
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
@@ -10,15 +12,15 @@
 cloud-server-v1.1.15
 ```
 
-这个标签对应已经在线上验证过的版本，包含：
+该标签提供已在线上验证过的运行基线；当前分支在此基础上包含：
 
 - Nginx 生产入口，不再依赖 Vite dev server
 - FastAPI 后端、MySQL、Qwen3-8B HF 本地报告模型联动；GGUF 服务已降级为手动回退/对照，不随生产脚本默认启动
-- 页面登录和 Bearer token 业务接口保护
+- 页面登录和后端业务接口保护
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
 - 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
-- 支持保留旧共享设备 token 的同时，为新增设备分配独立 token；独立凭证只能访问本设备任务
+- 每台设备使用独立 token 且只能访问本设备任务；旧共享 token 仅在显式迁移开关开启时可用
 - 管理员可在“系统管理 → 设备凭证”生成、查看掩码、停用、轮换和撤销设备码；数据库仅保存哈希，明文只显示一次
 - 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
 - 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
@@ -45,12 +47,13 @@ cloud-server-v1.1.15
 - 患者档案和评估记录管理
 - 医院端/设备端离线 zip 数据包解析
 - FMA-UE、手部肌张力、Brunnstrom 手功能分期预测
+- 设备端结果显式标注为工程链路验证状态；完成设备通道映射、域偏移和临床效度验证前，不作为独立诊疗依据
 - 26 项关键 biomarker 计算、展示和报告解读
 - 独立“模型设置”页可选择报告生成大模型，默认只展示已准备/已验证的 HF 原版权重模型
 - 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 和 InternLM3-8B-Instruct 可在“模型设置”中切换为 baseline 对照；Qwen2.5-7B-Instruct GGUF 仅保留为手动回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
-- 页面内登录保护，后端使用 Bearer token 保护读写接口
+- 页面内登录保护，浏览器使用短时 HttpOnly 会话 Cookie，不在 localStorage 保存管理员密钥
 - 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，其中 JSON/PDF 采用去重后的设备端交付结构
 
 ## 当前服务端口
@@ -181,7 +184,7 @@ curl http://127.0.0.1:8000/api/health
 backend/                     FastAPI 后端
 frontend/                    React/Vite 前端
 Deeplearning/                康复评分模型代码
-biomarkers/                  biomarker 计算与参考范围
+biomarkers/                  biomarker 计算与证据元数据（不作为临床参考范围展示）
 llm/                         transformers/LoRA 相关代码
 DL_model/                    康复评分模型权重目录，不随仓库上传
 llm_gguf_server.py           手动可选 GGUF 大模型 HTTP 服务
@@ -305,10 +308,11 @@ LLM_MODEL_ROOT=/root/autodl-tmp/rehab_project/models
 # 前端入口应返回 200
 curl -I http://127.0.0.1:6006/
 
-# 后端健康检查应返回 200
+# 后端存活检查；完整就绪检查必须返回 200
 curl http://127.0.0.1:8000/api/health
+curl -f http://127.0.0.1:8000/api/ready
 
-# 未登录访问业务数据应返回 401 Bearer
+# 未登录访问业务数据应返回 401
 curl -i http://127.0.0.1:8000/api/stats/summary
 
 # 登录后可下载评估结果文件
@@ -319,6 +323,17 @@ curl -i http://127.0.0.1:8000/api/stats/summary
 # 端口检查：生产不应出现 5173、33060；6008 只在手动启动 GGUF 回退时出现
 ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 ```
+
+代码变更提交前运行：
+
+```bash
+python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+PYTHONPATH=backend:. python -m pytest backend -q
+cd frontend && npm ci && npm run build
+cd .. && bash -n start_rehab_system.sh start_gguf_fallback.sh
+```
+
+CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend/requirements-test.txt`；真实模型、MySQL、PDF 文件和设备数据包仍须在部署环境执行端到端验收。
 
 ## 版本说明
 

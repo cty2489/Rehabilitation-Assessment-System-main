@@ -60,6 +60,26 @@ class AssessmentQueueTests(unittest.TestCase):
         scheduler.stop()
         self.assertEqual(seen, ["payload"])
 
+    def test_worker_exception_does_not_stop_following_jobs(self) -> None:
+        scheduler = AssessmentQueue()
+        completed = threading.Event()
+        seen = []
+
+        def worker(value: str) -> None:
+            seen.append(value)
+            if value == "bad":
+                raise RuntimeError("broken assessment")
+            completed.set()
+
+        scheduler.start(worker)
+        try:
+            scheduler.enqueue("bad", "bad")
+            scheduler.enqueue("good", "good")
+            self.assertTrue(completed.wait(timeout=1))
+            self.assertEqual(seen, ["bad", "good"])
+        finally:
+            scheduler.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

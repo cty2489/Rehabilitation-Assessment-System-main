@@ -55,6 +55,10 @@ _ASSESSMENT_EXTRA_COLUMNS: Dict[str, str] = {
     "model_version": "VARCHAR(255)",
     "llm_provider": "VARCHAR(32)",
     "llm_model": "VARCHAR(128)",
+    "patient_snapshot": "LONGTEXT",
+    "quality_json": "LONGTEXT",
+    "validation_status": "VARCHAR(64)",
+    "report_generation": "VARCHAR(32)",
 }
 
 _ASSESSMENT_INDEXES: Dict[str, str] = {
@@ -79,7 +83,8 @@ _DEVICE_JOB_EXTRA_COLUMNS: Dict[str, str] = {
 
 _DEVICE_JOB_INDEXES: Dict[str, str] = {
     "uniq_device_job_idempotency": (
-        "CREATE UNIQUE INDEX uniq_device_job_idempotency ON device_jobs(idempotency_key)"
+        "CREATE UNIQUE INDEX uniq_device_job_idempotency "
+        "ON device_jobs(device_id, idempotency_key)"
     ),
     "idx_device_job_created": "CREATE INDEX idx_device_job_created ON device_jobs(created_at)",
 }
@@ -87,6 +92,20 @@ _DEVICE_JOB_INDEXES: Dict[str, str] = {
 
 class MySQLUnavailable(RuntimeError):
     """Raised when MySQL / pymysql is not usable; callers surface a clear error."""
+
+
+def ping() -> bool:
+    try:
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 AS ok")
+                row = cur.fetchone()
+                return bool(row and int(row.get("ok", 0)) == 1)
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +121,7 @@ def _config() -> Dict[str, Any]:
     }
 
 
-def get_conn(with_db: bool = True):
+def get_conn(with_db: bool = True, autocommit: bool = True):
     if pymysql is None:
         raise MySQLUnavailable("未安装 pymysql，无法连接 MySQL（pip install pymysql）")
     cfg = _config()
@@ -112,7 +131,7 @@ def get_conn(with_db: bool = True):
         "user": cfg["user"],
         "password": cfg["password"],
         "charset": "utf8mb4",
-        "autocommit": True,
+        "autocommit": autocommit,
         "cursorclass": DictCursor,
     }
     if with_db:
@@ -141,7 +160,13 @@ def _to_dt(value: Any) -> Optional[str]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).strip()).strftime("%Y-%m-%d %H:%M:%S")
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:  # noqa: BLE001
         return None
 
@@ -186,7 +211,7 @@ def _norm_assessment_detail(row: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     row = _norm(row)
     if row is None:
         return None
-    for key in ("biomarkers", "parse_warnings", "prediction_json"):
+    for key in ("biomarkers", "parse_warnings", "prediction_json", "patient_snapshot", "quality_json"):
         row[key] = _json_value(row.get(key))
     return row
 
@@ -246,6 +271,11 @@ def _attach_assessment_children(cur, row: Optional[Dict[str, Any]]) -> Optional[
     if row is None:
         return None
     assessment_id = int(row["id"])
+    snapshot = row.get("patient_snapshot")
+    if isinstance(snapshot, dict):
+        for key in ("patient_id", "name", "sex", "age", "diagnosis", "paralysis_side", "disease_days"):
+            if snapshot.get(key) is not None:
+                row[key] = snapshot[key]
     row["trials"] = _fetch_trials(cur, assessment_id)
     row["biomarker_items"] = _fetch_biomarker_items(cur, assessment_id)
     return row
@@ -299,6 +329,10 @@ CREATE TABLE IF NOT EXISTS assessments (
   model_version   VARCHAR(255),
   llm_provider    VARCHAR(32),
   llm_model       VARCHAR(128),
+  patient_snapshot LONGTEXT,
+  quality_json    LONGTEXT,
+  validation_status VARCHAR(64),
+  report_generation VARCHAR(32),
   CONSTRAINT fk_assess_patient FOREIGN KEY (patient_db_id)
     REFERENCES patients(id) ON DELETE CASCADE,
   INDEX idx_assess_patient (patient_db_id),
@@ -388,7 +422,7 @@ CREATE TABLE IF NOT EXISTS device_jobs (
   INDEX idx_device_job_patient (patient_id),
   INDEX idx_device_job_status (status),
   INDEX idx_device_job_created (created_at),
-  UNIQUE KEY uniq_device_job_idempotency (idempotency_key)
+  UNIQUE KEY uniq_device_job_idempotency (device_id, idempotency_key)
 ) CHARACTER SET utf8mb4
 """
 
@@ -443,7 +477,16 @@ def _ensure_device_job_schema(cur) -> None:
             cur.execute(f"ALTER TABLE device_jobs ADD COLUMN {name} {ddl}")
 
     cur.execute("SHOW INDEX FROM device_jobs")
-    indexes = {row["Key_name"] for row in cur.fetchall()}
+    index_rows = cur.fetchall()
+    indexes = {row["Key_name"] for row in index_rows}
+    idempotency_columns = [
+        row["Column_name"]
+        for row in sorted(index_rows, key=lambda item: int(item.get("Seq_in_index") or 0))
+        if row["Key_name"] == "uniq_device_job_idempotency"
+    ]
+    if idempotency_columns and idempotency_columns != ["device_id", "idempotency_key"]:
+        cur.execute("DROP INDEX uniq_device_job_idempotency ON device_jobs")
+        indexes.discard("uniq_device_job_idempotency")
     for name, ddl in _DEVICE_JOB_INDEXES.items():
         if name not in indexes:
             cur.execute(ddl)
@@ -602,9 +645,12 @@ def upsert_patient(patient: Any, source: str = "device-auto") -> int:
                    disease_days, source, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
-                  name=VALUES(name), sex=VALUES(sex), age=VALUES(age),
-                  diagnosis=VALUES(diagnosis), paralysis_side=VALUES(paralysis_side),
-                  disease_days=VALUES(disease_days), updated_at=VALUES(updated_at)
+                  name=VALUES(name), sex=VALUES(sex),
+                  age=COALESCE(VALUES(age), age),
+                  diagnosis=COALESCE(NULLIF(VALUES(diagnosis), ''), diagnosis),
+                  paralysis_side=COALESCE(NULLIF(VALUES(paralysis_side), ''), paralysis_side),
+                  disease_days=COALESCE(VALUES(disease_days), disease_days),
+                  updated_at=VALUES(updated_at)
                 """,
                 (
                     pid,
@@ -663,9 +709,11 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
                 """
                 SELECT id, source, assessment_id, session_id, package_name,
                        institution, n_trials, package_hash, created_at,
-                       assessment_time, fma_ue, bi, hand_tone, hand_function,
+                       assessment_time, fma_ue, hand_tone, hand_function,
                        report, report_status, biomarkers, parse_warnings,
-                       prediction_json, model_version, llm_provider, llm_model
+                       prediction_json, model_version, llm_provider, llm_model,
+                       patient_snapshot, quality_json, validation_status,
+                       report_generation
                 FROM assessments WHERE patient_db_id=%s
                 ORDER BY created_at DESC, id DESC
                 """,
@@ -1073,13 +1121,20 @@ def get_device_job(job_id: str) -> Optional[Dict[str, Any]]:
     return _norm_device_job(row)
 
 
-def find_device_job_by_idempotency_key(idempotency_key: str) -> Optional[Dict[str, Any]]:
+def find_device_job_by_idempotency_key(
+    idempotency_key: str,
+    device_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM device_jobs WHERE idempotency_key=%s LIMIT 1",
-                (idempotency_key,),
+                """
+                SELECT * FROM device_jobs
+                WHERE idempotency_key=%s AND (device_id <=> %s)
+                LIMIT 1
+                """,
+                (idempotency_key, device_id),
             )
             row = cur.fetchone()
     finally:
@@ -1132,6 +1187,17 @@ def list_recoverable_device_jobs() -> List[Dict[str, Any]]:
     return [_norm_device_job(row) for row in rows]
 
 
+def list_device_job_retention_records() -> List[Dict[str, Any]]:
+    """Return the small job subset needed by filesystem retention cleanup."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT job_id, status FROM device_jobs")
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def assessment_id_for_session(session_id: str) -> Optional[int]:
     conn = get_conn()
     try:
@@ -1168,12 +1234,50 @@ def list_patients() -> List[Dict[str, Any]]:
 
 
 def delete_patient(patient_db_id: int) -> int:
-    """Delete a patient (assessments cascade). Returns rows affected."""
+    """Delete a patient, its device jobs, and cascading assessments atomically."""
+    conn = get_conn(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT patient_id FROM patients WHERE id=%s", (patient_db_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.rollback()
+                return 0
+            cur.execute("DELETE FROM device_jobs WHERE patient_id=%s", (row["patient_id"],))
+            cur.execute("DELETE FROM patients WHERE id=%s", (patient_db_id,))
+            deleted = cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def assessment_ids_for_patient(patient_db_id: int) -> List[int]:
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM patients WHERE id=%s", (patient_db_id,))
-            return cur.rowcount
+            cur.execute("SELECT id FROM assessments WHERE patient_db_id=%s", (patient_db_id,))
+            return [int(row["id"]) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def device_jobs_for_patient(patient_db_id: int) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT j.* FROM device_jobs j
+                JOIN patients p ON p.patient_id=j.patient_id
+                WHERE p.id=%s
+                """,
+                (patient_db_id,),
+            )
+            return [_norm_device_job(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -1325,8 +1429,166 @@ def replace_assessment_biomarkers(assessment_id: int, biomarkers: Optional[Dict[
         conn.close()
 
 
+def save_assessment_bundle(
+    patient: Any,
+    session_id: Optional[str],
+    predictions: Any,
+    report: Optional[str],
+    report_status: str,
+    *,
+    source: str,
+    package_name: Optional[str] = None,
+    assessment_id: Optional[str] = None,
+    assessment_time: Optional[str] = None,
+    institution: Optional[str] = None,
+    n_trials: Optional[int] = None,
+    package_hash: Optional[str] = None,
+    parse_warnings: Optional[List[str]] = None,
+    prediction_payload: Optional[Dict[str, Any]] = None,
+    model_version: Optional[str] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    trials: Optional[List[Dict[str, Any]]] = None,
+    biomarkers: Optional[Dict[str, Any]] = None,
+    quality: Optional[Dict[str, Any]] = None,
+    validation_status: Optional[str] = None,
+    report_generation: Optional[str] = None,
+) -> int:
+    """Persist one complete assessment atomically and return its row id.
+
+    Existing patient master data is never changed by an assessment upload. The
+    submitted patient information is retained as an immutable assessment-time
+    snapshot for historical reports and exports.
+    """
+    ts = now_dt()
+    patient_snapshot = (
+        patient.model_dump() if hasattr(patient, "model_dump") else dict(patient)
+    )
+    conn = get_conn(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO patients
+                  (patient_id, name, sex, age, diagnosis, paralysis_side,
+                   disease_days, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE patient_id=VALUES(patient_id)
+                """,
+                (
+                    _field(patient, "patient_id"),
+                    _field(patient, "name"),
+                    _field(patient, "sex"),
+                    _field(patient, "age"),
+                    _field(patient, "diagnosis"),
+                    _field(patient, "paralysis_side"),
+                    _field(patient, "disease_days"),
+                    f"{source}-auto",
+                    ts,
+                    ts,
+                ),
+            )
+            cur.execute(
+                "SELECT id FROM patients WHERE patient_id=%s",
+                (_field(patient, "patient_id"),),
+            )
+            patient_row = cur.fetchone()
+            if not patient_row:
+                raise RuntimeError("patient row was not available after insert")
+            patient_db_id = int(patient_row["id"])
+
+            cur.execute(
+                """
+                INSERT INTO assessments
+                  (patient_db_id, source, assessment_id, session_id, package_name,
+                   institution, n_trials, package_hash, created_at, assessment_time,
+                   fma_ue, bi, hand_tone, hand_function, report, report_status,
+                   biomarkers, parse_warnings, prediction_json, model_version,
+                   llm_provider, llm_model, patient_snapshot, quality_json,
+                   validation_status, report_generation)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    patient_db_id,
+                    source,
+                    assessment_id,
+                    session_id,
+                    package_name,
+                    institution,
+                    n_trials,
+                    package_hash,
+                    ts,
+                    _to_dt(assessment_time),
+                    float(_field(predictions, "FMA_UE")),
+                    float(_field(predictions, "BI") or 0.0),
+                    str(_field(predictions, "hand_tone")),
+                    int(_field(predictions, "hand_function")),
+                    report,
+                    report_status,
+                    json.dumps(biomarkers, ensure_ascii=False) if biomarkers else None,
+                    json.dumps(parse_warnings or [], ensure_ascii=False),
+                    json.dumps(prediction_payload or {}, ensure_ascii=False),
+                    model_version,
+                    llm_provider,
+                    llm_model,
+                    json.dumps(patient_snapshot, ensure_ascii=False),
+                    json.dumps(quality or {}, ensure_ascii=False),
+                    validation_status,
+                    report_generation,
+                ),
+            )
+            new_assessment_id = int(cur.lastrowid)
+
+            trial_rows = []
+            for index, trial in enumerate(trials or [], start=1):
+                trial_rows.append(
+                    (
+                        new_assessment_id,
+                        trial.get("trial_index") or index,
+                        trial.get("assessment_type"),
+                        trial.get("action_name") or trial.get("action"),
+                        trial.get("eeg_file") or trial.get("eeg_path"),
+                        trial.get("emg_imu_file") or trial.get("emg_file") or trial.get("emg_path"),
+                        trial.get("eeg_name"),
+                        trial.get("emg_name"),
+                        trial.get("status") or "used",
+                        trial.get("note"),
+                        ts,
+                    )
+                )
+            if trial_rows:
+                cur.executemany(
+                    """
+                    INSERT INTO assessment_trials
+                      (assessment_db_id, trial_index, assessment_type, action_name,
+                       eeg_file, emg_file, eeg_name, emg_name, status, note, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    trial_rows,
+                )
+
+            biomarker_rows = _biomarker_insert_rows(new_assessment_id, biomarkers, ts)
+            if biomarker_rows:
+                cur.executemany(
+                    """
+                    INSERT INTO assessment_biomarkers
+                      (assessment_db_id, group_key, group_label, marker_key, marker_name,
+                       value_text, value_num, unit, ref_range, n_valid, available, note,
+                       created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    biomarker_rows,
+                )
+        conn.commit()
+        return new_assessment_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 def latest_assessment_for_patient(patient_id: str) -> Optional[Dict[str, Any]]:
-    """Most recent assessment (4 indicators + biomarkers) for a business
+    """Most recent assessment (three served indicators + biomarkers) for a business
     ``patient_id`` — the report's 变化趋势 column reads this before inserting the
     current visit. Returns None if the patient has no prior assessment."""
     conn = get_conn()
@@ -1334,12 +1596,12 @@ def latest_assessment_for_patient(patient_id: str) -> Optional[Dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT a.fma_ue, a.bi, a.hand_tone, a.hand_function,
-                       a.biomarkers, a.created_at
+                SELECT a.fma_ue, a.hand_tone, a.hand_function,
+                       a.biomarkers, a.created_at, a.assessment_time
                 FROM assessments a
                 JOIN patients p ON p.id = a.patient_db_id
                 WHERE p.patient_id = %s
-                ORDER BY a.created_at DESC, a.id DESC
+                ORDER BY COALESCE(a.assessment_time, a.created_at) DESC, a.id DESC
                 LIMIT 1
                 """,
                 (patient_id,),
@@ -1362,8 +1624,9 @@ def list_assessments(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
                        COALESCE(p.name, '') AS name,
                        a.source, a.assessment_id, a.session_id, a.package_name,
                        a.institution, a.n_trials, a.package_hash, a.assessment_time,
-                       a.fma_ue, a.bi, a.hand_tone, a.hand_function, a.report_status,
-                       a.model_version, a.llm_provider, a.llm_model
+                       a.fma_ue, a.hand_tone, a.hand_function, a.report_status,
+                       a.model_version, a.llm_provider, a.llm_model,
+                       a.validation_status, a.report_generation
                 FROM assessments a
                 JOIN patients p ON p.id = a.patient_db_id
                 ORDER BY a.created_at DESC, a.id DESC
@@ -1430,7 +1693,7 @@ def stats_summary() -> Dict[str, Any]:
             )
             hand_rows = cur.fetchall()
 
-            cur.execute("SELECT AVG(fma_ue) AS fma, AVG(bi) AS bi FROM assessments")
+            cur.execute("SELECT AVG(fma_ue) AS fma FROM assessments")
             avg_row = cur.fetchone()
 
             cur.execute(
@@ -1447,7 +1710,6 @@ def stats_summary() -> Dict[str, Any]:
         conn.close()
 
     fma = avg_row["fma"] if avg_row else None
-    bi = avg_row["bi"] if avg_row else None
     return {
         "patient_count": patient_count,
         "assessment_count": assessment_count,
@@ -1459,7 +1721,6 @@ def stats_summary() -> Dict[str, Any]:
             str(r["hand_function"]): int(r["c"]) for r in hand_rows
         },
         "avg_fma_ue": round(float(fma), 1) if fma is not None else None,
-        "avg_bi": round(float(bi), 1) if bi is not None else None,
         "assessments_by_day": [
             {"date": str(r["date"]), "count": int(r["count"])}
             for r in reversed(day_rows)
@@ -1468,23 +1729,65 @@ def stats_summary() -> Dict[str, Any]:
 
 
 def delete_assessment(assessment_id: int) -> int:
-    """Delete one assessment row by primary key. Returns rows affected."""
+    """Delete one assessment and its associated device jobs atomically."""
+    conn = get_conn(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM device_jobs WHERE assessment_db_id=%s", (assessment_id,))
+            cur.execute("DELETE FROM assessments WHERE id=%s", (assessment_id,))
+            deleted = cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def device_jobs_for_assessment(assessment_id: int) -> List[Dict[str, Any]]:
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM assessments WHERE id=%s", (assessment_id,))
-            return cur.rowcount
+            cur.execute("SELECT * FROM device_jobs WHERE assessment_db_id=%s", (assessment_id,))
+            return [_norm_device_job(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def all_assessment_ids() -> List[int]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM assessments")
+            return [int(row["id"]) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def completed_device_jobs() -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM device_jobs WHERE assessment_db_id IS NOT NULL")
+            return [_norm_device_job(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
 
 def delete_all_assessments() -> int:
-    """Clear every assessment row (test cleanup). Returns rows affected."""
-    conn = get_conn()
+    """Clear assessments and their completed device jobs atomically."""
+    conn = get_conn(autocommit=False)
     try:
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM device_jobs WHERE assessment_db_id IS NOT NULL")
             cur.execute("DELETE FROM assessments")
-            return cur.rowcount
+            deleted = cur.rowcount
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -1495,31 +1798,138 @@ def delete_all_assessments() -> int:
 def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Enroll a patient: upsert basic info (source='enrollment') and, if a first
     assessment is supplied (the hospital's first record, manually entered),
-    insert it (source='hospital'). Returns the full patient record."""
-    pid = upsert_patient(basic, source="enrollment")
-    if first:
-        assessment_id = insert_assessment(
-            pid,
-            None,
-            first,
-            first.get("report"),
-            "generated" if first.get("report") else "manual",
-            source="hospital",
-            assessment_id=first.get("assessment_id"),
-            assessment_time=first.get("assessment_time"),
-            biomarkers=first.get("biomarkers"),
-            institution="hospital",
-            n_trials=first.get("n_trials"),
-            package_hash=first.get("package_hash"),
-            parse_warnings=first.get("parse_warnings"),
-            prediction_json=first.get("prediction_json"),
-            model_version=first.get("model_version"),
-            llm_provider=first.get("llm_provider"),
-            llm_model=first.get("llm_model"),
-        )
-        replace_assessment_trials(assessment_id, first.get("trials"))
-        replace_assessment_biomarkers(assessment_id, _json_value(first.get("biomarkers")))
-    return get_patient(pid)  # type: ignore[return-value]
+    insert the patient, assessment, trials, and biomarkers in one transaction.
+    Returns the full patient record.
+    """
+    ts = now_dt()
+    conn = get_conn(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO patients
+                  (patient_id, name, sex, age, diagnosis, paralysis_side,
+                   disease_days, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'enrollment', %s, %s)
+                ON DUPLICATE KEY UPDATE
+                  name=VALUES(name), sex=VALUES(sex),
+                  age=COALESCE(VALUES(age), age),
+                  diagnosis=COALESCE(NULLIF(VALUES(diagnosis), ''), diagnosis),
+                  paralysis_side=COALESCE(NULLIF(VALUES(paralysis_side), ''), paralysis_side),
+                  disease_days=COALESCE(VALUES(disease_days), disease_days),
+                  updated_at=VALUES(updated_at)
+                """,
+                (
+                    _field(basic, "patient_id"),
+                    _field(basic, "name"),
+                    _field(basic, "sex"),
+                    _field(basic, "age"),
+                    _field(basic, "diagnosis"),
+                    _field(basic, "paralysis_side"),
+                    _field(basic, "disease_days"),
+                    ts,
+                    ts,
+                ),
+            )
+            cur.execute(
+                "SELECT id FROM patients WHERE patient_id=%s",
+                (_field(basic, "patient_id"),),
+            )
+            patient_row = cur.fetchone()
+            if not patient_row:
+                raise RuntimeError("patient row was not available after enrollment")
+            patient_db_id = int(patient_row["id"])
+
+            if first:
+                biomarkers = _json_value(first.get("biomarkers"))
+                parse_warnings = _json_value(first.get("parse_warnings")) or []
+                prediction_payload = _json_value(first.get("prediction_json")) or {}
+                report = first.get("report")
+                cur.execute(
+                    """
+                    INSERT INTO assessments
+                      (patient_db_id, source, assessment_id, session_id, package_name,
+                       institution, n_trials, package_hash, created_at, assessment_time,
+                       fma_ue, bi, hand_tone, hand_function, report, report_status,
+                       biomarkers, parse_warnings, prediction_json, model_version,
+                       llm_provider, llm_model, patient_snapshot, quality_json,
+                       validation_status, report_generation)
+                    VALUES (%s, 'hospital', %s, NULL, NULL, 'hospital', %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, NULL, 'manual_clinical_input', %s)
+                    """,
+                    (
+                        patient_db_id,
+                        first.get("assessment_id"),
+                        first.get("n_trials"),
+                        first.get("package_hash"),
+                        ts,
+                        _to_dt(first.get("assessment_time")),
+                        float(_field(first, "FMA_UE")),
+                        float(_field(first, "BI") or 0.0),
+                        str(_field(first, "hand_tone")),
+                        int(_field(first, "hand_function")),
+                        report,
+                        "generated" if report else "manual",
+                        json.dumps(biomarkers, ensure_ascii=False) if biomarkers else None,
+                        json.dumps(parse_warnings, ensure_ascii=False),
+                        json.dumps(prediction_payload, ensure_ascii=False),
+                        first.get("model_version"),
+                        first.get("llm_provider"),
+                        first.get("llm_model"),
+                        json.dumps(basic, ensure_ascii=False),
+                        "manual" if report else None,
+                    ),
+                )
+                assessment_db_id = int(cur.lastrowid)
+
+                trial_rows = []
+                for index, trial in enumerate(first.get("trials") or [], start=1):
+                    trial_rows.append(
+                        (
+                            assessment_db_id,
+                            trial.get("trial_index") or index,
+                            trial.get("assessment_type"),
+                            trial.get("action_name") or trial.get("action"),
+                            trial.get("eeg_file") or trial.get("eeg_path"),
+                            trial.get("emg_imu_file") or trial.get("emg_file") or trial.get("emg_path"),
+                            trial.get("eeg_name"),
+                            trial.get("emg_name"),
+                            trial.get("status") or "used",
+                            trial.get("note"),
+                            ts,
+                        )
+                    )
+                if trial_rows:
+                    cur.executemany(
+                        """
+                        INSERT INTO assessment_trials
+                          (assessment_db_id, trial_index, assessment_type, action_name,
+                           eeg_file, emg_file, eeg_name, emg_name, status, note, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        trial_rows,
+                    )
+
+                biomarker_rows = _biomarker_insert_rows(assessment_db_id, biomarkers, ts)
+                if biomarker_rows:
+                    cur.executemany(
+                        """
+                        INSERT INTO assessment_biomarkers
+                          (assessment_db_id, group_key, group_label, marker_key, marker_name,
+                           value_text, value_num, unit, ref_range, n_valid, available, note,
+                           created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        biomarker_rows,
+                    )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return get_patient(patient_db_id)  # type: ignore[return-value]
 
 
 __all__ = [
@@ -1552,6 +1962,7 @@ __all__ = [
     "find_device_job_by_idempotency_key",
     "find_reusable_device_job",
     "list_recoverable_device_jobs",
+    "list_device_job_retention_records",
     "assessment_id_for_session",
     "list_assessments",
     "get_assessment",

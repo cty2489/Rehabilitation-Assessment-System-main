@@ -7,6 +7,7 @@ cannot compete for the same model memory.
 from __future__ import annotations
 
 import threading
+import traceback
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Deque, Optional, Tuple
@@ -65,6 +66,24 @@ class AssessmentQueue:
         with self._condition:
             return self._snapshot_locked(session_id)
 
+    def has_work(self) -> bool:
+        with self._condition:
+            return self._active_id is not None or bool(self._pending)
+
+    def pending_count(self) -> int:
+        with self._condition:
+            return len(self._pending) + (1 if self._active_id else 0)
+
+    def cancel_pending(self, session_id: str) -> bool:
+        """Remove a queued (not active) session."""
+        with self._condition:
+            for index, (pending_id, _) in enumerate(self._pending):
+                if pending_id == session_id:
+                    del self._pending[index]
+                    self._condition.notify_all()
+                    return True
+            return False
+
     def _snapshot_locked(self, session_id: str) -> Optional[QueueSnapshot]:
         if self._active_id == session_id:
             return QueueSnapshot("running", 0, 0)
@@ -89,6 +108,8 @@ class AssessmentQueue:
                 if worker is None:
                     raise RuntimeError("assessment queue worker is not configured")
                 worker(state)
+            except Exception:  # keep later assessments runnable after one unexpected failure
+                traceback.print_exc()
             finally:
                 with self._condition:
                     self._active_id = None
