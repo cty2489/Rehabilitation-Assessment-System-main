@@ -136,6 +136,14 @@ def _assessment() -> dict:
 
 
 class AssessmentExportPayloadTests(unittest.TestCase):
+    def test_pdf_markup_marks_latin_runs(self) -> None:
+        markup = assessment_export._pdf_markup("患者 CLOUD_E2E_2026 V·s & <ok>")
+
+        self.assertEqual(
+            markup,
+            '患者<font face="Helvetica"> CLOUD_E2E_2026 V·s &amp; &lt;ok&gt;</font>',
+        )
+
     def test_result_payload_v2_removes_raw_duplicate_blocks(self) -> None:
         payload = assessment_export.build_result_payload(_assessment())
 

@@ -10,6 +10,7 @@ Each MySQL-backed assessment can be materialized as:
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -528,6 +529,21 @@ def _pdf_text(value: Any) -> str:
     return str(value)
 
 
+def _pdf_markup(value: Any, latin_font: str = "Helvetica") -> str:
+    """Render Latin runs with a font whose metrics are reliable."""
+    lines: List[str] = []
+    for line in _pdf_text(value).split("\n"):
+        chunks: List[str] = []
+        for chunk in re.findall(r"[\u0000-\u024f]+|[^\u0000-\u024f]+", line):
+            escaped = html.escape(chunk, quote=False)
+            if ord(chunk[0]) <= 0x024F and latin_font != "STSong-Light":
+                chunks.append(f'<font face="{latin_font}">{escaped}</font>')
+            else:
+                chunks.append(escaped)
+        lines.append("".join(chunks))
+    return "<br/>".join(lines)
+
+
 def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     try:
         from reportlab.lib import colors
@@ -537,10 +553,29 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont, TTFError
     except ImportError as exc:  # pragma: no cover - environment guard
         raise RuntimeError("缺少 reportlab，无法生成 PDF：pip install reportlab") from exc
 
     pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    latin_font = "STSong-Light"
+    latin_font_candidates = [
+        os.environ.get("PDF_LATIN_FONT_PATH", "").strip(),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+    ]
+    for candidate in latin_font_candidates:
+        if not candidate or not Path(candidate).is_file():
+            continue
+        try:
+            if "RehabLatin" not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont("RehabLatin", candidate))
+            latin_font = "RehabLatin"
+            break
+        except (OSError, TTFError):
+            continue
     styles = getSampleStyleSheet()
     base = ParagraphStyle(
         "BaseCN",
@@ -584,14 +619,7 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     )
 
     def p(text: Any, style: ParagraphStyle = base) -> Paragraph:
-        escaped = (
-            _pdf_text(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\n", "<br/>")
-        )
-        return Paragraph(escaped, style)
+        return Paragraph(_pdf_markup(text, latin_font), style)
 
     def kv_table(
         rows: List[List[Any]],

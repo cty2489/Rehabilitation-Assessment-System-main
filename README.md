@@ -139,6 +139,7 @@ APP_ADMIN_PASSWORD=change-this-password
 APP_AUTH_TOKEN=generate-a-long-random-token
 MYSQL_PASSWORD=change-this-mysql-password
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
+PDF_LATIN_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
 ```
 
 4. 安装依赖、构建前端、配置 MySQL 和 Nginx：

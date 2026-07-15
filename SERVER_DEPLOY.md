@@ -73,6 +73,9 @@ git pull
 后端依赖：
 
 ```bash
+apt-get update
+apt-get install -y fonts-dejavu-core
+
 cd /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main
 source /root/autodl-tmp/envs/rehab_backend/bin/activate
 pip install -r backend/requirements.txt
@@ -202,6 +205,7 @@ MIN_FREE_DISK_BYTES=2147483648
 MAX_TRIALS=30
 SESSION_TTL_HOURS=168
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
+PDF_LATIN_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
 ```
 
 ### 5.1 大模型设置页
@@ -541,12 +545,19 @@ mysqlx=0
 
 ### PDF 导出失败
 
-确认后端环境安装了 `reportlab`：
+确认后端环境安装了 `reportlab`，系统存在用于英文、数字和单位的 TrueType 字体：
 
 ```bash
+apt-get update
+apt-get install -y fonts-dejavu-core
+test -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf && echo FONT_OK
+
 source /root/autodl-tmp/envs/rehab_backend/bin/activate
 pip install -r /root/autodl-tmp/rehab_project/Rehabilitation-Assessment-System-main/backend/requirements.txt
 ```
+
+默认会自动查找 DejaVu Sans。若服务器使用其他字体路径，在 `backend/.env` 设置
+`PDF_LATIN_FONT_PATH=/absolute/path/to/font.ttf`，重启后端并重新生成报告。
 
 ### 报告大模型生成失败
 
