@@ -61,6 +61,22 @@ def test_local_candidate_without_weight_path_is_not_ready(tmp_path, monkeypatch)
     assert qwen3["status"] == "not_ready"
 
 
+def test_inaccessible_model_path_is_treated_as_unavailable(tmp_path, monkeypatch):
+    fallback = tmp_path / "available-model"
+    fallback.mkdir()
+    real_exists = llm_settings.Path.exists
+
+    def guarded_exists(path):
+        if str(path).startswith("/denied"):
+            raise PermissionError("not allowed")
+        return real_exists(path)
+
+    monkeypatch.setattr(llm_settings.Path, "exists", guarded_exists)
+
+    assert llm_settings._first_existing_path(["/denied/model", str(fallback)]) == str(fallback)
+    assert llm_settings._path_exists("/denied/model") is False
+
+
 def test_update_active_model_rejects_not_ready_local_candidate(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_settings, "CONFIG_PATH", tmp_path / "llm_settings.json")
     monkeypatch.setenv("LLM_MODEL_ROOT", str(tmp_path / "models"))

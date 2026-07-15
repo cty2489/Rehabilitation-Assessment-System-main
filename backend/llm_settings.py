@@ -50,7 +50,7 @@ def _original_model_path(filename: str) -> str:
 
 def _first_existing_path(paths: List[str]) -> str:
     for item in paths:
-        if item and Path(item).exists():
+        if _path_exists(item):
             return item
     return paths[0] if paths else ""
 
@@ -290,7 +290,12 @@ def update_model_settings(model_id: str, patch: Dict[str, Any]) -> Dict[str, Any
 
 def _path_exists(path: Any) -> bool:
     text = str(path or "").strip()
-    return bool(text) and Path(text).exists()
+    if not text:
+        return False
+    try:
+        return Path(text).exists()
+    except OSError:
+        return False
 
 
 def _remote_health(remote_url: str) -> Dict[str, Any]:
