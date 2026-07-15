@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。
 
-> `cloud-server-v1.1.15` 仍是最近一次线上稳定标签。当前开发分支包含鉴权、推理一致性、事务、上传和质量追踪加固，尚需在真实 GPU/MySQL 环境完成发布验收后再打新标签。
+> `cloud-server-v1.1.16` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.15
+cloud-server-v1.1.16
 ```
 
 该标签提供已在线上验证过的运行基线；当前分支在此基础上包含：
@@ -104,7 +104,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.15
+git checkout cloud-server-v1.1.16
 ```
 
 2. 准备外部文件：
@@ -341,7 +341,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.15
+稳定演示/复现实验：使用 cloud-server-v1.1.16
 日常继续开发：使用 main
 ```
 
