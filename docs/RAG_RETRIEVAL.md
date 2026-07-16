@@ -1,6 +1,6 @@
 # RAG 第二步：BGE-M3 语义检索
 
-本阶段把第一步生成的 `chunks.jsonl` 转换成 1024 维稠密向量，并保存到 Qdrant。它仍是独立实验，不调用报告大模型、不修改 Brunnstrom/FMA/MAS 结果，也不接入正式 JSON/PDF。
+本阶段把第一步生成的 `chunks.jsonl` 转换成 1024 维稠密向量，并保存到 Qdrant。该检索层不修改 Brunnstrom/FMA/MAS 结果；报告链路的受控 Shadow 接入见 [`RAG_GROUNDING.md`](RAG_GROUNDING.md)。
 
 ## 当前部署选择
 
@@ -8,7 +8,7 @@
 - 向量库：Qdrant Client 本地持久化模式。
 - 数据范围：7 个 `demo_ready` 知识块。
 - 临床状态：全部 `clinical_ready=false`，索引时必须显式使用 `--allow-demo`。
-- 正式报告开关：`RAG_ENABLED=0`。
+- 独立服务默认开关：`RAG_ENABLED=0`；报告后端默认 `RAG_MODE=off`。
 
 Qdrant 本地模式适合当前小规模教学和调试，数据保存在磁盘上，不监听端口。知识量、并发或服务数量增加后，再把 `RAG_BACKEND` 改成 `server`，连接只监听 `127.0.0.1:6333` 的独立 Qdrant 服务。
 
@@ -78,7 +78,7 @@ knowledge_base/eval/semantic_queries_v0_1.jsonl   21个同义改写问题
 knowledge_base/eval/no_answer_queries_v0_1.jsonl 11个知识库无答案问题
 ```
 
-21 个改写问题的实测结果为 `Hit@1=0.8571`、`Hit@3=1.0`、`MRR=0.9286`。无答案测试发现，同属康复领域但知识库未覆盖的问题最高相似度达到 `0.6270`，因此不能仅靠固定 score 阈值决定是否回答。第三阶段必须加入 reranker、证据充分性判断和明确的拒答路径。
+21 个改写问题的实测结果为 `Hit@1=0.8571`、`Hit@3=1.0`、`MRR=0.9286`。无答案测试发现，同属康复领域但知识库未覆盖的问题最高相似度达到 `0.6270`，因此不能仅靠固定 score 阈值决定是否回答。v0.3 已加入受控 Shadow 证据包与治理门禁，但 reranker、证据充分性判断和明确拒答路径仍是 Assist 启用前的必做项。
 
 ## 数据流
 
@@ -91,7 +91,7 @@ chunks.jsonl
   -> 返回知识片段与来源状态
 ```
 
-这一阶段只有召回，没有重排，也没有让 Qwen3 生成答案。完成检索评测后，第三步才加入 reranker 和证据包。
+这一阶段只有召回，没有重排。v0.3 已让后端在 Shadow 模式记录证据包，但不把证据加入 Qwen3 提示词；重排与拒答能力完成前不得开启正式 Assist。
 
 ## 官方资料
 

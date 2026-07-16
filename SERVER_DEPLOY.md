@@ -375,6 +375,22 @@ chmod +x /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 ```
 
+### 7.1 可选 RAG Shadow 服务
+
+RAG 不随生产一键脚本自动启动，也不与报告后端共用 Python 环境。当前知识库只有 Demo 条目，云端只能使用 `shadow`：检索结果写入受限权限轨迹，但不会进入提示词，也不会改变网页、JSON 或 PDF 报告。
+
+独立服务只监听 `127.0.0.1:8010`，启动模板为：
+
+```bash
+cp /root/autodl-tmp/rehab_project/current/start_rag_service.sh \
+  /root/autodl-tmp/rehab_project/start_rag_service.sh
+chmod +x /root/autodl-tmp/rehab_project/start_rag_service.sh
+bash /root/autodl-tmp/rehab_project/start_rag_service.sh
+curl -f http://127.0.0.1:8010/health
+```
+
+知识原文、切块、索引和 `rag.env` 必须保存在 `/root/autodl-tmp/rehab_project/` 稳定数据目录，不要放进可替换的 Git release。完整初始化、索引、Shadow 后端配置、门禁与回退流程见 `docs/RAG_GROUNDING.md`。
+
 ## 8. 结果文件导出
 
 评估结果会按需生成到：
@@ -492,7 +508,7 @@ rm -f /tmp/rehab-admin.cookies
 curl -i http://127.0.0.1:8000/api/stats/summary
 
 # 生产端口检查
-ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
+ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000|8010)' || true
 ```
 
 期望：
@@ -504,6 +520,7 @@ ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
 5173 不监听
 33060 不监听
 6008 默认不监听；只有手动启动 GGUF 回退/对照时才监听 127.0.0.1
+8010 默认不监听；启用 RAG Shadow 时只监听 127.0.0.1
 ```
 
 ## 12. 常见问题

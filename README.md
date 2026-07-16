@@ -172,6 +172,7 @@ curl http://127.0.0.1:8000/api/health
 | `docs/DEVICE_API.md` | 训练设备端 HTTPS 上传、轮询、下载、ACK 接口 |
 | `docs/RAG_INGESTION.md` | RAG 知识入库第一步、质量门禁和私有资料目录约定 |
 | `docs/RAG_RETRIEVAL.md` | RAG 第二步、BGE-M3 与 Qdrant 语义检索实验 |
+| `docs/RAG_GROUNDING.md` | RAG 第三步、独立检索服务与 off/shadow/assist 受控接入 |
 | `docs/schemas/device-job-v1.schema.json` | 设备任务状态响应的机器校验 schema |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
@@ -189,14 +190,14 @@ frontend/                    React/Vite 前端
 Deeplearning/                康复评分模型代码
 biomarkers/                  biomarker 计算与证据元数据（不作为临床参考范围展示）
 llm/                         transformers/LoRA 相关代码
-rag/                         RAG 文档解析、知识治理和后续检索代码
+rag/                         RAG 文档治理、语义检索与本机独立服务
 knowledge_base/              RAG 配置与评测集；原文和运行数据不提交 Git
 DL_model/                    康复评分模型权重目录，不随仓库上传
 llm_gguf_server.py           手动可选 GGUF 大模型 HTTP 服务
 start_gguf_fallback.sh       手动可选 GGUF 回退/对照启动脚本
 requirements-gguf-server.txt 手动可选 GGUF 服务依赖
 requirements-llm-server.txt  transformers LLM 服务依赖
-requirements-rag.txt         独立RAG检索实验依赖，不安装到生产后端环境
+requirements-rag.txt         独立 RAG 服务依赖，不安装到生产后端环境
 scripts/                     Windows 本地开发启动/检查脚本
 ```
 
@@ -260,6 +261,10 @@ cp backend/config/gestures_26.example.json backend/config/gestures_26.json
 ```
 
 `backend/config/gestures_26.json` 属于运行态配置，已加入 `.gitignore`。未启用时，报告会保留“手势库待补充”占位，不让大模型生成具体训练手势。
+
+### RAG 配置
+
+RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。后端默认 `RAG_MODE=off`；当前知识条目尚未完成临床审核，只允许使用 `shadow` 记录检索轨迹，不能改变 JSON、PDF 或网页报告。部署、双重 Demo 开关和 Assist 上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)。
 
 默认候选模型包括：
 
@@ -327,16 +332,16 @@ curl -i http://127.0.0.1:8000/api/stats/summary
 # GET /api/mysql/assessments/{id}/export.zip
 
 # 端口检查：生产不应出现 5173、33060；6008 只在手动启动 GGUF 回退时出现
-ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000)' || true
+ss -ltnp | grep -E ':(3306|33060|5173|6006|6008|8000|8010)' || true
 ```
 
 代码变更提交前运行：
 
 ```bash
 python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-PYTHONPATH=backend:. python -m pytest backend -q
+PYTHONPATH=backend:. python -m pytest backend tests -q
 cd frontend && npm ci && npm run build
-cd .. && bash -n start_rehab_system.sh start_gguf_fallback.sh
+cd .. && bash -n start_rehab_system.sh start_gguf_fallback.sh start_rag_service.sh
 ```
 
 CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend/requirements-test.txt`；真实模型、MySQL、PDF 文件和设备数据包仍须在部署环境执行端到端验收。

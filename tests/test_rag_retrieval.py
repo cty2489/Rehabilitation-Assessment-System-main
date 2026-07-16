@@ -9,14 +9,24 @@ from pathlib import Path
 from unittest import mock
 
 from rag.config import RagSettings
-from rag.retrieval import build_index, load_chunks, retrieve
+from rag.retrieval import (
+    build_index,
+    filter_governed_results,
+    load_chunks,
+    retrieve,
+    retrieve_many,
+)
 from rag.vector_store import VectorHit
 
 
 class FakeEmbedder:
     dimension = 2
 
+    def __init__(self):
+        self.calls = 0
+
     def encode(self, texts):
+        self.calls += 1
         vectors = []
         for text in texts:
             lower = text.lower()
@@ -73,6 +83,7 @@ class RagRetrievalTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             settings = RagSettings.from_env("/tmp/rehab")
         self.assertFalse(settings.enabled)
+        self.assertFalse(settings.allow_demo)
         self.assertEqual(settings.backend, "local")
         self.assertEqual(settings.qdrant_path, Path("/tmp/rehab/knowledge_base/vector_store/qdrant_local"))
 
@@ -136,6 +147,31 @@ class RagRetrievalTests(unittest.TestCase):
                 collection="demo",
                 top_k=1,
             )
+
+    def test_query_batch_uses_one_embedding_call(self):
+        embedder = FakeEmbedder()
+        store = FakeStore()
+        build_index(_chunks(), embedder=embedder, store=store, collection="demo", allow_demo=True)
+        embedder.calls = 0
+        batches = retrieve_many(
+            [("emg", "肌电疲劳"), ("eeg", "脑电节律")],
+            embedder=embedder,
+            store=store,
+            collection="demo",
+            top_k=1,
+        )
+        self.assertEqual(embedder.calls, 1)
+        self.assertEqual([key for key, _ in batches], ["emg", "eeg"])
+
+    def test_governance_filter_blocks_demo_results(self):
+        store = FakeStore()
+        embedder = FakeEmbedder()
+        build_index(_chunks(), embedder=embedder, store=store, collection="demo", allow_demo=True)
+        results = retrieve(
+            "肌电疲劳", embedder=embedder, store=store, collection="demo", top_k=2
+        )
+        self.assertEqual(filter_governed_results(results, include_demo=False), [])
+        self.assertEqual(len(filter_governed_results(results, include_demo=True)), 2)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class RagSettings:
     enabled: bool
+    allow_demo: bool
     backend: str
     collection: str
     qdrant_path: Path
@@ -40,6 +41,7 @@ class RagSettings:
             raise ValueError("RAG_TOP_K, RAG_MAX_SEQUENCE_LENGTH and RAG_BATCH_SIZE must be positive")
         return cls(
             enabled=_env_bool("RAG_ENABLED", False),
+            allow_demo=_env_bool("RAG_ALLOW_DEMO", False),
             backend=backend,
             collection=os.getenv("RAG_COLLECTION", "rehab_knowledge_demo_v0_1").strip(),
             qdrant_path=Path(

@@ -14,7 +14,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r backend/requirements-test.txt
-      - run: PYTHONPATH=backend:. python -m pytest backend -q
+      - run: PYTHONPATH=backend:. python -m pytest backend tests -q
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -35,4 +35,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: bash -n start_rehab_system.sh start_gguf_fallback.sh
+      - run: bash -n start_rehab_system.sh start_gguf_fallback.sh start_rag_service.sh

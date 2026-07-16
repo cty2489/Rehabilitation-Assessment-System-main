@@ -231,6 +231,32 @@ class RenderTests(unittest.TestCase):
         self.assertIn("不能替代", md)
         self.assertIn("采样率不一致", md)
 
+    def test_reviewed_rag_sources_are_rendered_only_when_used(self) -> None:
+        context = dict(_context(6))
+        context["rag_evidence"] = {
+            "used_in_prompt": True,
+            "sources": [
+                {
+                    "knowledge_id": "KB-001",
+                    "title": "审核知识",
+                    "clinical_ready": True,
+                    "source_document_id": "doc-1",
+                    "source_entry_number": 2,
+                    "references": ["指南A，第2章"],
+                    "reviewed_by": "王医生",
+                    "reviewed_at": "2026-07-16",
+                }
+            ],
+        }
+        md = report_builder.render_markdown(context, _valid_clinical("VI"))
+        self.assertIn("辅助知识证据来源", md)
+        self.assertIn("KB-001", md)
+        self.assertIn("王医生 / 2026-07-16", md)
+
+        context["rag_evidence"]["used_in_prompt"] = False
+        without_rag = report_builder.render_markdown(context, _valid_clinical("VI"))
+        self.assertNotIn("辅助知识证据来源", without_rag)
+
 
 class PromptTests(unittest.TestCase):
     def test_prompt_is_fewshot_free_and_stage_grounded(self) -> None:
@@ -265,6 +291,61 @@ class PromptTests(unittest.TestCase):
         self.assertIn("VI期-", joined)
         self.assertNotIn("group_subtypes", joined)
         self.assertIn("禁止输出具体方法", joined)
+
+    def test_rag_evidence_enters_prompt_only_after_governance_gate(self) -> None:
+        from llm.prompts import build_clinical_reasoning_messages
+
+        context = dict(_context(6))
+        context["schema_hint"] = report_builder.CLINICAL_SCHEMA_HINT
+        context["gesture_ready"] = False
+        context["rag_evidence"] = {
+            "used_in_prompt": False,
+            "sources": [{"knowledge_id": "KB-001", "text": "不应进入 Prompt"}],
+        }
+        without_evidence = "\n".join(
+            item["content"] for item in build_clinical_reasoning_messages(context)
+        )
+        self.assertNotIn("KB-001", without_evidence)
+
+        context["rag_evidence"] = {
+            "used_in_prompt": True,
+            "sources": [
+                {
+                    "knowledge_id": "KB-001",
+                    "title": "审核知识",
+                    "text": "只支持同设备同流程复测。",
+                    "source_document_id": "doc-1",
+                    "source_entry_number": 1,
+                    "references": ["来源A"],
+                    "reviewed_by": "专家",
+                    "reviewed_at": "2026-07-16",
+                }
+            ],
+        }
+        with_evidence = "\n".join(
+            item["content"] for item in build_clinical_reasoning_messages(context)
+        )
+        self.assertIn("knowledge_evidence", with_evidence)
+        self.assertIn("KB-001", with_evidence)
+        self.assertIn("患者实测数值和临床量表始终优先", with_evidence)
+
+    def test_segmented_summary_receives_governed_rag_evidence(self) -> None:
+        import report
+
+        context = dict(_context(6))
+        context["rag_evidence"] = {
+            "used_in_prompt": True,
+            "sources": [
+                {
+                    "knowledge_id": "KB-001",
+                    "title": "审核知识",
+                    "text": "证据正文",
+                }
+            ],
+        }
+        joined = "\n".join(item["content"] for item in report._segment_summary_messages(context))
+        self.assertIn("knowledge_evidence", joined)
+        self.assertIn("KB-001", joined)
 
 
 class BiomarkerReferenceTests(unittest.TestCase):

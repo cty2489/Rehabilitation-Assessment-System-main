@@ -203,7 +203,14 @@ def _chunk_record(entry: Dict[str, Any]) -> Dict[str, Any]:
             "keywords": entry["keywords"],
             "aliases": entry["aliases"],
             "clinical_ready": entry["status"]["clinical_ready"],
+            "governance_issues": entry["status"]["issues"],
             "source_document_id": entry["source"]["document_id"],
+            "source_filename": entry["source"]["filename"],
+            "source_sha256": entry["source"]["sha256"],
+            "source_entry_number": entry["source"]["original_entry_number"],
+            "references": entry["references"],
+            "reviewed_by": entry["governance"]["reviewed_by"],
+            "reviewed_at": entry["governance"]["reviewed_at"],
         },
     }
 

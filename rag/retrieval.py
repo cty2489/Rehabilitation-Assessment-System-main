@@ -6,7 +6,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Iterable, List, Protocol, Sequence, Tuple
 
 from .vector_store import VectorHit, VectorPoint
 
@@ -136,33 +136,72 @@ def retrieve(
     collection: str,
     top_k: int,
 ) -> List[RetrievalResult]:
-    clean_query = query.strip()
-    if not clean_query:
-        raise ValueError("query must not be empty")
+    return retrieve_many(
+        [("query", query)],
+        embedder=embedder,
+        store=store,
+        collection=collection,
+        top_k=top_k,
+    )[0][1]
+
+
+def retrieve_many(
+    queries: Sequence[Tuple[str, str]],
+    *,
+    embedder: Embedder,
+    store: VectorStore,
+    collection: str,
+    top_k: int,
+) -> List[Tuple[str, List[RetrievalResult]]]:
+    """Embed a query batch once, then retrieve ranked hits for each query."""
+    if not queries:
+        raise ValueError("queries must not be empty")
+    clean_queries = [(str(key).strip(), str(query).strip()) for key, query in queries]
+    if any(not key or not query for key, query in clean_queries):
+        raise ValueError("query keys and text must not be empty")
     if top_k <= 0:
         raise ValueError("top_k must be positive")
-    vectors = embedder.encode([clean_query])
-    if len(vectors) != 1:
-        raise RuntimeError("query embedding did not return exactly one vector")
-    hits = store.search(collection, vectors[0], top_k)
-    return [
-        RetrievalResult(
-            rank=index,
-            score=hit.score,
-            knowledge_id=str(hit.payload.get("knowledge_id", "")),
-            chunk_id=str(hit.payload.get("chunk_id", "")),
-            title=str(hit.payload.get("title", "")),
-            text=str(hit.payload.get("text", "")),
-            metadata=dict(hit.payload.get("metadata", {})),
-        )
-        for index, hit in enumerate(hits, start=1)
-    ]
+    vectors = embedder.encode(query for _, query in clean_queries)
+    if len(vectors) != len(clean_queries):
+        raise RuntimeError("query embedding count does not match query count")
+
+    batches: List[Tuple[str, List[RetrievalResult]]] = []
+    for (key, _), vector in zip(clean_queries, vectors):
+        hits = store.search(collection, vector, top_k)
+        results = [
+            RetrievalResult(
+                rank=index,
+                score=hit.score,
+                knowledge_id=str(hit.payload.get("knowledge_id", "")),
+                chunk_id=str(hit.payload.get("chunk_id", "")),
+                title=str(hit.payload.get("title", "")),
+                text=str(hit.payload.get("text", "")),
+                metadata=dict(hit.payload.get("metadata", {})),
+            )
+            for index, hit in enumerate(hits, start=1)
+        ]
+        batches.append((key, results))
+    return batches
+
+
+def filter_governed_results(
+    results: Iterable[RetrievalResult],
+    *,
+    include_demo: bool,
+) -> List[RetrievalResult]:
+    """Keep demo evidence only when an isolated experiment requested it."""
+    values = list(results)
+    if include_demo:
+        return values
+    return [item for item in values if bool(item.metadata.get("clinical_ready"))]
 
 
 __all__ = [
     "RetrievalResult",
     "build_index",
+    "filter_governed_results",
     "load_chunks",
     "retrieve",
+    "retrieve_many",
     "validate_index_governance",
 ]

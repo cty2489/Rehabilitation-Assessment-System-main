@@ -613,6 +613,37 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         out.append(f"{i}. {s}")
     out.append("")
 
+    rag_evidence = context.get("rag_evidence") or {}
+    if rag_evidence.get("used_in_prompt") and rag_evidence.get("sources"):
+        out.append("### 辅助知识证据来源")
+        out.append("")
+        if any(not source.get("clinical_ready") for source in rag_evidence["sources"]):
+            out.append(
+                "> 实验提示：本次显式启用了未完成临床审核的 Demo 知识，仅可用于内部技术验证，"
+                "不得据此执行诊疗或训练处方。"
+            )
+            out.append("")
+        evidence_rows = []
+        for source in rag_evidence["sources"]:
+            references = source.get("references") or []
+            source_text = "；".join(str(value) for value in references if value) or (
+                f"{source.get('source_document_id') or '—'}"
+                f" / 条目{source.get('source_entry_number') or '—'}"
+            )
+            review_text = (
+                f"{source.get('reviewed_by')} / {source.get('reviewed_at')}"
+                if source.get("clinical_ready")
+                else "未完成临床审核"
+            )
+            evidence_rows.append([
+                source.get("knowledge_id") or "—",
+                source.get("title") or "—",
+                source_text,
+                review_text,
+            ])
+        out.append(_table(["知识ID", "标题", "来源", "审核状态"], evidence_rows))
+        out.append("")
+
     # 四、下周具体训练参数
     out.append("## 四、下周具体训练参数")
     out.append("")

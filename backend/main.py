@@ -736,6 +736,7 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 history=history,
                 report_model=report_model,
                 assessment_context={
+                    "rag_correlation_id": state.session_id,
                     "institution": state.institution,
                     "assessment_type": "active",
                     "quality": quality,

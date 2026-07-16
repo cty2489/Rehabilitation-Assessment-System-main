@@ -65,11 +65,15 @@ class RagIngestionTests(unittest.TestCase):
 
             result = prepare_knowledge_base(source, config, output)
             entry = json.loads((output / "entries.jsonl").read_text(encoding="utf-8"))
+            chunk = json.loads((output / "chunks.jsonl").read_text(encoding="utf-8"))
 
             self.assertEqual(parse_docx(source).sha256, result["manifest"]["source"]["sha256"])
             self.assertTrue(entry["status"]["demo_ready"])
             self.assertFalse(entry["status"]["clinical_ready"])
             self.assertIn("missing_reference_source", entry["status"]["issues"])
+            self.assertEqual(chunk["metadata"]["source_sha256"], entry["source"]["sha256"])
+            self.assertEqual(chunk["metadata"]["source_entry_number"], 1)
+            self.assertIn("missing_expert_review", chunk["metadata"]["governance_issues"])
             self.assertEqual(result["quality_report"]["counts"]["chunks"], 1)
 
 
