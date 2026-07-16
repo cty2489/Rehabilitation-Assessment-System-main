@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。
 
-> `cloud-server-v1.1.16` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包与 JSON/PDF/ZIP 回传整链路验收。
+> `cloud-server-v1.1.17` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、RAG Shadow 与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.16
+cloud-server-v1.1.17
 ```
 
 该标签提供已在线上验证过的运行基线；当前分支在此基础上包含：
@@ -20,6 +20,7 @@ cloud-server-v1.1.16
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
 - 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
+- RAG 以独立 CPU 服务运行；当前仅启用 Shadow 审计，未审核知识不会进入正式报告
 - 每台设备使用独立 token 且只能访问本设备任务；旧共享 token 仅在显式迁移开关开启时可用
 - 管理员可在“系统管理 → 设备凭证”生成、查看掩码、停用、轮换和撤销设备码；数据库仅保存哈希，明文只显示一次
 - 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
@@ -104,7 +105,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.16
+git checkout cloud-server-v1.1.17
 ```
 
 2. 准备外部文件：
@@ -351,7 +352,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.16
+稳定演示/复现实验：使用 cloud-server-v1.1.17
 日常继续开发：使用 main
 ```
 

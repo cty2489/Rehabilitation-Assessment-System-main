@@ -1,5 +1,16 @@
 # Changelog
 
+## cloud-server-v1.1.17 - 2026-07-16
+
+- 将受治理的 DOCX 知识入库、BGE-M3 向量化和 Qdrant 检索迁移到 v1.1.16 稳定基线，并新增只监听 `127.0.0.1:8010` 的独立 RAG 服务；Embedding 固定使用 CPU，不占用报告大模型 GPU 显存。
+- 报告后端新增 `off`、`shadow`、`assist` 三种模式。当前生产只启用 `shadow`：检索结果写入权限为 `0600` 的去标识化轨迹，不进入提示词，不改变网页、JSON 或 PDF 报告。
+- Demo 证据采用服务端 `RAG_ALLOW_DEMO` 与后端 `RAG_SHADOW_INCLUDE_DEMO` 双重开关；Assist 还要求显式审批，并默认过滤全部 `clinical_ready=false` 条目。
+- 知识切块补齐原文 SHA-256、条目号、参考资料、专家与审核时间等来源元数据；提示词明确把知识正文视为不可信参考数据，防止文档中的命令性文字改变系统任务或安全边界。
+- RAG 服务、索引或轨迹失败时采用 fail-open，原报告流程继续执行；Shadow 轨迹使用内部 `session_id` 关联数据库评估，不记录患者姓名、患者编号或知识正文。
+- CI 扩展到 RAG 入库、批量检索、治理过滤、HTTP 服务和报告门禁测试；完整部署、回退与 Assist 上线条件见 `docs/RAG_GROUNDING.md`。
+
+已在 RTX 4090D、MySQL 8.0.46、Qwen3-8B HF、BGE-M3 CPU 和 Qdrant Local 环境完成验证：21 个语义改写问题 `Hit@1=0.8571`、`Hit@3=1.0`、`MRR=0.9286`；6 个并发检索请求全部成功；使用 125 MB、6 trial 医院数据包完成评分、大模型报告、MySQL 落库及 JSON/PDF/ZIP 校验。Shadow 命中 6 条 Demo 证据但 `used_in_prompt=false`，验收数据与导出文件随后已清理。
+
 ## cloud-server-v1.1.16 - 2026-07-15
 
 - 浏览器登录改为 HMAC 签名、短时有效的 HttpOnly Cookie；长期管理员 Bearer 和旧共享设备码默认关闭，仅保留显式迁移开关。
