@@ -27,6 +27,7 @@ knowledge_base/eval/        可提交的检索测试问题
 knowledge_base/raw/         私有原文，不提交 Git
 knowledge_base/runtime/     生成数据和图片，不提交 Git
 scripts/rag_prepare_knowledge.py
+scripts/rag_prepare_review_json.py
 scripts/rag_verify_knowledge.py
 ```
 
@@ -52,6 +53,8 @@ knowledge_base/runtime/rehab_knowledge_demo_v0_1/
 ```
 
 `manifest.json` 保存原文 SHA-256。原文发生变化后，哈希也会变化，因此可以追溯报告使用了哪一份知识源。
+
+如果专家沟通稿已经整理为包含 `sources`、`entries`、`evaluation_questions` 和 `trial_release` 的结构化 JSON，使用 `scripts/rag_prepare_review_json.py`。未审核资料必须显式传入 `--allow-internal-trial`，并使用独立集合名；转换器不会因此把 `expert_verified` 或 `clinical_ready` 改为真。完整命令见 [`RAG_TRIAL_ASSIST.md`](RAG_TRIAL_ASSIST.md)。
 
 ## 验证
 

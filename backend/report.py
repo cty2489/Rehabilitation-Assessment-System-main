@@ -624,6 +624,7 @@ def _reason_clinical(
                 )
             clinical = _parse_clinical_json(text)
             report_builder.validate_clinical(context, clinical)  # raises if invalid
+            _validate_rag_citations(context, clinical)
             return clinical, "llm"  # type: ignore[return-value]  # validated non-None
         except Exception as exc:  # noqa: BLE001
             last_err = exc
@@ -636,6 +637,49 @@ def _reason_clinical(
         "detail": "大模型未返回有效结构化结果，已使用保守规则生成可审阅报告。",
     })
     return _fallback_clinical(context, last_err), "fallback"
+
+
+_RAG_CITATION_PATTERN = re.compile(r"\[(KB-[A-Za-z0-9._:-]+)\]")
+
+
+def _clinical_text_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [
+            text for child in value.values() for text in _clinical_text_values(child)
+        ]
+    if isinstance(value, list):
+        return [text for child in value for text in _clinical_text_values(child)]
+    return []
+
+
+def _validate_rag_citations(context: Dict[str, Any], clinical: Any) -> None:
+    """Reject knowledge IDs that were not present in this report's retrieval packet."""
+    packet = context.get("rag_evidence") or {}
+    if not isinstance(packet, dict) or not packet.get("used_in_prompt"):
+        return
+    allowed = {
+        str(source.get("knowledge_id") or "")
+        for source in packet.get("sources", []) or []
+        if isinstance(source, dict) and source.get("knowledge_id")
+    }
+    if not isinstance(clinical, dict):
+        raise ValueError("RAG 输出不是 JSON 对象")
+    declared = clinical.get("rag_citations")
+    if not isinstance(declared, list) or not declared or any(
+        not isinstance(value, str) or not value.strip() for value in declared
+    ):
+        raise ValueError("RAG Assist 输出必须包含非空 rag_citations 字符串数组")
+    cited = {value.strip() for value in declared}
+    cited.update({
+        match
+        for text in _clinical_text_values(clinical)
+        for match in _RAG_CITATION_PATTERN.findall(text)
+    })
+    unknown = cited - allowed
+    if unknown:
+        raise ValueError(f"RAG 输出引用了本次未检索到的知识：{sorted(unknown)}")
 
 
 def _remote_timeout() -> "Any":
@@ -969,6 +1013,8 @@ def _segment_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
         "warnings": ["1-3条"],
         "next_assessment": report_builder.NEXT_ASSESSMENT_TEXT,
     }
+    if evidence:
+        schema["rag_citations"] = ["knowledge_evidence 中实际采用的 knowledge_id"]
     system = (
         "你是一名康复医学医师。只根据输入数值生成报告的总结字段 JSON，"
         "不要生成 marker_text，不要输出推理过程、Markdown 或代码块。"
@@ -1117,6 +1163,13 @@ def _reason_local_segmented_clinical_json(
         if summary_prefill_raw is not None
         else "</think>\n{\"overall_interpretation\":"
     )
+    required_summary_keys = [
+        "overall_interpretation",
+        "overall_subtype",
+        "treatment_strategy",
+    ]
+    if evidence:
+        required_summary_keys.append("rag_citations")
     summary_text = _generate_local_text(
         rm,
         _segment_summary_messages(context),
@@ -1124,7 +1177,7 @@ def _reason_local_segmented_clinical_json(
         generation_prefill=summary_prefill,
         max_new_tokens=int(rm.cfg.get("segment_summary_max_new_tokens") or 1024),
         stop_on_json=stop_json,
-        required_top_keys=["overall_interpretation", "overall_subtype", "treatment_strategy"],
+        required_top_keys=required_summary_keys,
     )
     summary = _parse_segment_json(summary_text)
     if not isinstance(summary, dict):

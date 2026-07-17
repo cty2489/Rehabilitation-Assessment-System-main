@@ -180,6 +180,9 @@ def _append_trace(packet: Dict[str, Any], settings: RagClientSettings) -> None:
                 "title": source.get("title"),
                 "score": source.get("score"),
                 "clinical_ready": source.get("clinical_ready"),
+                "expert_verified": source.get("expert_verified"),
+                "knowledge_status": source.get("knowledge_status"),
+                "trial_release_id": source.get("trial_release_id"),
                 "source_document_id": source.get("source_document_id"),
                 "source_sha256": source.get("source_sha256"),
             }
@@ -272,6 +275,12 @@ def retrieve_report_evidence(
                         "text": text,
                         "score": float(hit.get("score") or 0.0),
                         "clinical_ready": clinical_ready,
+                        "expert_verified": bool(metadata.get("expert_verified")),
+                        "knowledge_status": str(metadata.get("knowledge_status") or ""),
+                        "knowledge_status_label": str(
+                            metadata.get("knowledge_status_label") or ""
+                        ),
+                        "trial_release_id": str(metadata.get("trial_release_id") or ""),
                         "source_document_id": str(metadata.get("source_document_id") or ""),
                         "source_sha256": str(metadata.get("source_sha256") or ""),
                         "source_entry_number": metadata.get("source_entry_number"),

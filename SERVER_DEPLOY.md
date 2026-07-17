@@ -48,7 +48,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.17
+git checkout cloud-server-v1.1.18
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -375,9 +375,9 @@ chmod +x /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 ```
 
-### 7.1 可选 RAG Shadow 服务
+### 7.1 可选 RAG Shadow 与内部试运行服务
 
-RAG 不随生产一键脚本自动启动，也不与报告后端共用 Python 环境。当前知识库只有 Demo 条目，云端只能使用 `shadow`：检索结果写入受限权限轨迹，但不会进入提示词，也不会改变网页、JSON 或 PDF 报告。
+RAG 不随生产一键脚本自动启动，也不与报告后端共用 Python 环境。生产基线使用 `shadow`：检索结果写入受限权限轨迹，但不会进入提示词，也不会改变网页、JSON 或 PDF 报告。未完成正式专家审核的结构化知识只能放入独立试运行集合；如需内部体验 Assist，必须显式启用审批和 Demo 提示词开关，并保留报告中的未审核警示与引用校验。
 
 独立服务只监听 `127.0.0.1:8010`，启动模板为：
 
@@ -389,7 +389,7 @@ bash /root/autodl-tmp/rehab_project/start_rag_service.sh
 curl -f http://127.0.0.1:8010/health
 ```
 
-知识原文、切块、索引和 `rag.env` 必须保存在 `/root/autodl-tmp/rehab_project/` 稳定数据目录，不要放进可替换的 Git release。完整初始化、索引、Shadow 后端配置、门禁与回退流程见 `docs/RAG_GROUNDING.md`。
+知识原文、切块、索引和 `rag.env` 必须保存在 `/root/autodl-tmp/rehab_project/` 稳定数据目录，不要放进可替换的 Git release。正式门禁见 `docs/RAG_GROUNDING.md`；结构化审阅 JSON、内部试运行索引、真实模型冒烟和回退命令见 `docs/RAG_TRIAL_ASSIST.md`。
 
 ## 8. 结果文件导出
 

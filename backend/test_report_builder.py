@@ -239,6 +239,7 @@ class RenderTests(unittest.TestCase):
                 {
                     "knowledge_id": "KB-001",
                     "title": "审核知识",
+                    "knowledge_status_label": "指南候选",
                     "clinical_ready": True,
                     "source_document_id": "doc-1",
                     "source_entry_number": 2,
@@ -248,13 +249,16 @@ class RenderTests(unittest.TestCase):
                 }
             ],
         }
-        md = report_builder.render_markdown(context, _valid_clinical("VI"))
+        clinical = _valid_clinical("VI")
+        clinical["rag_citations"] = ["KB-001"]
+        md = report_builder.render_markdown(context, clinical)
         self.assertIn("辅助知识证据来源", md)
         self.assertIn("KB-001", md)
+        self.assertIn("指南候选", md)
         self.assertIn("王医生 / 2026-07-16", md)
 
         context["rag_evidence"]["used_in_prompt"] = False
-        without_rag = report_builder.render_markdown(context, _valid_clinical("VI"))
+        without_rag = report_builder.render_markdown(context, clinical)
         self.assertNotIn("辅助知识证据来源", without_rag)
 
 
@@ -327,6 +331,7 @@ class PromptTests(unittest.TestCase):
         )
         self.assertIn("knowledge_evidence", with_evidence)
         self.assertIn("KB-001", with_evidence)
+        self.assertIn("rag_citations", with_evidence)
         self.assertIn("患者实测数值和临床量表始终优先", with_evidence)
 
     def test_segmented_summary_receives_governed_rag_evidence(self) -> None:
@@ -346,6 +351,7 @@ class PromptTests(unittest.TestCase):
         joined = "\n".join(item["content"] for item in report._segment_summary_messages(context))
         self.assertIn("knowledge_evidence", joined)
         self.assertIn("KB-001", joined)
+        self.assertIn("rag_citations", joined)
 
 
 class BiomarkerReferenceTests(unittest.TestCase):

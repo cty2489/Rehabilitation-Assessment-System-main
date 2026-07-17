@@ -78,6 +78,35 @@ class AdaptationTests(unittest.TestCase):
             {"m1": ["解读1", "建议1"], "m2": ["解读2", "建议2"]},
         )
 
+    def test_rag_citation_must_come_from_retrieved_sources(self) -> None:
+        context = {
+            "rag_evidence": {
+                "used_in_prompt": True,
+                "sources": [{"knowledge_id": "KB-EMG-002"}],
+            }
+        }
+        report._validate_rag_citations(
+            context,
+            {
+                "overall_interpretation": "仅作同条件复测 [KB-EMG-002]",
+                "rag_citations": ["KB-EMG-002"],
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "未检索到"):
+            report._validate_rag_citations(
+                context,
+                {
+                    "overall_interpretation": "编造引用 [KB-NOT-FOUND]",
+                    "rag_citations": ["KB-NOT-FOUND"],
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "rag_citations"):
+            report._validate_rag_citations(
+                context,
+                {"overall_interpretation": "没有声明引用"},
+            )
+
     def test_coerce_wrong_marker_keys_by_order(self) -> None:
         markers = [{"key": "movement_mu_power_change"}, {"key": "movement_beta_power_change"}]
         raw = {

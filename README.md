@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。
 
-> `cloud-server-v1.1.17` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、RAG Shadow 与 JSON/PDF/ZIP 回传整链路验收。
+> `cloud-server-v1.1.18` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、RAG Shadow、内部试运行 Assist 与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.17
+cloud-server-v1.1.18
 ```
 
 该标签提供已在线上验证过的运行基线；当前分支在此基础上包含：
@@ -20,7 +20,7 @@ cloud-server-v1.1.17
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
 - 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
-- RAG 以独立 CPU 服务运行；当前仅启用 Shadow 审计，未审核知识不会进入正式报告
+- RAG 以独立 CPU 服务运行；默认启用 Shadow 审计，未审核知识只有在内部试运行三重门禁、引用白名单和醒目警示同时生效时才可进入测试报告
 - 每台设备使用独立 token 且只能访问本设备任务；旧共享 token 仅在显式迁移开关开启时可用
 - 管理员可在“系统管理 → 设备凭证”生成、查看掩码、停用、轮换和撤销设备码；数据库仅保存哈希，明文只显示一次
 - 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
@@ -105,7 +105,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.17
+git checkout cloud-server-v1.1.18
 ```
 
 2. 准备外部文件：
@@ -174,6 +174,7 @@ curl http://127.0.0.1:8000/api/health
 | `docs/RAG_INGESTION.md` | RAG 知识入库第一步、质量门禁和私有资料目录约定 |
 | `docs/RAG_RETRIEVAL.md` | RAG 第二步、BGE-M3 与 Qdrant 语义检索实验 |
 | `docs/RAG_GROUNDING.md` | RAG 第三步、独立检索服务与 off/shadow/assist 受控接入 |
+| `docs/RAG_TRIAL_ASSIST.md` | 结构化审阅 JSON、内部试运行集合、引用校验与 Assist 冒烟验收 |
 | `docs/schemas/device-job-v1.schema.json` | 设备任务状态响应的机器校验 schema |
 | `CHANGELOG.md` | 稳定版本和重要变更记录 |
 | `backend/.env.example` | 后端环境变量模板 |
@@ -265,7 +266,7 @@ cp backend/config/gestures_26.example.json backend/config/gestures_26.json
 
 ### RAG 配置
 
-RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。后端默认 `RAG_MODE=off`；当前知识条目尚未完成临床审核，只允许使用 `shadow` 记录检索轨迹，不能改变 JSON、PDF 或网页报告。部署、双重 Demo 开关和 Assist 上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)。
+RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。生产基线使用 `shadow` 记录检索轨迹，不改变 JSON、PDF 或网页报告。当前另有 35 条未完成正式专家审核的隔离试运行集合，可在显式审批、Demo 提示词开关和引用白名单校验同时生效时做内部 Assist 验证；它不会被标记为临床可用。常规部署与上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)，本轮试用命令和回退流程见 [`docs/RAG_TRIAL_ASSIST.md`](docs/RAG_TRIAL_ASSIST.md)。
 
 默认候选模型包括：
 
@@ -352,7 +353,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.17
+稳定演示/复现实验：使用 cloud-server-v1.1.18
 日常继续开发：使用 main
 ```
 
