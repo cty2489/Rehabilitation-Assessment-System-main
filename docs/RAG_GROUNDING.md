@@ -19,7 +19,7 @@ flowchart LR
     A["DOCX 私有原文"] --> B["治理、解析与切块"]
     B --> C["BGE-M3 向量化"]
     C --> D["Qdrant 本地索引"]
-    E["去标识化量表与综合问题"] --> F["/v1/search 语义检索"]
+    E["去标识化量表与综合问题"] --> F["/v1/retrieve 语义检索"]
     M["可用 biomarker system_key"] --> N["/v1/lookup 精确查找"]
     D --> F
     D --> N
@@ -31,7 +31,7 @@ flowchart LR
     H -->|assist| K["通过门禁后接地报告并导出证据"]
 ```
 
-`/v1/search` 解决“这份评估的综合解读可能需要哪些知识”，结果受相似度和 Top-K 影响；`/v1/lookup` 解决“这个固定指标必须使用哪一条已治理知识”，按唯一键返回，不做语义猜测。RAG 服务和报告后端使用不同 Python 环境。BGE-M3 固定在 CPU 上运行，避免占用报告大模型的 GPU 显存；Qdrant Local 同一时刻只由一个 RAG 服务进程打开。
+`/v1/retrieve` 解决“这份评估的综合解读可能需要哪些知识”，结果受相似度和 Top-K 影响；`/v1/lookup` 解决“这个固定指标必须使用哪一条已治理知识”，按唯一键返回，不做语义猜测。RAG 服务和报告后端使用不同 Python 环境。BGE-M3 固定在 CPU 上运行，避免占用报告大模型的 GPU 显存；Qdrant Local 同一时刻只由一个 RAG 服务进程打开。
 
 ## 三种模式
 

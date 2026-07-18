@@ -158,7 +158,10 @@ export default function SystemManagementPage() {
           <div className="info-grid">
             <div className="info-item">
               <span className="info-label">平台版本</span>
-              <span className="info-value">v1.1.15 · Clinical OS</span>
+              <span className="info-value">
+                {health?.app_version || '—'}
+                {health?.build_commit && health.build_commit !== 'unknown' ? ` · ${health.build_commit.slice(0, 8)}` : ''}
+              </span>
             </div>
             <div className="info-item">
               <span className="info-label">后端状态</span>

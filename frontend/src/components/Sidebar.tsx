@@ -8,6 +8,7 @@ const NAV: { route: Route; label: string; icon: string }[] = [
   { route: 'records', label: '评估记录总览', icon: '🗂' },
   { route: 'stats', label: '统计分析', icon: '📊' },
   { route: 'task-interface', label: '任务一与任务三对接接口页面', icon: '🔗' },
+  { route: 'knowledge', label: '知识与证据', icon: '▤' },
   { route: 'llm-settings', label: '模型设置', icon: '◇' },
   { route: 'system', label: '系统管理', icon: '⚙' },
 ]
@@ -31,6 +32,7 @@ export default function Sidebar() {
             key={item.route}
             className={`sidebar-item ${route === item.route ? 'active' : ''}`}
             onClick={() => navigate(item.route)}
+            title={item.label}
           >
             <span className="sidebar-icon" aria-hidden="true">
               {item.icon}

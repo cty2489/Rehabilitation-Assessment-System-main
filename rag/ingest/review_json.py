@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
+from urllib.parse import urlparse
 
 
 _REQUIRED_ENTRY_FIELDS = {
@@ -66,11 +67,23 @@ def _validate_document(
             raise ValueError("trial_release.clinical_ready must remain false")
         _require_text(release.get("release_id"), "release_id", "trial_release")
 
-    source_ids = {
-        source.get("source_id")
-        for source in sources
-        if isinstance(source, dict) and source.get("source_id")
-    }
+    source_ids: set[str] = set()
+    for index, source in enumerate(sources, start=1):
+        if not isinstance(source, dict):
+            raise ValueError(f"sources[{index}] must be an object")
+        source_id = _require_text(
+            source.get("source_id"), "source_id", f"sources[{index}]"
+        )
+        if source_id in source_ids:
+            raise ValueError(f"duplicate source_id: {source_id}")
+        source_ids.add(source_id)
+        _require_text(source.get("title"), "title", f"sources[{index}]")
+        url = str(source.get("url") or "").strip()
+        parsed_url = urlparse(url)
+        if url and (
+            parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc
+        ):
+            raise ValueError(f"{source_id}: url must use http or https")
     seen: set[str] = set()
     seen_system_keys: set[str] = set()
     for index, entry in enumerate(entries, start=1):
@@ -290,6 +303,34 @@ def _chunk_record(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _source_records(
+    document: Dict[str, Any], entries: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    linked_entries: Dict[str, List[str]] = {}
+    for entry in entries:
+        for source_id in entry["source"]["source_ids"]:
+            linked_entries.setdefault(source_id, []).append(entry["knowledge_id"])
+
+    records: List[Dict[str, Any]] = []
+    for source in document["sources"]:
+        source_id = str(source["source_id"])
+        records.append(
+            {
+                "schema_version": "rehab.knowledge.source.v1",
+                "source_id": source_id,
+                "title": str(source["title"]),
+                "year": source.get("year"),
+                "source_type": str(source.get("source_type") or ""),
+                "evidence_tier": str(source.get("evidence_tier") or ""),
+                "url": str(source.get("url") or ""),
+                "scope": str(source.get("scope") or ""),
+                "note": str(source.get("note") or ""),
+                "knowledge_ids": linked_entries.get(source_id, []),
+            }
+        )
+    return records
+
+
 def _write_json(path: Path, value: Any) -> None:
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -334,6 +375,7 @@ def prepare_review_json_knowledge_base(
     chunks = [
         _chunk_record(entry) for entry in entries if entry["status"]["indexable"]
     ]
+    sources = _source_records(document, entries)
     evaluation_questions: List[Dict[str, Any]] = []
     for question in document.get("evaluation_questions", []) or []:
         if not isinstance(question, dict) or not question.get("question"):
@@ -361,6 +403,7 @@ def prepare_review_json_knowledge_base(
         ),
         "chunks": len(chunks),
         "evaluation_questions": len(evaluation_questions),
+        "sources": len(sources),
     }
     quality_report = {
         "schema_version": "rehab.knowledge.quality.v1",
@@ -392,6 +435,7 @@ def prepare_review_json_knowledge_base(
         "counts": counts,
         "artifacts": [
             "entries.jsonl",
+            "sources.jsonl",
             "chunks.jsonl",
             "evaluation_queries.jsonl",
             "quality_report.json",
@@ -399,6 +443,7 @@ def prepare_review_json_knowledge_base(
     }
 
     _write_jsonl(output / "entries.jsonl", entries)
+    _write_jsonl(output / "sources.jsonl", sources)
     _write_jsonl(output / "chunks.jsonl", chunks)
     _write_jsonl(output / "evaluation_queries.jsonl", evaluation_questions)
     _write_json(output / "quality_report.json", quality_report)

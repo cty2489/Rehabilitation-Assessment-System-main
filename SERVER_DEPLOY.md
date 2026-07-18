@@ -380,7 +380,7 @@ bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 
 RAG 不随生产一键脚本自动启动，也不与报告后端共用 Python 环境。生产基线使用 `shadow`：检索结果写入受限权限轨迹，但不会进入提示词，也不会改变网页、JSON 或 PDF 报告。未完成正式专家审核的结构化知识只能放入独立试运行集合；如需内部体验 Assist，必须显式启用审批和 Demo 提示词开关，并保留报告中的未审核警示与引用校验。
 
-Assist 使用两类接口：`/v1/search` 对去标识化综合问题做 BGE-M3 向量检索，`/v1/lookup` 对固定 biomarker 的唯一 `system_key` 做精确查找。后者不使用相似度或 Top-K，因此不会因为召回排序把某一项指标绑定到错误知识。当前试运行集合为 `rehab_knowledge_trial_v0_2`，35 条知识仍全部是 `clinical_ready=false`，只能用于内部技术验证。
+Assist 使用两类接口：`/v1/retrieve` 对去标识化综合问题做 BGE-M3 向量检索，`/v1/lookup` 对固定 biomarker 的唯一 `system_key` 做精确查找。后者不使用相似度或 Top-K，因此不会因为召回排序把某一项指标绑定到错误知识。当前试运行集合为 `rehab_knowledge_trial_v0_2`，35 条知识仍全部是 `clinical_ready=false`，只能用于内部技术验证。
 
 独立服务只监听 `127.0.0.1:8010`，启动模板为：
 
@@ -393,6 +393,15 @@ curl -f http://127.0.0.1:8010/health
 ```
 
 知识原文、切块、索引和 `rag.env` 必须保存在 `/root/autodl-tmp/rehab_project/` 稳定数据目录，不要放进可替换的 Git release。正式门禁见 `docs/RAG_GROUNDING.md`；结构化审阅 JSON、内部试运行索引、真实模型冒烟和回退命令见 `docs/RAG_TRIAL_ASSIST.md`。
+
+为了让管理员“知识与证据治理”页面读取同一份发布包，在 `backend/.env` 中同步配置：
+
+```env
+RAG_COLLECTION=rehab_knowledge_trial_v0_2
+KNOWLEDGE_RUNTIME_ROOT=/root/autodl-tmp/rehab_project/knowledge_base/runtime
+```
+
+每次更新知识内容后必须重新运行 `rag_prepare_review_json.py`，确认生成 `sources.jsonl`，再重建索引。页面读取的是受治理发布包，Qdrant 只作为检索索引，不作为知识原始数据库。
 
 ## 8. 结果文件导出
 

@@ -28,10 +28,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+import knowledge_admin
 import llm_settings
 import mysql_db
 from admin_auth import browser_origin_allowed, issue_session_token, verify_session_token
@@ -2012,6 +2013,68 @@ async def update_llm_model_settings(
     REPORT_MODEL.reset()
     app.state.report_ready = False
     return llm_settings.settings_payload(probe=True)
+
+
+# --------------------------------------------------------------------------- #
+# Read-only knowledge and evidence governance                                 #
+# --------------------------------------------------------------------------- #
+def _knowledge_guard(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=503, detail=f"知识发布包不可用：{exc}")
+
+
+@app.get("/api/admin/knowledge/status")
+def get_knowledge_status(_admin: None = Depends(_require_admin)):
+    return knowledge_admin.status_payload(
+        app_version=APP_VERSION,
+        build_commit=APP_BUILD_COMMIT,
+        report_model=llm_model_name(),
+    )
+
+
+@app.get("/api/admin/knowledge/entries")
+def get_knowledge_entries(
+    category: Optional[str] = Query(None, max_length=64),
+    knowledge_status: Optional[str] = Query(None, max_length=64),
+    query: Optional[str] = Query(None, alias="q", max_length=200),
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        return knowledge_admin.entries_payload(
+            category=category,
+            knowledge_status=knowledge_status,
+            query=query,
+        )
+    except knowledge_admin.KnowledgeUnavailable as exc:
+        raise _knowledge_guard(exc) from exc
+
+
+@app.get("/api/admin/knowledge/entries/{knowledge_id}")
+def get_knowledge_entry(
+    knowledge_id: str,
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        return knowledge_admin.entry_payload(knowledge_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="知识条目不存在") from exc
+    except knowledge_admin.KnowledgeUnavailable as exc:
+        raise _knowledge_guard(exc) from exc
+
+
+@app.get("/api/admin/knowledge/coverage")
+def get_knowledge_coverage(_admin: None = Depends(_require_admin)):
+    try:
+        return knowledge_admin.coverage_payload()
+    except knowledge_admin.KnowledgeUnavailable as exc:
+        raise _knowledge_guard(exc) from exc
+
+
+@app.get("/api/admin/knowledge/sources")
+def get_knowledge_sources(_admin: None = Depends(_require_admin)):
+    try:
+        return knowledge_admin.sources_payload()
+    except knowledge_admin.KnowledgeUnavailable as exc:
+        raise _knowledge_guard(exc) from exc
 
 
 # --------------------------------------------------------------------------- #

@@ -53,7 +53,7 @@ cloud-server-v1.1.19
 - 独立“模型设置”页可选择报告生成大模型，默认只展示已准备/已验证的 HF 原版权重模型
 - 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 和 InternLM3-8B-Instruct 可在“模型设置”中切换为 baseline 对照；Qwen2.5-7B-Instruct GGUF 仅保留为手动回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
-- React 前端提供仪表盘、患者管理、康复评估、记录总览和统计分析
+- React 前端提供仪表盘、患者管理、康复评估、记录总览、统计分析和只读的知识与证据治理中心
 - 页面内登录保护，浏览器使用短时 HttpOnly 会话 Cookie，不在 localStorage 保存管理员密钥
 - 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，其中 JSON/PDF 采用去重后的设备端交付结构
 
@@ -267,6 +267,8 @@ cp backend/config/gestures_26.example.json backend/config/gestures_26.json
 ### RAG 配置
 
 RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。生产建议使用 `shadow` 记录检索轨迹；当前云端演示环境显式启用了带醒目警示的内部试运行 Assist。Assist 采用两条路径：总体解读使用去标识化向量检索，26 项固定 biomarker 使用 `/v1/lookup` 按 `system_key` 精确匹配，避免 Top-K 截断造成漏项或错配。完整命中时，大模型只生成定性摘要和高层策略，数值前缀、保守综合界定、逐项解读、引用和边界由代码确定。当前 35 条知识仍未完成正式专家审核，不会被标记为临床可用。常规部署与上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)，本轮试用命令和回退流程见 [`docs/RAG_TRIAL_ASSIST.md`](docs/RAG_TRIAL_ASSIST.md)。
+
+管理员登录后可进入“知识与证据”查看内容版本、索引集合、26 项系统键映射、治理状态和 33 项结构化来源。页面明确区分“映射覆盖”与“临床可用”，当前试运行基线应显示 `26/26` 映射、`0/26` 临床可用。运行数据不提交 Git，新服务器必须先生成知识发布包，并在 `backend/.env` 配置 `RAG_COLLECTION` 与 `KNOWLEDGE_RUNTIME_ROOT`。
 
 默认候选模型包括：
 

@@ -22,6 +22,7 @@ export type Route =
   | 'assessment'
   | 'records'
   | 'stats'
+  | 'knowledge'
   | 'system'
   | 'llm-settings'
   | 'task-interface'
@@ -114,6 +115,133 @@ export interface HealthStatus {
   models_loaded: string[]
   report_provider?: string
   report_model?: string
+  app_version?: string
+  build_commit?: string
+}
+
+export interface KnowledgeStatusCount {
+  status: string
+  label: string
+  count: number
+  biomarker_count: number
+}
+
+export interface KnowledgeEntrySummary {
+  knowledge_id: string
+  entry_version: string
+  title: string
+  category: string
+  system_key: string
+  knowledge_status: string
+  knowledge_status_label: string
+  clinical_ready: boolean
+  demo_ready: boolean
+  expert_verified: boolean
+  expert_review_status: string
+  source_ids: string[]
+  issues: string[]
+}
+
+export interface KnowledgeSource {
+  schema_version: string
+  source_id: string
+  title: string
+  year: number | string | null
+  source_type: string
+  evidence_tier: string
+  url: string
+  scope: string
+  note: string
+  knowledge_ids: string[]
+}
+
+export interface KnowledgeStatusResponse {
+  schema_version: string
+  available: boolean
+  error?: string
+  versions: {
+    application: string
+    build_commit: string
+    report_model: string
+    content_release: string
+    source_document: string
+    index_collection: string
+    index_built_at_utc: string
+  }
+  rag: {
+    mode: string
+    assist_approved: boolean
+    demo_in_prompt: boolean
+    service: {
+      reachable: boolean
+      status: string
+      collection: string
+      collection_matches: boolean
+    }
+  }
+  counts: {
+    total_entries: number
+    mapped_biomarkers: number
+    clinical_ready_biomarkers: number
+    expert_verified_entries: number
+    sources: number
+  }
+  status_counts: KnowledgeStatusCount[]
+  trial_release: {
+    release_id?: string
+    expert_verified?: boolean
+    clinical_ready?: boolean
+    warning?: string
+    allowed_usage?: string[]
+    prohibited_usage?: string[]
+  }
+  validation: {
+    valid: boolean
+    issues: string[]
+  }
+}
+
+export interface KnowledgeEntriesResponse {
+  schema_version: string
+  total: number
+  items: KnowledgeEntrySummary[]
+  filters: {
+    categories: string[]
+    statuses: KnowledgeStatusCount[]
+  }
+}
+
+export interface KnowledgeCoverageResponse {
+  schema_version: string
+  expected: number
+  mapped: number
+  clinical_ready: number
+  items: KnowledgeEntrySummary[]
+}
+
+export interface KnowledgeSourcesResponse {
+  schema_version: string
+  total: number
+  items: KnowledgeSource[]
+}
+
+export interface KnowledgeEntryDetail extends KnowledgeEntrySummary {
+  applicable_population: string[]
+  content: string
+  allowed_interpretation: string
+  prohibited_interpretation: string
+  acquisition_and_algorithm_requirements: string
+  reference_range_policy: string
+  implementation_action: string
+  review_notes: string[]
+  governance: Record<string, unknown>
+  source_document: Record<string, unknown>
+  sources: KnowledgeSource[]
+}
+
+export interface KnowledgeEntryDetailResponse {
+  schema_version: string
+  entry: KnowledgeEntryDetail
 }
 
 // Backend-mirrored persistence types --------------------------------------- //

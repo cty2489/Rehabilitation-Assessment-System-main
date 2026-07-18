@@ -91,6 +91,9 @@ class RagReviewJsonTests(unittest.TestCase):
             question = json.loads(
                 (output / "evaluation_queries.jsonl").read_text(encoding="utf-8")
             )
+            source_record = json.loads(
+                (output / "sources.jsonl").read_text(encoding="utf-8")
+            )
 
         self.assertEqual(result["manifest"]["counts"]["total_entries"], 1)
         self.assertTrue(entry["status"]["demo_ready"])
@@ -111,6 +114,26 @@ class RagReviewJsonTests(unittest.TestCase):
         )
         self.assertIn("不得自动诊断", chunk["text"])
         self.assertEqual(question["expected_knowledge_ids"], ["KB-EMG-001"])
+        self.assertEqual(result["manifest"]["counts"]["sources"], 1)
+        self.assertIn("sources.jsonl", result["manifest"]["artifacts"])
+        self.assertEqual(source_record["source_id"], "SRC-001")
+        self.assertEqual(source_record["knowledge_ids"], ["KB-EMG-001"])
+
+    def test_source_url_must_be_safe_for_admin_page(self) -> None:
+        document = _document()
+        document["sources"][0]["url"] = "javascript:alert(1)"
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source = root / "source.json"
+            source.write_text(
+                json.dumps(document, ensure_ascii=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "http or https"):
+                prepare_review_json_knowledge_base(
+                    source,
+                    root / "out",
+                    allow_internal_trial=True,
+                )
 
     def test_duplicate_system_key_is_rejected(self) -> None:
         document = _document()

@@ -9,6 +9,7 @@ import StatisticsPage from '../pages/StatisticsPage'
 import SystemManagementPage from '../pages/SystemManagementPage'
 import ModelSettingsPage from '../pages/ModelSettingsPage'
 import TaskInterfacePage from '../pages/TaskInterfacePage'
+import KnowledgeGovernancePage from '../pages/KnowledgeGovernancePage'
 
 export default function AppShell() {
   const { route } = useRoute()
@@ -25,6 +26,7 @@ export default function AppShell() {
           {route === 'records' && <RecordsOverviewPage />}
           {route === 'stats' && <StatisticsPage />}
           {route === 'task-interface' && <TaskInterfacePage />}
+          {route === 'knowledge' && <KnowledgeGovernancePage />}
           {route === 'system' && <SystemManagementPage />}
           {route === 'llm-settings' && <ModelSettingsPage />}
         </main>

@@ -55,7 +55,7 @@ $RAG_PY $APP/scripts/rag_prepare_review_json.py \
   --allow-internal-trial
 ```
 
-输出包括 `entries.jsonl`、`chunks.jsonl`、`evaluation_queries.jsonl`、`quality_report.json` 和 `manifest.json`。检查 `quality_report.json` 中 `clinical_ready_entries` 必须仍为 `0`。
+输出包括 `entries.jsonl`、`sources.jsonl`、`chunks.jsonl`、`evaluation_queries.jsonl`、`quality_report.json` 和 `manifest.json`。`sources.jsonl` 是管理员“知识与证据治理”页面使用的结构化文献目录，不需要也不允许从展示文本反向解析。检查 `quality_report.json` 中 `clinical_ready_entries` 必须仍为 `0`。
 
 ## 2. 建立独立索引并评测
 
@@ -85,9 +85,18 @@ $RAG_PY $APP/scripts/rag_eval_retrieval.py \
 
 把 `$BASE/rag.env` 的 `RAG_COLLECTION` 改为 `rehab_knowledge_trial_v0_2`，再启动服务并确认 `/health` 返回该集合名。
 
+报告后端的 `backend/.env` 还必须指向同一份不可变发布包：
+
+```env
+RAG_COLLECTION=rehab_knowledge_trial_v0_2
+KNOWLEDGE_RUNTIME_ROOT=/root/autodl-tmp/rehab_project/knowledge_base/runtime
+```
+
+管理员页面通过后端只读接口读取 `manifest.json`、`entries.jsonl` 和 `sources.jsonl`；浏览器不会访问 Qdrant 或 `127.0.0.1:8010`。页面将“26/26 指标映射”和“0/26 临床可用”分开显示。
+
 服务提供两类不同用途的检索接口：
 
-- `/v1/search` 使用 BGE-M3 向量检索，为综合解读寻找相关辅助证据。
+- `/v1/retrieve` 使用 BGE-M3 向量检索，为综合解读寻找相关辅助证据。
 - `/v1/lookup` 接收固定 biomarker 的 `system_key`，按唯一键精确返回逐项知识。它不计算相似度，也不受 Top-K 截断影响。
 
 结构化知识中出现重复 `system_key` 时，准备阶段会直接失败，不能建立存在歧义的试运行集合。

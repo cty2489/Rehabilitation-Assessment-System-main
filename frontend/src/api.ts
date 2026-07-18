@@ -7,6 +7,11 @@ import {
   DeviceCredentialStatus,
   EnrollmentRequest,
   HealthStatus,
+  KnowledgeCoverageResponse,
+  KnowledgeEntriesResponse,
+  KnowledgeEntryDetailResponse,
+  KnowledgeSourcesResponse,
+  KnowledgeStatusResponse,
   LlmModelSettingsPatch,
   LlmSettings,
   MysqlAssessmentDetail,
@@ -94,6 +99,26 @@ export function fetchStats(): Promise<StatsSummary> {
 
 export function fetchHealth(): Promise<HealthStatus> {
   return getJSON('/api/health')
+}
+
+export function fetchKnowledgeStatus(): Promise<KnowledgeStatusResponse> {
+  return getJSON('/api/admin/knowledge/status')
+}
+
+export function fetchKnowledgeEntries(): Promise<KnowledgeEntriesResponse> {
+  return getJSON('/api/admin/knowledge/entries')
+}
+
+export function fetchKnowledgeCoverage(): Promise<KnowledgeCoverageResponse> {
+  return getJSON('/api/admin/knowledge/coverage')
+}
+
+export function fetchKnowledgeSources(): Promise<KnowledgeSourcesResponse> {
+  return getJSON('/api/admin/knowledge/sources')
+}
+
+export function fetchKnowledgeEntry(knowledgeId: string): Promise<KnowledgeEntryDetailResponse> {
+  return getJSON(`/api/admin/knowledge/entries/${encodeURIComponent(knowledgeId)}`)
 }
 
 export function fetchLlmSettings(): Promise<LlmSettings> {
