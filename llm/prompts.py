@@ -186,6 +186,23 @@ _RAG_GROUNDING_INSTRUCTIONS = (
 )
 
 
+GROUNDED_SUMMARY_SYSTEM_PROMPT = (
+    "你是一名资深康复医学医师。26 项生物标志物的逐项解读已由程序按 system_key "
+    "精确绑定到知识库条目；量表数值前缀和保守综合界定也由程序生成。"
+    "本次只生成不重复数值的定性摘要、治疗策略、预警和复评时间；"
+    "不要输出 marker_text 或 overall_subtype，也不要重新解释单项生物标志物。\n"
+    "定性摘要不得重复 Brunnstrom、FMA 或 MAS 数值，避免数值互换；只可说明当前属于"
+    "较早/中间/较晚恢复阶段、功能仍需巩固以及需要哪些人工复核。\n"
+    "当前没有提供经过临床验证的单项阈值、连续复测趋势、关节角度或完整动作查体。"
+    "因此不得从单次 EMG/EEG/IMU 数值推导屈肌优势、中枢驱动不足或恢复、协同异常、"
+    "痉挛程度、关节活动度受限，也不得把代理指标当作 ROM、震颤诊断或训练效果。"
+    "治疗策略只可依据 Brunnstrom、FMA、MAS 和一般安全原则形成条件性建议；"
+    "单项标志物只能在同设备同流程复测形成趋势并经康复专业人员复核后用于调整。"
+    "每条策略包含策略名称、剂量、反馈/调整和安全注意，禁止输出具体动作步骤。\n"
+    "只返回一个符合给定形状的 JSON 对象，不要输出推理过程、Markdown 或代码块。\n"
+)
+
+
 def _filter_available_biomarkers(context: Dict[str, object]) -> tuple[object, int, list[str], list[str]]:
     """Return biomarker payload, dropped count, marker keys, and modality keys."""
     biomarkers_in = context.get("biomarkers") or {}
@@ -228,6 +245,65 @@ def rag_prompt_sources(context: Dict[str, object]) -> list[dict[str, object]]:
     return values
 
 
+def marker_grounding_complete(context: Dict[str, object]) -> bool:
+    packet = context.get("rag_evidence") or {}
+    return bool(
+        isinstance(packet, dict)
+        and packet.get("marker_grounding_used")
+        and packet.get("marker_grounding_complete")
+    )
+
+
+def _build_grounded_summary_messages(context: Dict[str, object]) -> List[Dict[str, str]]:
+    stage = str(context.get("stage_roman", ""))
+    gesture_ready = bool(context.get("gesture_ready"))
+    evidence = rag_prompt_sources(context)
+    system = GROUNDED_SUMMARY_SYSTEM_PROMPT.replace("{stage_roman}", stage)
+    system += _CLINICAL_GESTURE_INSTRUCTIONS if gesture_ready else _CLINICAL_NO_GESTURE_NOTE
+    if evidence:
+        system += _RAG_GROUNDING_INSTRUCTIONS
+
+    payload = {
+        "patient": context.get("patient"),
+        "predictions": context.get("predictions"),
+        "stage": context.get("stage"),
+        "stage_roman": stage,
+        "marker_grounding": {
+            "complete": True,
+            "rule": "逐项解读由精确知识条目生成；本模型不得重新解释单项数值",
+        },
+    }
+    if evidence:
+        payload["knowledge_evidence"] = evidence
+    if gesture_ready:
+        payload["gesture_library"] = context.get("gesture_library")
+
+    schema: dict[str, object] = {
+        "overall_interpretation": "一句定性摘要，不重复 Brunnstrom、FMA 或 MAS 数值",
+        "treatment_strategy": ["3-5条条件性高层策略"],
+        "warnings": ["1-3条"],
+        "next_assessment": "7天后执行下一次居家评估。",
+    }
+    if evidence:
+        schema["rag_citations"] = ["knowledge_evidence 中实际采用的 knowledge_id"]
+    if gesture_ready:
+        schema["gesture_plan"] = [
+            {"name": "候选手势名", "purpose": "目的", "force": "辅助力度", "reps": "次数"}
+        ]
+        schema["weekly_plan"] = [
+            {"day": "周一", "content": "训练内容", "duration": "预计时长"}
+        ]
+
+    user = (
+        "【输入 JSON】\n"
+        + _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\n【输出 JSON 形状】\n"
+        + _json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        + "\n只返回上述 JSON；禁止输出 marker_text 和 overall_subtype。"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[str, str]]:
     """Build chat messages for the structured clinical-reasoning report.
 
@@ -243,6 +319,9 @@ def build_clinical_reasoning_messages(context: Dict[str, object]) -> List[Dict[s
     (the clinical team's 26-gesture library is available); otherwise the gesture
     library is omitted and the model is told not to emit gesture_plan/weekly_plan.
     """
+    if marker_grounding_complete(context):
+        return _build_grounded_summary_messages(context)
+
     schema_hint = str(context.get("schema_hint", ""))
     gesture_ready = bool(context.get("gesture_ready"))
 
@@ -312,6 +391,9 @@ def build_compact_clinical_reasoning_messages(context: Dict[str, object]) -> Lis
     drift into verbose marker prose. This compact schema keeps the same final
     clinical contract while making the emitted JSON smaller and easier to parse.
     """
+    if marker_grounding_complete(context):
+        return _build_grounded_summary_messages(context)
+
     gesture_ready = bool(context.get("gesture_ready"))
     biomarkers_payload, n_dropped, marker_keys, _ = _filter_available_biomarkers(context)
     stage = str(context.get("stage_roman", ""))
@@ -381,6 +463,8 @@ __all__ = [
     "CLINICAL_SYSTEM_PROMPT",
     "build_clinical_reasoning_messages",
     "COMPACT_CLINICAL_SYSTEM_PROMPT",
+    "GROUNDED_SUMMARY_SYSTEM_PROMPT",
     "rag_prompt_sources",
+    "marker_grounding_complete",
     "build_compact_clinical_reasoning_messages",
 ]

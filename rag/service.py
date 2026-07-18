@@ -27,6 +27,11 @@ class RetrieveRequest(BaseModel):
     include_demo: bool = False
 
 
+class LookupRequest(BaseModel):
+    system_keys: List[str] = Field(min_length=1, max_length=64)
+    include_demo: bool = False
+
+
 def create_app(settings: RagSettings | None = None) -> FastAPI:
     cfg = settings or RagSettings.from_env()
     runtime: Dict[str, Any] = {
@@ -121,6 +126,57 @@ def create_app(settings: RagSettings | None = None) -> FastAPI:
             "collection": cfg.collection,
             "demo_evidence_included": request.include_demo,
             "retrieval_ms": round((time.perf_counter() - started) * 1000, 1),
+            "results": results,
+        }
+
+    @app.post("/v1/lookup")
+    def lookup_endpoint(request: LookupRequest) -> Dict[str, Any]:
+        store = runtime.get("store")
+        if not cfg.enabled or store is None:
+            raise HTTPException(status_code=503, detail="RAG service is disabled or not ready")
+        if request.include_demo and not cfg.allow_demo:
+            raise HTTPException(status_code=403, detail="demo evidence is disabled by governance policy")
+
+        system_keys = list(
+            dict.fromkeys(value.strip() for value in request.system_keys if value.strip())
+        )
+        started = time.perf_counter()
+        with runtime["lock"]:
+            payloads = store.lookup_by_system_keys(cfg.collection, system_keys)
+        by_key: Dict[str, Dict[str, Any]] = {}
+        for payload in payloads:
+            metadata = dict(payload.get("metadata") or {})
+            system_key = str(metadata.get("system_key") or "")
+            if not system_key or system_key in by_key:
+                continue
+            if not request.include_demo and not bool(metadata.get("clinical_ready")):
+                continue
+            by_key[system_key] = payload
+
+        results = []
+        for system_key in system_keys:
+            payload = by_key.get(system_key)
+            if payload is None:
+                results.append({"system_key": system_key, "hit": None})
+                continue
+            metadata = dict(payload.get("metadata") or {})
+            results.append(
+                {
+                    "system_key": system_key,
+                    "hit": {
+                        "knowledge_id": str(payload.get("knowledge_id") or ""),
+                        "chunk_id": str(payload.get("chunk_id") or ""),
+                        "title": str(payload.get("title") or ""),
+                        "text": str(payload.get("text") or ""),
+                        "metadata": metadata,
+                    },
+                }
+            )
+        return {
+            "schema_version": "rehab.rag.lookup.v1",
+            "collection": cfg.collection,
+            "demo_evidence_included": request.include_demo,
+            "lookup_ms": round((time.perf_counter() - started) * 1000, 1),
             "results": results,
         }
 

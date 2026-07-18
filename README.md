@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。
 
-> `cloud-server-v1.1.18` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、RAG Shadow、内部试运行 Assist 与 JSON/PDF/ZIP 回传整链路验收。
+> `cloud-server-v1.1.19` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、26 项知识精确接地、内部试运行 Assist 与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.18
+cloud-server-v1.1.19
 ```
 
 该标签提供已在线上验证过的运行基线；当前分支在此基础上包含：
@@ -20,11 +20,11 @@ cloud-server-v1.1.18
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
 - 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
-- RAG 以独立 CPU 服务运行；默认启用 Shadow 审计，未审核知识只有在内部试运行三重门禁、引用白名单和醒目警示同时生效时才可进入测试报告
+- RAG 以独立 CPU 服务运行；向量检索负责总体辅助证据，26 项 biomarker 按 `system_key` 精确绑定知识条目。未审核知识只有在内部试运行三重门禁、引用白名单和醒目警示同时生效时才可进入测试报告
 - 每台设备使用独立 token 且只能访问本设备任务；旧共享 token 仅在显式迁移开关开启时可用
 - 管理员可在“系统管理 → 设备凭证”生成、查看掩码、停用、轮换和撤销设备码；数据库仅保存哈希，明文只显示一次
 - 满负载报告使用动态 token 预算，减少 26 biomarker 报告截断后静默降级；保守 fallback 会在报告中显式标注
-- 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出
+- 评估结果 `result.json`、`report.pdf`、`export.zip` 持久化导出；JSON/PDF 同步携带知识 ID、状态、来源 ID 和去重参考文献
 - 独立“模型设置”页可切换已验证的报告大模型，默认只展示已准备/已验证的 HF 原版权重候选模型；Qwen3-8B、DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 与 InternLM3-8B-Instruct 已通过端到端报告结构校验
 - 模型权重路径属于服务器部署配置，不在业务页面暴露；未通过报告结构校验的候选模型不能设为当前线上模型
 - BI/改良 Barthel 指数已从当前上肢手功能在线推理、页面展示、统计和导出报告中移除，数据库字段仅保留旧记录兼容
@@ -105,7 +105,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.18
+git checkout cloud-server-v1.1.19
 ```
 
 2. 准备外部文件：
@@ -266,7 +266,7 @@ cp backend/config/gestures_26.example.json backend/config/gestures_26.json
 
 ### RAG 配置
 
-RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。生产基线使用 `shadow` 记录检索轨迹，不改变 JSON、PDF 或网页报告。当前另有 35 条未完成正式专家审核的隔离试运行集合，可在显式审批、Demo 提示词开关和引用白名单校验同时生效时做内部 Assist 验证；它不会被标记为临床可用。常规部署与上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)，本轮试用命令和回退流程见 [`docs/RAG_TRIAL_ASSIST.md`](docs/RAG_TRIAL_ASSIST.md)。
+RAG 使用独立 CPU 环境和只监听 `127.0.0.1:8010` 的检索服务。生产建议使用 `shadow` 记录检索轨迹；当前云端演示环境显式启用了带醒目警示的内部试运行 Assist。Assist 采用两条路径：总体解读使用去标识化向量检索，26 项固定 biomarker 使用 `/v1/lookup` 按 `system_key` 精确匹配，避免 Top-K 截断造成漏项或错配。完整命中时，大模型只生成定性摘要和高层策略，数值前缀、保守综合界定、逐项解读、引用和边界由代码确定。当前 35 条知识仍未完成正式专家审核，不会被标记为临床可用。常规部署与上线门禁见 [`docs/RAG_GROUNDING.md`](docs/RAG_GROUNDING.md)，本轮试用命令和回退流程见 [`docs/RAG_TRIAL_ASSIST.md`](docs/RAG_TRIAL_ASSIST.md)。
 
 默认候选模型包括：
 
@@ -296,7 +296,7 @@ LLM_ORIGINAL_MODEL_ROOT=/root/autodl-tmp/Qwen_data
 当前云端验证结论：
 
 ```text
-qwen3_8b_hf：已通过端到端报告链路测试，当前推荐作为线上默认报告模型。
+qwen3_8b_hf：已通过真实 26 biomarker 精确接地报告测试，当前推荐作为线上默认报告模型；完整接地后不再重复生成 26 项 marker_text，实测由 156.97 秒降至 27.84 秒。
 deepseek_r1_distill_qwen7b：已通过真实 26 biomarker 报告 JSON 结构校验，采用分段结构化生成避免 R1 推理模型输出截断；可在页面切换为 baseline 对照，但当前生成耗时约 2 分钟/份，临床文本质量仍建议后续通过知识库增强或微调优化。
 glm4_9b：GLM-4-9B-Chat 已通过真实 26 biomarker 报告 JSON 结构校验，采用分段结构化生成和较高重复惩罚避免整段输出截断/复读；本次 `mysql_assessment_33` 验证耗时约 2.5 分钟/份，临床文本偏模板化，仍建议后续通过知识库增强或微调优化。
 mistral7b_v03：已通过真实 26 biomarker 报告 JSON 结构校验，可在页面切换为国外 baseline 对照；本次 `mysql_assessment_33` 验证耗时约 2.7 分钟/份，仍建议后续用真实病例集做批量质量评测。
@@ -353,7 +353,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.18
+稳定演示/复现实验：使用 cloud-server-v1.1.19
 日常继续开发：使用 main
 ```
 

@@ -12,6 +12,7 @@
        |-- /api/*          -> 127.0.0.1:8000/api/*
   -> FastAPI 127.0.0.1:8000
        |-- MySQL 127.0.0.1:3306
+       |-- RAG 服务 127.0.0.1:8010（可选 Shadow / 受控 Assist）
        |-- Qwen3-8B HF 本地报告模型（默认）
        |-- PyTorch 评分模型 DL_model/*.pth
 ```
@@ -48,7 +49,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.18
+git checkout cloud-server-v1.1.19
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -379,6 +380,8 @@ bash /root/autodl-tmp/rehab_project/start_gguf_fallback.sh
 
 RAG 不随生产一键脚本自动启动，也不与报告后端共用 Python 环境。生产基线使用 `shadow`：检索结果写入受限权限轨迹，但不会进入提示词，也不会改变网页、JSON 或 PDF 报告。未完成正式专家审核的结构化知识只能放入独立试运行集合；如需内部体验 Assist，必须显式启用审批和 Demo 提示词开关，并保留报告中的未审核警示与引用校验。
 
+Assist 使用两类接口：`/v1/search` 对去标识化综合问题做 BGE-M3 向量检索，`/v1/lookup` 对固定 biomarker 的唯一 `system_key` 做精确查找。后者不使用相似度或 Top-K，因此不会因为召回排序把某一项指标绑定到错误知识。当前试运行集合为 `rehab_knowledge_trial_v0_2`，35 条知识仍全部是 `clinical_ready=false`，只能用于内部技术验证。
+
 独立服务只监听 `127.0.0.1:8010`，启动模板为：
 
 ```bash
@@ -414,7 +417,9 @@ curl -f http://127.0.0.1:8010/health
 
 `result.json` 的 `schema_version` 为 `rehab.assessment_result.v2`。正式交付文件不再包含
 `report.content`、`biomarkers_raw`、`prediction_json` 或 trial 全量调试字段；数据不足的
-biomarker 只进入 `biomarker_coverage.missing_keys`，不生成临床解读。
+biomarker 只进入 `biomarker_coverage.missing_keys`，不生成临床解读。启用 Assist 且实际采用
+知识时，`knowledge_evidence` 保存条目 ID、知识状态、审核状态、来源 ID 和去重参考文献；未使用
+知识时该对象保留稳定结构并返回 `used_in_report=false`。
 
 接口：
 

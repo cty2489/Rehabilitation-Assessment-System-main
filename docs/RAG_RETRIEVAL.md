@@ -2,11 +2,13 @@
 
 本阶段把第一步生成的 `chunks.jsonl` 转换成 1024 维稠密向量，并保存到 Qdrant。该检索层不修改 Brunnstrom/FMA/MAS 结果；报告链路的受控 Shadow 接入见 [`RAG_GROUNDING.md`](RAG_GROUNDING.md)。
 
+语义检索用于综合问题和相关辅助证据。当前报告中的 26 项固定 biomarker 不依赖语义 Top-K，而是通过 `/v1/lookup` 按唯一 `system_key` 精确绑定知识；两者的职责不要混用。
+
 ## 当前部署选择
 
 - Embedding：`BAAI/bge-m3`，使用 Sentence Transformers，CPU 推理。
 - 向量库：Qdrant Client 本地持久化模式。
-- 数据范围：7 个 `demo_ready` 知识块。
+- 初始 Demo 数据范围：7 个 `demo_ready` 知识块；当前内部试运行集合另有 35 个受治理知识块。
 - 临床状态：全部 `clinical_ready=false`，索引时必须显式使用 `--allow-demo`。
 - 独立服务默认开关：`RAG_ENABLED=0`；报告后端默认 `RAG_MODE=off`。
 

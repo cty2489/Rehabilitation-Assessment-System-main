@@ -196,6 +196,35 @@ class AssessmentExportPayloadTests(unittest.TestCase):
         self.assertEqual(marker["treatment_advice"], "结合功能量表调整训练。")
         self.assertEqual(marker["interpretation_status"], "available")
 
+    def test_knowledge_evidence_is_preserved_in_json_and_pdf(self) -> None:
+        assessment = _assessment()
+        evidence_block = """### 辅助知识证据来源
+
+> 实验提示：本次显式启用了未完成临床审核的 Demo 知识。
+
+| 知识ID | 标题 | 知识状态 | 来源 | 审核状态 |
+| --- | --- | --- | --- | --- |
+| KB-EMG-009 | 屈/伸肌 IEMG 比 | 研究用途 | [SRC-001] 测试文献 https://example.test/1；[SRC-002] 第二篇文献 https://example.test/2 | 内部试运行 / 未完成正式专家审核 |
+| KB-EEG-001 | 功率不对称比 | 条件候选 | [SRC-001] 测试文献 https://example.test/1 | 内部试运行 / 未完成正式专家审核 |
+
+"""
+        assessment["report"] = assessment["report"].replace(
+            "## 四、下周具体训练参数",
+            evidence_block + "## 四、下周具体训练参数",
+        )
+        payload = assessment_export.build_result_payload(assessment)
+        evidence = payload["knowledge_evidence"]
+        self.assertTrue(evidence["used_in_report"])
+        self.assertEqual(evidence["clinical_review_status"], "demo_unreviewed")
+        self.assertEqual(len(evidence["entries"]), 2)
+        self.assertEqual(evidence["entries"][0]["source_ids"], ["SRC-001", "SRC-002"])
+        self.assertEqual(len(evidence["references"]), 2)
+
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "report.pdf"
+            assessment_export.write_report_pdf(out, payload)
+            self.assertGreater(out.stat().st_size, 1000)
+
     def test_report_pdf_can_be_written_from_v2_payload(self) -> None:
         payload = assessment_export.build_result_payload(_assessment())
         with tempfile.TemporaryDirectory() as td:

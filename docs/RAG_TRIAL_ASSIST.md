@@ -4,18 +4,20 @@
 
 ## 当前试运行基线
 
-截至 2026-07-17，云端验证基线为：
+截至 2026-07-18，云端验证基线为：
 
 | 项目 | 结果 |
 |---|---:|
-| 集合 | `rehab_knowledge_trial_v0_1` |
+| 集合 | `rehab_knowledge_trial_v0_2` |
 | 知识条目 / 切块 | 35 / 35 |
 | 正式临床可用条目 | 0 |
 | 可回答评测问题 | 70 |
 | 知识库无答案/对抗问题 | 12 |
 | 可回答问题 Hit@1 / Hit@3 / MRR | 1.0000 / 1.0000 / 1.0000 |
-| 真实 Qwen3-8B Assist 冒烟 | 通过，37.518 秒 |
-| 检索 / 实际引用 | 5 条 / 3 条，引用均在检索白名单内 |
+| 26 项 biomarker 精确查找 | 26/26 命中，26/26 来源 ID 对齐 |
+| 26 项逐项解读 | 26 条互不重复，旧通用句 0 条 |
+| 真实 Qwen3-8B 报告生成 | 通过，156.97 秒降至 27.84 秒 |
+| 最终 JSON / PDF 证据 | 28 个实际采用条目 / 28 条去重参考文献 |
 
 上述召回指标只评价 70 个有标准答案的问题。12 个无答案问题目前只作为后续拒答器测试集，不能用这组 Hit@K 证明系统已经具备可靠拒答能力。
 
@@ -44,12 +46,12 @@ BASE=/root/autodl-tmp/rehab_project
 APP=$BASE/current
 RAG_PY=/root/autodl-tmp/envs/rag_env/bin/python
 RAW=$BASE/knowledge_base/raw/rehab_knowledge_trial_v0.1.json
-RUNTIME=$BASE/knowledge_base/runtime/rehab_knowledge_trial_v0_1
+RUNTIME=$BASE/knowledge_base/runtime/rehab_knowledge_trial_v0_2
 
 $RAG_PY $APP/scripts/rag_prepare_review_json.py \
   --input "$RAW" \
   --output-dir "$RUNTIME" \
-  --collection rehab_knowledge_trial_v0_1 \
+  --collection rehab_knowledge_trial_v0_2 \
   --allow-internal-trial
 ```
 
@@ -69,19 +71,26 @@ set +a
 
 $RAG_PY $APP/scripts/rag_index.py \
   --chunks "$RUNTIME/chunks.jsonl" \
-  --collection rehab_knowledge_trial_v0_1 \
+  --collection rehab_knowledge_trial_v0_2 \
   --manifest-out "$RUNTIME/index_manifest.json" \
   --allow-demo
 
 $RAG_PY $APP/scripts/rag_eval_retrieval.py \
   --queries "$RUNTIME/evaluation_queries.jsonl" \
-  --collection rehab_knowledge_trial_v0_1 \
+  --collection rehab_knowledge_trial_v0_2 \
   --top-k 5 \
   --qdrant-path "$BASE/knowledge_base/vector_store/qdrant_local" \
   > "$RUNTIME/retrieval_eval.json"
 ```
 
-把 `$BASE/rag.env` 的 `RAG_COLLECTION` 改为 `rehab_knowledge_trial_v0_1`，再启动服务并确认 `/health` 返回该集合名。
+把 `$BASE/rag.env` 的 `RAG_COLLECTION` 改为 `rehab_knowledge_trial_v0_2`，再启动服务并确认 `/health` 返回该集合名。
+
+服务提供两类不同用途的检索接口：
+
+- `/v1/search` 使用 BGE-M3 向量检索，为综合解读寻找相关辅助证据。
+- `/v1/lookup` 接收固定 biomarker 的 `system_key`，按唯一键精确返回逐项知识。它不计算相似度，也不受 Top-K 截断影响。
+
+结构化知识中出现重复 `system_key` 时，准备阶段会直接失败，不能建立存在歧义的试运行集合。
 
 ## 3. 先运行 Shadow
 
@@ -114,10 +123,13 @@ export RAG_SHADOW_INCLUDE_DEMO=1
 
 冒烟脚本使用去标识化的合成患者，只在以下条件全部满足时返回成功：
 
-1. 检索证据实际进入提示词。
-2. 大模型返回非空 `rag_citations`。
-3. 每个引用 ID 都属于本次检索结果，编造 ID 会触发重试或保守回退。
-4. 最终 Markdown 明确显示“内部技术验证”和“未完成正式专家审核”。
+1. 向量检索证据实际进入提示词。
+2. 本次可用 biomarker 的 `system_key` 全部被 `/v1/lookup` 精确命中。
+3. 每项解读包含与该指标绑定的知识 ID，不能借用其他指标的来源。
+4. 大模型返回的 `rag_citations` 全部属于本次证据白名单，编造 ID 会触发重试或保守回退。
+5. 最终 Markdown 明确显示“内部技术验证”和“未完成正式专家审核”。
+
+完整精确命中时，大模型不再重复生成 26 项 `marker_text`，只生成定性摘要、高层策略和随访内容；量表数值前缀、综合界定、逐项解读、知识引用、越界策略过滤和试运行警示由确定性代码生成或校验。这样既减少重复与幻觉，也显著缩短生成时间。
 
 若需要在网页中短期体验内部试运行 Assist，可把上述三个 Assist 变量写入 `backend/.env` 后重启后端。此状态只能用于内部演示；演示完成后应恢复 Shadow。
 

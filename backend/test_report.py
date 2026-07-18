@@ -9,6 +9,7 @@ Run from backend/:
 """
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -107,6 +108,43 @@ class AdaptationTests(unittest.TestCase):
                 {"overall_interpretation": "没有声明引用"},
             )
 
+    def test_prediction_mentions_must_match_measured_values(self) -> None:
+        context = {
+            "predictions": {"FMA_UE": 15, "hand_function": 6, "hand_tone": "0"},
+            "stage_roman": "VI",
+        }
+        report._validate_prediction_mentions(
+            context,
+            {
+                "overall_interpretation": "本次FMA手部分数15分，Brunnstrom VI期。"
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "FMA 分数 6"):
+            report._validate_prediction_mentions(
+                context,
+                {"treatment_advice": "结合FMA手部分数6分调整训练。"},
+            )
+        with self.assertRaisesRegex(ValueError, "FMA 分数 6"):
+            report._validate_prediction_mentions(
+                context,
+                {"overall_interpretation": "FMA 手部分数 6，手部 MAS 0级。"},
+            )
+        with self.assertRaisesRegex(ValueError, "Brunnstrom 分期 V"):
+            report._validate_prediction_mentions(
+                context,
+                {"overall_interpretation": "当前Brunnstrom V期。"},
+            )
+        with self.assertRaisesRegex(ValueError, "Brunnstrom 分期 V"):
+            report._validate_prediction_mentions(
+                context,
+                {"overall_interpretation": "当前 Brunnstrom 手分期 V 期。"},
+            )
+        with self.assertRaisesRegex(ValueError, "手部 MAS 2级"):
+            report._validate_prediction_mentions(
+                {**context, "predictions": {**context["predictions"], "hand_tone": "0"}},
+                {"overall_interpretation": "当前手部 MAS 2级。"},
+            )
+
     def test_coerce_wrong_marker_keys_by_order(self) -> None:
         markers = [{"key": "movement_mu_power_change"}, {"key": "movement_beta_power_change"}]
         raw = {
@@ -160,6 +198,61 @@ class AdaptationTests(unittest.TestCase):
             obj,
             {"marker_text": {"emg_burst_duration": ["肌电爆发持续时间偏长，提示募集控制不足。"]}},
         )
+
+    def test_complete_marker_grounding_skips_segmented_marker_generation(self) -> None:
+        context = {
+            "patient": {},
+            "predictions": {"FMA_UE": 15, "hand_tone": "0", "hand_function": 6},
+            "stage": 6,
+            "stage_roman": "VI",
+            "biomarkers": {
+                "groups": [
+                    {"key": "emg", "markers": [{"key": "m1", "available": True}]}
+                ]
+            },
+            "rag_evidence": {
+                "used_in_prompt": False,
+                "marker_grounding_used": True,
+                "marker_grounding_complete": True,
+                "sources": [],
+            },
+        }
+
+        class FakeReportModel:
+            cfg = {
+                "segment_summary_prefill": "",
+                "segment_summary_max_new_tokens": 512,
+                "segment_stop_on_json": True,
+            }
+
+        generated = json.dumps({
+            "overall_interpretation": "Brunnstrom VI期，FMA手部分数15分，手部MAS 0级。",
+            "overall_subtype": "VI期-运动模式待检查，中枢驱动待验证，协同分离及活动度待确认。",
+            "treatment_strategy": ["条件性训练建议。"],
+            "warnings": [],
+        }, ensure_ascii=False)
+        with patch.object(report, "_generate_local_text", return_value=generated) as generate:
+            result = json.loads(
+                report._reason_local_segmented_clinical_json(context, FakeReportModel())
+            )
+
+        generate.assert_called_once()
+        self.assertNotIn("marker_text", result)
+
+    def test_complete_marker_grounding_reduces_generation_budget(self) -> None:
+        context = {
+            "rag_evidence": {
+                "marker_grounding_used": True,
+                "marker_grounding_complete": True,
+            }
+        }
+        with patch.dict("os.environ", {"LLM_MAX_NEW_TOKENS": ""}, clear=False):
+            self.assertEqual(
+                report._dynamic_report_max_new_tokens(
+                    context, {"max_new_tokens": 4096}
+                ),
+                1400,
+            )
 
 
 class LoadErrorTests(unittest.TestCase):

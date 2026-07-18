@@ -81,6 +81,33 @@ def _valid_clinical(roman: str = "VI") -> dict:
     }
 
 
+def _grounded_context() -> dict:
+    context = _context(6)
+    context["rag_evidence"] = {
+        "mode": "assist",
+        "used_in_prompt": True,
+        "used_in_report": True,
+        "marker_grounding_used": True,
+        "sources": [],
+        "marker_sources": {
+            "m_emg": {
+                "knowledge_id": "KB-EMG-009",
+                "system_key": "m_emg",
+                "title": "屈伸肌积分肌电比",
+                "knowledge_status": "blocked_current_implementation",
+                "knowledge_status_label": "阻断当前实现",
+                "proposed_claim": "该比值描述所选通道累计电活动的相对构成。",
+                "allowed_interpretation": "通道核实后可探索屈伸活动偏向。",
+                "prohibited_interpretation": "不得因比值大于1诊断屈肌痉挛。",
+                "implementation_action": "核实通道并增加分母质量控制。",
+                "clinical_ready": False,
+                "references": ["[SRC-001] 测试文献"],
+            }
+        },
+    }
+    return context
+
+
 class ValidateClinicalTests(unittest.TestCase):
     def test_valid_passes_and_assembles(self) -> None:
         c = report_builder.validate_clinical(_context(6), _valid_clinical("VI"))
@@ -193,8 +220,73 @@ class ValidateClinicalTests(unittest.TestCase):
         self.assertIn("单次结果不判断正常或异常", text["interpretation"])
         self.assertIn("同条件", text["treatment_advice"])
 
+    def test_exact_marker_knowledge_replaces_generic_llm_text(self) -> None:
+        clinical = _valid_clinical("VI")
+        clinical["marker_text"]["m_emg"] = {
+            "interpretation": "该值为设备特异量，仅用于同设备同流程复测比较。",
+            "treatment_advice": "建议复测。",
+        }
+        result = report_builder.validate_clinical(_grounded_context(), clinical)
+        grounded = result["marker_text"]["m_emg"]
+        self.assertIn("累计电活动的相对构成", grounded["interpretation"])
+        self.assertIn("不得因比值大于1诊断屈肌痉挛", grounded["interpretation"])
+        self.assertIn("[KB-EMG-009]", grounded["interpretation"])
+        self.assertIn("核实通道并增加分母质量控制", grounded["treatment_advice"])
+        self.assertIn("KB-EMG-009", result["rag_citations"])
+
+    def test_complete_grounding_owns_numeric_prefix_and_safe_subtype(self) -> None:
+        context = _grounded_context()
+        base_source = context["rag_evidence"]["marker_sources"]["m_emg"]
+        for key, knowledge_id in (("m_emg2", "KB-EMG-002"), ("m_eeg", "KB-EEG-002")):
+            source = copy.deepcopy(base_source)
+            source["system_key"] = key
+            source["knowledge_id"] = knowledge_id
+            context["rag_evidence"]["marker_sources"][key] = source
+        context["rag_evidence"]["marker_grounding_complete"] = True
+
+        clinical = _valid_clinical("VI")
+        clinical["overall_interpretation"] = "中枢驱动不足，仍需进一步训练。"
+        clinical["treatment_strategy"] = [
+            "任务难度分级；每日2次；根据动作完成质量调整；疲劳时停止。",
+            "神经兴奋性调节；根据EMG变化优化刺激参数。",
+        ]
+        clinical.pop("marker_text")
+        clinical.pop("overall_subtype")
+        result = report_builder.validate_clinical(context, clinical)
+
+        self.assertIn("Brunnstrom手部分期为VI期", result["overall_interpretation"])
+        self.assertIn("FMA手部分数为18/20", result["overall_interpretation"])
+        self.assertIn("手部肌张力（MAS）为0级", result["overall_interpretation"])
+        self.assertNotIn("中枢驱动不足", result["overall_interpretation"])
+        self.assertIn("专业复核", result["overall_interpretation"])
+        self.assertEqual(
+            result["overall_subtype"],
+            "VI期-运动模式待动作检查确认，中枢驱动特征待同步协议验证，"
+            "协同分离程度待动作检查确认，关节活动度待角度测量确认",
+        )
+        self.assertEqual(set(result["marker_text"]), {"m_emg", "m_emg2", "m_eeg"})
+        self.assertEqual(
+            result["treatment_strategy"],
+            ["任务难度分级；每日2次；根据动作完成质量调整；疲劳时停止。"],
+        )
+        self.assertEqual(len(result["warnings"]), 3)
+        self.assertIn("未完成正式专家审核", result["warnings"][0])
+
+    def test_marker_knowledge_does_not_change_shadow_report(self) -> None:
+        context = _grounded_context()
+        context["rag_evidence"]["mode"] = "shadow"
+        context["rag_evidence"]["marker_grounding_used"] = False
+        result = report_builder.validate_clinical(context, _valid_clinical("VI"))
+        self.assertNotIn("KB-EMG-009", result["marker_text"]["m_emg"]["interpretation"])
+
 
 class RenderTests(unittest.TestCase):
+    def test_exact_marker_source_is_rendered_with_its_reference(self) -> None:
+        md = report_builder.render_markdown(_grounded_context(), _valid_clinical("VI"))
+        self.assertIn("[KB-EMG-009]", md)
+        self.assertIn("辅助知识证据来源", md)
+        self.assertIn("[SRC-001] 测试文献", md)
+
     def test_footnote_fragments_deduped(self) -> None:
         md = report_builder.render_markdown(_context(6), _valid_clinical("VI"))
         # Two EMG markers share "DEDUPFRAG"; it must appear ONCE in the footnote,
@@ -295,6 +387,25 @@ class PromptTests(unittest.TestCase):
         self.assertIn("VI期-", joined)
         self.assertNotIn("group_subtypes", joined)
         self.assertIn("禁止输出具体方法", joined)
+
+    def test_complete_marker_grounding_uses_summary_only_prompt(self) -> None:
+        from llm.prompts import build_clinical_reasoning_messages
+
+        context = _grounded_context()
+        context["rag_evidence"]["marker_grounding_complete"] = True
+        context["schema_hint"] = report_builder.CLINICAL_SCHEMA_HINT
+        context["gesture_ready"] = False
+        messages = build_clinical_reasoning_messages(context)
+        system_text = messages[0]["content"]
+        user_text = messages[1]["content"]
+
+        self.assertIn("只生成不重复数值的定性摘要", system_text)
+        self.assertIn("不得从单次 EMG/EEG/IMU 数值推导屈肌优势", system_text)
+        self.assertNotIn('"marker_text"', user_text)
+        self.assertNotIn('"overall_subtype"', user_text)
+        self.assertNotIn('"biomarkers"', user_text)
+        self.assertIn('"marker_grounding":{"complete":true', user_text)
+        self.assertIn("禁止输出 marker_text", user_text)
 
     def test_rag_evidence_enters_prompt_only_after_governance_gate(self) -> None:
         from llm.prompts import build_clinical_reasoning_messages

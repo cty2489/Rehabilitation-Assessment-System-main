@@ -72,6 +72,31 @@ class _FakeStore:
             ),
         ]
 
+    def lookup_by_system_keys(self, _collection, system_keys):
+        payloads = {
+            "reviewed_key": {
+                "knowledge_id": "KB-REVIEWED",
+                "chunk_id": "reviewed#1",
+                "title": "已审核条目",
+                "text": "用于同设备复测。",
+                "metadata": {
+                    "system_key": "reviewed_key",
+                    "clinical_ready": True,
+                },
+            },
+            "demo_key": {
+                "knowledge_id": "KB-DEMO",
+                "chunk_id": "demo#1",
+                "title": "Demo 条目",
+                "text": "仅供实验。",
+                "metadata": {
+                    "system_key": "demo_key",
+                    "clinical_ready": False,
+                },
+            },
+        }
+        return [payloads[key] for key in system_keys if key in payloads]
+
     def close(self) -> None:
         self.closed = True
 
@@ -149,3 +174,26 @@ def test_demo_retrieval_requires_service_side_permission() -> None:
         "KB-REVIEWED",
         "KB-DEMO",
     ]
+
+
+def test_exact_lookup_uses_system_keys_and_governance_filter() -> None:
+    with _client(_settings(enabled=True, allow_demo=True)) as client:
+        reviewed_only = client.post(
+            "/v1/lookup",
+            json={"system_keys": ["demo_key", "reviewed_key"]},
+        )
+        with_demo = client.post(
+            "/v1/lookup",
+            json={
+                "system_keys": ["demo_key", "reviewed_key"],
+                "include_demo": True,
+            },
+        )
+
+    assert reviewed_only.status_code == 200
+    reviewed_results = reviewed_only.json()["results"]
+    assert reviewed_results[0] == {"system_key": "demo_key", "hit": None}
+    assert reviewed_results[1]["hit"]["knowledge_id"] == "KB-REVIEWED"
+    assert [
+        item["hit"]["knowledge_id"] for item in with_demo.json()["results"]
+    ] == ["KB-DEMO", "KB-REVIEWED"]

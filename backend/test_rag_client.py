@@ -78,6 +78,41 @@ def _response(*, clinical_ready: bool = False) -> dict:
     }
 
 
+def _lookup_response(*, clinical_ready: bool = False) -> dict:
+    return {
+        "schema_version": "rehab.rag.lookup.v1",
+        "collection": "demo",
+        "results": [
+            {
+                "system_key": "fcr_mdf",
+                "hit": {
+                    "knowledge_id": "KB-EMG-011",
+                    "chunk_id": "KB-EMG-011@0.1#001",
+                    "title": "FCR 中位频率",
+                    "text": "FCR MDF 受任务条件影响。",
+                    "metadata": {
+                        "system_key": "fcr_mdf",
+                        "clinical_ready": clinical_ready,
+                        "knowledge_status": "research_only",
+                        "knowledge_status_label": "仅研究",
+                        "proposed_claim": "MDF 是功率谱累计50%的频率。",
+                        "allowed_interpretation": "仅可分析固定任务内趋势。",
+                        "prohibited_interpretation": "不得用单次值诊断疲劳。",
+                        "implementation_action": "改为任务内MDF斜率。",
+                        "references": ["参考资料B"],
+                    },
+                },
+            }
+        ],
+    }
+
+
+def _response_for_url(url: str, *, clinical_ready: bool = False) -> dict:
+    if url.endswith("/v1/lookup"):
+        return _lookup_response(clinical_ready=clinical_ready)
+    return _response(clinical_ready=clinical_ready)
+
+
 class RagClientTests(unittest.TestCase):
     def test_settings_default_to_off_and_local_service(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -109,7 +144,7 @@ class RagClientTests(unittest.TestCase):
 
         def transport(url, payload, timeout):
             calls.append((url, payload, timeout))
-            return _response(clinical_ready=False)
+            return _response_for_url(url, clinical_ready=False)
 
         with tempfile.TemporaryDirectory() as temporary_dir:
             trace_path = Path(temporary_dir) / "trace.jsonl"
@@ -123,7 +158,10 @@ class RagClientTests(unittest.TestCase):
         self.assertEqual(packet["status"], "retrieved")
         self.assertEqual(packet["correlation_id"], "session-123")
         self.assertFalse(packet["used_in_prompt"])
+        self.assertFalse(packet["marker_grounding_used"])
+        self.assertFalse(packet["marker_grounding_complete"])
         self.assertEqual(len(packet["sources"]), 1)
+        self.assertIn("fcr_mdf", packet["marker_sources"])
         self.assertGreaterEqual(packet["elapsed_ms"], 0)
         self.assertTrue(calls[0][1]["include_demo"])
         self.assertNotIn("text", trace["sources"][0])
@@ -137,7 +175,7 @@ class RagClientTests(unittest.TestCase):
 
         def transport(url, payload, timeout):
             calls.append((url, payload, timeout))
-            return _response(clinical_ready=True)
+            return _response_for_url(url, clinical_ready=True)
 
         with tempfile.TemporaryDirectory() as temporary_dir:
             packet = rag_client.retrieve_report_evidence(
@@ -173,15 +211,49 @@ class RagClientTests(unittest.TestCase):
                 assist_approved=True,
             )
             demo = rag_client.retrieve_report_evidence(
-                _context(), settings=settings, transport=lambda *_: _response(clinical_ready=False)
+                _context(),
+                settings=settings,
+                transport=lambda url, *_: _response_for_url(
+                    url, clinical_ready=False
+                ),
             )
             reviewed = rag_client.retrieve_report_evidence(
-                _context(), settings=settings, transport=lambda *_: _response(clinical_ready=True)
+                _context(),
+                settings=settings,
+                transport=lambda url, *_: _response_for_url(
+                    url, clinical_ready=True
+                ),
             )
         self.assertEqual(demo["status"], "no_eligible_evidence")
         self.assertFalse(demo["used_in_prompt"])
         self.assertTrue(reviewed["used_in_prompt"])
+        self.assertTrue(reviewed["marker_grounding_used"])
+        self.assertTrue(reviewed["marker_grounding_complete"])
+        self.assertEqual(
+            reviewed["marker_sources"]["fcr_mdf"]["knowledge_id"],
+            "KB-EMG-011",
+        )
         self.assertTrue(reviewed["sources"][0]["clinical_ready"])
+
+    def test_partial_exact_lookup_does_not_claim_complete_grounding(self) -> None:
+        context = _context()
+        context["biomarkers"]["groups"][0]["markers"].append(
+            {"key": "second_marker", "name": "第二项", "available": True}
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            packet = rag_client.retrieve_report_evidence(
+                context,
+                settings=_settings(
+                    Path(temporary_dir) / "trace.jsonl",
+                    mode="assist",
+                    assist_approved=True,
+                ),
+                transport=lambda url, *_: _response_for_url(
+                    url, clinical_ready=True
+                ),
+            )
+        self.assertTrue(packet["marker_grounding_used"])
+        self.assertFalse(packet["marker_grounding_complete"])
 
     def test_service_failure_is_fail_open(self) -> None:
         def transport(*_):

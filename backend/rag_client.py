@@ -120,6 +120,17 @@ def build_report_queries(context: Dict[str, Any]) -> List[Dict[str, str]]:
     return queries[:8]
 
 
+def build_marker_system_keys(context: Dict[str, Any]) -> List[str]:
+    """Return available biomarker keys in deterministic report order."""
+    keys: List[str] = []
+    for group in (context.get("biomarkers") or {}).get("groups", []) or []:
+        for marker in group.get("markers", []) or []:
+            key = str(marker.get("key") or "").strip()
+            if key and marker.get("available", True) and key not in keys:
+                keys.append(key)
+    return keys
+
+
 def _post_json(url: str, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
     import httpx
 
@@ -139,9 +150,13 @@ def _packet(mode: str, status: str, **extra: Any) -> Dict[str, Any]:
         "mode": mode,
         "status": status,
         "used_in_prompt": False,
+        "used_in_report": False,
+        "marker_grounding_used": False,
+        "marker_grounding_complete": False,
         "collection": "",
         "queries": [],
         "sources": [],
+        "marker_sources": {},
         **extra,
     }
 
@@ -150,6 +165,45 @@ def _string_list(value: Any) -> List[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _source_from_hit(hit: Dict[str, Any], *, text: str) -> Dict[str, Any]:
+    metadata = dict(hit.get("metadata") or {})
+    return {
+        "knowledge_id": str(hit.get("knowledge_id") or ""),
+        "chunk_id": str(hit.get("chunk_id") or ""),
+        "title": str(hit.get("title") or ""),
+        "text": text,
+        "score": float(hit.get("score") or 0.0),
+        "system_key": str(metadata.get("system_key") or ""),
+        "clinical_ready": bool(metadata.get("clinical_ready")),
+        "expert_verified": bool(metadata.get("expert_verified")),
+        "knowledge_status": str(metadata.get("knowledge_status") or ""),
+        "knowledge_status_label": str(
+            metadata.get("knowledge_status_label") or ""
+        ),
+        "proposed_claim": str(metadata.get("proposed_claim") or ""),
+        "allowed_interpretation": str(
+            metadata.get("allowed_interpretation") or ""
+        ),
+        "prohibited_interpretation": str(
+            metadata.get("prohibited_interpretation") or ""
+        ),
+        "acquisition_and_algorithm_requirements": str(
+            metadata.get("acquisition_and_algorithm_requirements") or ""
+        ),
+        "reference_range_policy": str(
+            metadata.get("reference_range_policy") or ""
+        ),
+        "implementation_action": str(metadata.get("implementation_action") or ""),
+        "trial_release_id": str(metadata.get("trial_release_id") or ""),
+        "source_document_id": str(metadata.get("source_document_id") or ""),
+        "source_sha256": str(metadata.get("source_sha256") or ""),
+        "source_entry_number": metadata.get("source_entry_number"),
+        "references": _string_list(metadata.get("references")),
+        "reviewed_by": str(metadata.get("reviewed_by") or ""),
+        "reviewed_at": str(metadata.get("reviewed_at") or ""),
+    }
 
 
 def _context_correlation_id(context: Dict[str, Any]) -> str:
@@ -170,6 +224,9 @@ def _append_trace(packet: Dict[str, Any], settings: RagClientSettings) -> None:
         "mode": packet.get("mode"),
         "status": packet.get("status"),
         "used_in_prompt": packet.get("used_in_prompt"),
+        "used_in_report": packet.get("used_in_report"),
+        "marker_grounding_used": packet.get("marker_grounding_used"),
+        "marker_grounding_complete": packet.get("marker_grounding_complete"),
         "collection": packet.get("collection"),
         "elapsed_ms": packet.get("elapsed_ms"),
         "queries": packet.get("queries", []),
@@ -187,6 +244,21 @@ def _append_trace(packet: Dict[str, Any], settings: RagClientSettings) -> None:
                 "source_sha256": source.get("source_sha256"),
             }
             for source in packet.get("sources", [])
+        ],
+        "marker_sources": [
+            {
+                "system_key": system_key,
+                "knowledge_id": source.get("knowledge_id"),
+                "chunk_id": source.get("chunk_id"),
+                "title": source.get("title"),
+                "clinical_ready": source.get("clinical_ready"),
+                "expert_verified": source.get("expert_verified"),
+                "knowledge_status": source.get("knowledge_status"),
+                "trial_release_id": source.get("trial_release_id"),
+                "source_document_id": source.get("source_document_id"),
+                "source_sha256": source.get("source_sha256"),
+            }
+            for system_key, source in (packet.get("marker_sources") or {}).items()
         ],
         "error": packet.get("error"),
     }
@@ -241,7 +313,8 @@ def retrieve_report_evidence(
     }
     started = time.perf_counter()
     try:
-        response = (transport or _post_json)(
+        request = transport or _post_json
+        response = request(
             f"{cfg.service_url}/v1/retrieve",
             request_payload,
             cfg.timeout_seconds,
@@ -267,42 +340,58 @@ def retrieve_report_evidence(
                 text = text[:remaining_chars]
                 remaining_chars -= len(text)
                 seen_chunks.add(chunk_id)
-                sources.append(
-                    {
-                        "knowledge_id": str(hit.get("knowledge_id") or ""),
-                        "chunk_id": chunk_id,
-                        "title": str(hit.get("title") or ""),
-                        "text": text,
-                        "score": float(hit.get("score") or 0.0),
-                        "clinical_ready": clinical_ready,
-                        "expert_verified": bool(metadata.get("expert_verified")),
-                        "knowledge_status": str(metadata.get("knowledge_status") or ""),
-                        "knowledge_status_label": str(
-                            metadata.get("knowledge_status_label") or ""
-                        ),
-                        "trial_release_id": str(metadata.get("trial_release_id") or ""),
-                        "source_document_id": str(metadata.get("source_document_id") or ""),
-                        "source_sha256": str(metadata.get("source_sha256") or ""),
-                        "source_entry_number": metadata.get("source_entry_number"),
-                        "references": _string_list(metadata.get("references")),
-                        "reviewed_by": str(metadata.get("reviewed_by") or ""),
-                        "reviewed_at": str(metadata.get("reviewed_at") or ""),
-                    }
-                )
+                sources.append(_source_from_hit(hit, text=text))
                 if len(sources) >= cfg.max_sources:
                     break
             if len(sources) >= cfg.max_sources:
                 break
 
+        marker_keys = build_marker_system_keys(context)
+        marker_sources: Dict[str, Dict[str, Any]] = {}
+        if marker_keys:
+            lookup_response = request(
+                f"{cfg.service_url}/v1/lookup",
+                {"system_keys": marker_keys, "include_demo": include_demo},
+                cfg.timeout_seconds,
+            )
+            if lookup_response.get("schema_version") != "rehab.rag.lookup.v1":
+                raise RuntimeError("unsupported RAG lookup response schema")
+            for result in lookup_response.get("results", []) or []:
+                system_key = str(result.get("system_key") or "")
+                hit = result.get("hit")
+                if system_key not in marker_keys or not isinstance(hit, dict):
+                    continue
+                text = str(hit.get("text") or "").strip()
+                source = _source_from_hit(hit, text=text)
+                if not source["knowledge_id"] or source["system_key"] != system_key:
+                    continue
+                if (
+                    cfg.mode == "assist"
+                    and not cfg.allow_demo_in_prompt
+                    and not source["clinical_ready"]
+                ):
+                    continue
+                marker_sources[system_key] = source
+
         used_in_prompt = cfg.mode == "assist" and bool(sources)
+        marker_grounding_used = cfg.mode == "assist" and bool(marker_sources)
+        marker_grounding_complete = (
+            marker_grounding_used
+            and bool(marker_keys)
+            and set(marker_sources) == set(marker_keys)
+        )
         packet = _packet(
             cfg.mode,
-            "retrieved" if sources else "no_eligible_evidence",
+            "retrieved" if sources or marker_sources else "no_eligible_evidence",
             correlation_id=correlation_id,
             used_in_prompt=used_in_prompt,
+            used_in_report=used_in_prompt or marker_grounding_used,
+            marker_grounding_used=marker_grounding_used,
+            marker_grounding_complete=marker_grounding_complete,
             collection=str(response.get("collection") or ""),
             queries=queries,
             sources=sources,
+            marker_sources=marker_sources,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
     except Exception as exc:  # noqa: BLE001
@@ -331,6 +420,7 @@ def augment_report_context(
 __all__ = [
     "RagClientSettings",
     "augment_report_context",
+    "build_marker_system_keys",
     "build_report_queries",
     "retrieve_report_evidence",
 ]

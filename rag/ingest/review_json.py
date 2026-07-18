@@ -72,6 +72,7 @@ def _validate_document(
         if isinstance(source, dict) and source.get("source_id")
     }
     seen: set[str] = set()
+    seen_system_keys: set[str] = set()
     for index, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             raise ValueError(f"entries[{index}] must be an object")
@@ -84,6 +85,12 @@ def _validate_document(
         if knowledge_id in seen:
             raise ValueError(f"duplicate knowledge_id: {knowledge_id}")
         seen.add(knowledge_id)
+        system_key = _require_text(
+            entry.get("system_key"), "system_key", f"entries[{index}]"
+        )
+        if system_key in seen_system_keys:
+            raise ValueError(f"duplicate system_key: {system_key}")
+        seen_system_keys.add(system_key)
         unknown_sources = set(entry.get("source_ids") or []) - source_ids
         if unknown_sources:
             raise ValueError(
@@ -172,6 +179,15 @@ def _entry_record(
             )
         ],
         "content": entry["proposed_claim"],
+        "allowed_interpretation": entry["allowed_interpretation"],
+        "prohibited_interpretation": entry["prohibited_interpretation"],
+        "acquisition_and_algorithm_requirements": str(
+            entry.get("acquisition_and_algorithm_requirements") or ""
+        ),
+        "reference_range_policy": str(
+            entry.get("reference_range_policy") or ""
+        ),
+        "implementation_action": str(entry.get("implementation_action") or ""),
         "keywords": list(
             dict.fromkeys(
                 [
@@ -242,6 +258,22 @@ def _chunk_record(entry: Dict[str, Any]) -> Dict[str, Any]:
             "system_key": entry["system_key"],
             "knowledge_status": entry["knowledge_status"],
             "knowledge_status_label": entry["knowledge_status_label"],
+            "proposed_claim": entry["content"],
+            "allowed_interpretation": str(
+                entry.get("allowed_interpretation") or ""
+            ),
+            "prohibited_interpretation": str(
+                entry.get("prohibited_interpretation") or ""
+            ),
+            "acquisition_and_algorithm_requirements": str(
+                entry.get("acquisition_and_algorithm_requirements") or ""
+            ),
+            "reference_range_policy": str(
+                entry.get("reference_range_policy") or ""
+            ),
+            "implementation_action": str(
+                entry.get("implementation_action") or ""
+            ),
             "clinical_ready": entry["status"]["clinical_ready"],
             "expert_verified": entry["governance"]["expert_verified"],
             "trial_release_id": entry["governance"]["trial_release_id"],
@@ -274,7 +306,7 @@ def prepare_review_json_knowledge_base(
     input_path: str | Path,
     output_dir: str | Path,
     *,
-    collection_id: str = "rehab_knowledge_trial_v0_1",
+    collection_id: str = "rehab_knowledge_trial_v0_2",
     allow_internal_trial: bool = False,
 ) -> Dict[str, Any]:
     source_path = Path(input_path)

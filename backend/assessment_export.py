@@ -188,6 +188,7 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
         "weekly_plan": [],
         "warnings": [],
         "next_assessment": None,
+        "knowledge_evidence": [],
     }
     lines = (report_text or "").splitlines()
     current_group: Optional[str] = None
@@ -262,12 +263,27 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
                                 "content": row[1],
                                 "duration": row[2],
                             })
+                elif headers[:5] == ["知识ID", "标题", "知识状态", "来源", "审核状态"]:
+                    for row in rows:
+                        if len(row) >= 5:
+                            references = [
+                                value.strip()
+                                for value in row[3].split("；")
+                                if value.strip()
+                            ]
+                            parsed["knowledge_evidence"].append({
+                                "knowledge_id": row[0],
+                                "title": row[1],
+                                "knowledge_status": row[2],
+                                "references": references,
+                                "review_status": row[4],
+                            })
             continue
 
         if line.startswith("**临床解读"):
             parsed["overall_interpretation"] = _md_text(line.split("：", 1)[-1])
-        elif "患者可归类为" in clean:
-            m = re.search(r"患者可归类为：(.+)$", clean)
+        elif "患者可归类为" in clean or "综合状态界定为" in clean:
+            m = re.search(r"(?:患者可归类为|综合状态界定为)：(.+)$", clean)
             if m:
                 parsed["overall_subtype"] = m.group(1).strip(" 。")
         elif clean.startswith("治疗策略要点"):
@@ -288,6 +304,40 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
         i += 1
 
     return parsed
+
+
+def _knowledge_evidence_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    entries = list(parsed.get("knowledge_evidence") or [])
+    references: List[Dict[str, Any]] = []
+    seen = set()
+    for entry in entries:
+        source_ids = []
+        for citation in entry.get("references") or []:
+            source_match = re.match(r"^\[(SRC-[A-Za-z0-9._:-]+)\]", citation)
+            source_id = source_match.group(1) if source_match else None
+            if source_id and source_id not in source_ids:
+                source_ids.append(source_id)
+            dedupe_key = source_id or citation
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            references.append({"source_id": source_id, "citation": citation})
+        entry["source_ids"] = source_ids
+
+    unreviewed = any("未完成正式专家审核" in str(entry.get("review_status") or "") for entry in entries)
+    return {
+        "used_in_report": bool(entries),
+        "clinical_review_status": (
+            "not_used" if not entries else "demo_unreviewed" if unreviewed else "reviewed"
+        ),
+        "notice": (
+            "当前包含未完成正式专家审核的试运行知识，仅供内部技术验证。"
+            if unreviewed
+            else None
+        ),
+        "entries": entries,
+        "references": references,
+    }
 
 
 def _value_text(value: Any, unit: Any = None) -> str:
@@ -491,6 +541,7 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
             "display_note": _BIOMARKER_DISPLAY_NOTE,
         },
         "biomarker_sections": _biomarker_sections(assessment, parsed),
+        "knowledge_evidence": _knowledge_evidence_payload(parsed),
         "subtype_classification_and_treatment_strategy": {
             "subtype_classification": {
                 "main_stage": f"brunnstrom_stage_{stage_roman}" if stage_roman else None,
@@ -746,6 +797,33 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
         story.append(p(f"综合亚型：{subtype}"))
     for i, item in enumerate(strategies, 1):
         story.append(p(f"{i}. {item}"))
+
+    evidence = payload.get("knowledge_evidence") or {}
+    evidence_entries = evidence.get("entries") or []
+    if evidence_entries:
+        story.append(p("知识库证据来源", h2))
+        if evidence.get("notice"):
+            story.append(p(evidence.get("notice"), note))
+        evidence_rows = [["知识ID", "标题", "知识状态", "来源ID"]]
+        for entry in evidence_entries:
+            evidence_rows.append([
+                entry.get("knowledge_id"),
+                entry.get("title"),
+                entry.get("knowledge_status"),
+                "、".join(entry.get("source_ids") or []) or "—",
+            ])
+        story.append(
+            kv_table(
+                evidence_rows,
+                [28 * mm, 62 * mm, 55 * mm, 37 * mm],
+                font_size=7.5,
+            )
+        )
+        references = evidence.get("references") or []
+        if references:
+            story.append(p("参考文献", h3))
+            for item in references:
+                story.append(p(item.get("citation"), note))
 
     plan = payload.get("next_week_training_plan") or {}
     gestures = plan.get("recommended_gestures") or []

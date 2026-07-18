@@ -399,6 +399,7 @@ clinical_scores
 biomarker_coverage
 biomarker_interpretation_policy
 biomarker_sections
+knowledge_evidence
 subtype_classification_and_treatment_strategy
 next_week_training_plan
 warnings_and_recommendations
@@ -414,6 +415,13 @@ natural_language_summary
 `biomarker_interpretation_policy` 规定：单次设备特异量不得用于判断正常或异常，只有同一
 患者在相同设备、相同采集流程下的连续复测才可用于趋势观察。当前接口不计算队列排名或
 百分位。
+
+`knowledge_evidence` 用于审计本次报告实际采用的 RAG 知识，包含
+`used_in_report`、`clinical_review_status`、`notice`、`entries` 和去重后的
+`references`。每个条目会给出 `knowledge_id`、知识状态、审核说明和 `source_ids`。
+当前内部试运行知识会明确返回 `clinical_review_status=demo_unreviewed`，设备端不得把它
+显示为“专家已审核”或“临床指南”。RAG 未参与报告时，设备端应接受
+`used_in_report=false` 和空数组，不应将其视为接口错误。
 
 报告不再输出 EMG、EEG、IMU 各自的模态亚型，只在
 `subtype_classification_and_treatment_strategy.subtype_classification.overall_subtype`

@@ -341,6 +341,10 @@ def _dynamic_report_max_new_tokens(
     """
     if os.environ.get("LLM_MAX_NEW_TOKENS"):
         return None
+    from llm.prompts import marker_grounding_complete
+
+    if marker_grounding_complete(context):
+        return 1400
     cfg = cfg or {}
     if cfg.get("max_new_tokens"):
         return None
@@ -623,7 +627,10 @@ def _reason_clinical(
                     f"未知 LLM_PROVIDER={provider!r}，请使用 deepseek / remote / local"
                 )
             clinical = _parse_clinical_json(text)
-            report_builder.validate_clinical(context, clinical)  # raises if invalid
+            validated = report_builder.validate_clinical(
+                context, clinical
+            )  # raises if invalid
+            _validate_prediction_mentions(context, validated)
             _validate_rag_citations(context, clinical)
             return clinical, "llm"  # type: ignore[return-value]  # validated non-None
         except Exception as exc:  # noqa: BLE001
@@ -640,6 +647,22 @@ def _reason_clinical(
 
 
 _RAG_CITATION_PATTERN = re.compile(r"\[(KB-[A-Za-z0-9._:-]+)\]")
+_FMA_VALUE_PATTERN = re.compile(
+    r"FMA\s*(?:-\s*UE)?\s*(?:手部)?\s*(?:分数|评分)?\s*"
+    r"(?:为|=|：|:)?\s*"
+    r"(\d+(?:\.\d+)?)\s*(?:/\s*20)?\s*分?",
+    re.IGNORECASE,
+)
+_BRUNNSTROM_STAGE_PATTERN = re.compile(
+    r"(?:Brunnstrom\s*(?:手)?\s*(?:功能)?\s*(?:分期)?|手功能分期)\s*"
+    r"(?:为|第|=|：|:)?\s*(VI|IV|V|III|II|I|[1-6])\s*期",
+    re.IGNORECASE,
+)
+_MAS_VALUE_PATTERN = re.compile(
+    r"(?:手部\s*)?(?:肌张力\s*[（(]?\s*)?MAS\s*[）)]?\s*"
+    r"(?:为|=|：|:)?\s*(0|1\+|1|2|3|4)\s*级?",
+    re.IGNORECASE,
+)
 
 
 def _clinical_text_values(value: Any) -> list[str]:
@@ -652,6 +675,36 @@ def _clinical_text_values(value: Any) -> list[str]:
     if isinstance(value, list):
         return [text for child in value for text in _clinical_text_values(child)]
     return []
+
+
+def _validate_prediction_mentions(context: Dict[str, Any], clinical: Any) -> None:
+    """Reject prose that swaps FMA scores and Brunnstrom stages."""
+    predictions = context.get("predictions") or {}
+    expected_fma = float(predictions.get("FMA_UE"))
+    expected_stage = int(predictions.get("hand_function"))
+    expected_tone = str(predictions.get("hand_tone"))
+    roman_to_stage = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
+    for text in _clinical_text_values(clinical):
+        for match in _FMA_VALUE_PATTERN.finditer(text):
+            observed = float(match.group(1))
+            if abs(observed - expected_fma) > 1e-6:
+                raise ValueError(
+                    f"报告中的 FMA 分数 {observed:g} 与实测 {expected_fma:g} 不一致"
+                )
+        for match in _BRUNNSTROM_STAGE_PATTERN.finditer(text):
+            raw = match.group(1).upper()
+            observed_stage = roman_to_stage.get(raw, int(raw) if raw.isdigit() else 0)
+            if observed_stage != expected_stage:
+                raise ValueError(
+                    "报告中的 Brunnstrom 分期 "
+                    f"{raw} 与实测 {context.get('stage_roman')}期不一致"
+                )
+        for match in _MAS_VALUE_PATTERN.finditer(text):
+            observed_tone = match.group(1)
+            if observed_tone != expected_tone:
+                raise ValueError(
+                    f"报告中的手部 MAS {observed_tone}级与实测 {expected_tone}级不一致"
+                )
 
 
 def _validate_rag_citations(context: Dict[str, Any], clinical: Any) -> None:
@@ -992,7 +1045,16 @@ def _segment_marker_messages(
 
 
 def _segment_summary_messages(context: Dict[str, Any]) -> list[Dict[str, str]]:
-    from llm.prompts import rag_prompt_sources
+    from llm.prompts import (
+        build_clinical_reasoning_messages,
+        marker_grounding_complete,
+        rag_prompt_sources,
+    )
+
+    if marker_grounding_complete(context):
+        summary_context = dict(context)
+        summary_context["gesture_ready"] = False
+        return build_clinical_reasoning_messages(summary_context)
 
     stage = str(context.get("stage_roman", ""))
     groups = _available_groups(context)
@@ -1117,45 +1179,49 @@ def _reason_local_segmented_clinical_json(
     sample: bool = False,
 ) -> str:
     """Generate clinical JSON in small parseable chunks for verbose base models."""
+    from llm.prompts import marker_grounding_complete, rag_prompt_sources
+
     marker_text: Dict[str, Any] = {}
+    grounding_complete = marker_grounding_complete(context)
     chunk_size = int(rm.cfg.get("segment_marker_chunk_size") or 5)
     marker_tokens = int(rm.cfg.get("segment_marker_max_new_tokens") or 768)
     stop_json = bool(rm.cfg.get("segment_stop_on_json", True))
-    for group in _available_groups(context):
-        for markers in _chunked(group["markers"], chunk_size):
-            required_keys = [str(m["key"]) for m in markers]
-            marker_prefill_raw = rm.cfg.get("segment_marker_prefill")
-            if marker_prefill_raw is not None:
-                marker_prefill = str(marker_prefill_raw)
-            else:
-                marker_prefill = "</think>\n{\"marker_text\":{"
-            if len(required_keys) == 1:
-                single_prefix = rm.cfg.get("segment_single_marker_prefill_prefix")
-                if single_prefix is not None:
-                    marker_prefill = f"{single_prefix}\"{required_keys[0]}\":"
-                elif marker_prefill_raw is None:
-                    marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
-            text = _generate_local_text(
-                rm,
-                _segment_marker_messages(context, group, markers),
-                sample=sample,
-                generation_prefill=marker_prefill,
-                max_new_tokens=marker_tokens,
-                stop_on_json=stop_json,
-                required_marker_keys=required_keys,
-            )
-            clinical = _parse_segment_json(text, required_marker_keys=required_keys)
-            if not isinstance(clinical, dict):
-                raise report_builder.ClinicalUnavailable(
-                    f"分段 marker_text 未返回 JSON；keys={required_keys}"
+    if not grounding_complete:
+        for group in _available_groups(context):
+            for markers in _chunked(group["markers"], chunk_size):
+                required_keys = [str(m["key"]) for m in markers]
+                marker_prefill_raw = rm.cfg.get("segment_marker_prefill")
+                if marker_prefill_raw is not None:
+                    marker_prefill = str(marker_prefill_raw)
+                else:
+                    marker_prefill = "</think>\n" + '{"marker_text":{'
+                if len(required_keys) == 1:
+                    single_prefix = rm.cfg.get("segment_single_marker_prefill_prefix")
+                    if single_prefix is not None:
+                        marker_prefill = f"{single_prefix}\"{required_keys[0]}\":"
+                    elif marker_prefill_raw is None:
+                        marker_prefill = f"</think>\n{{\"marker_text\":{{\"{required_keys[0]}\":"
+                text = _generate_local_text(
+                    rm,
+                    _segment_marker_messages(context, group, markers),
+                    sample=sample,
+                    generation_prefill=marker_prefill,
+                    max_new_tokens=marker_tokens,
+                    stop_on_json=stop_json,
+                    required_marker_keys=required_keys,
                 )
-            chunk_text = _coerce_marker_text_payload(clinical.get("marker_text"), markers)
-            missing = [key for key in required_keys if key not in chunk_text]
-            if missing:
-                raise report_builder.ClinicalUnavailable(
-                    f"分段 marker_text 缺少字段：{', '.join(missing)}"
-                )
-            marker_text.update(chunk_text)
+                clinical = _parse_segment_json(text, required_marker_keys=required_keys)
+                if not isinstance(clinical, dict):
+                    raise report_builder.ClinicalUnavailable(
+                        f"分段 marker_text 未返回 JSON；keys={required_keys}"
+                    )
+                chunk_text = _coerce_marker_text_payload(clinical.get("marker_text"), markers)
+                missing = [key for key in required_keys if key not in chunk_text]
+                if missing:
+                    raise report_builder.ClinicalUnavailable(
+                        f"分段 marker_text 缺少字段：{', '.join(missing)}"
+                    )
+                marker_text.update(chunk_text)
 
     summary_prefill_raw = rm.cfg.get("segment_summary_prefill")
     summary_prefill = (
@@ -1165,9 +1231,11 @@ def _reason_local_segmented_clinical_json(
     )
     required_summary_keys = [
         "overall_interpretation",
-        "overall_subtype",
         "treatment_strategy",
     ]
+    if not grounding_complete:
+        required_summary_keys.append("overall_subtype")
+    evidence = rag_prompt_sources(context)
     if evidence:
         required_summary_keys.append("rag_citations")
     summary_text = _generate_local_text(
@@ -1182,7 +1250,8 @@ def _reason_local_segmented_clinical_json(
     summary = _parse_segment_json(summary_text)
     if not isinstance(summary, dict):
         raise report_builder.ClinicalUnavailable("分段 summary 未返回 JSON")
-    summary["marker_text"] = marker_text
+    if marker_text:
+        summary["marker_text"] = marker_text
     return json.dumps(summary, ensure_ascii=False)
 
 
@@ -1205,11 +1274,23 @@ def _reason_local(
     prompt_profile = str(rm.cfg.get("prompt_profile") or "")
     messages = build_clinical_messages(context, prompt_profile=prompt_profile)
     generation_prefill = str(rm.cfg.get("generation_prefill") or "")
+    from llm.prompts import marker_grounding_complete, rag_prompt_sources
+
+    grounding_complete = marker_grounding_complete(context)
+    required_top_keys = None
+    if grounding_complete:
+        required_top_keys = [
+            "overall_interpretation",
+            "treatment_strategy",
+        ]
+        if rag_prompt_sources(context):
+            required_top_keys.append("rag_citations")
     return _generate_local_text(
         rm,
         messages,
         sample=sample,
         generation_prefill=generation_prefill,
-        stop_on_json=bool(rm.cfg.get("stop_on_json")),
+        stop_on_json=bool(rm.cfg.get("stop_on_json")) or grounding_complete,
         max_new_tokens=_dynamic_report_max_new_tokens(context, rm.cfg),
+        required_top_keys=required_top_keys,
     )

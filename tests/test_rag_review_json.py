@@ -100,8 +100,35 @@ class RagReviewJsonTests(unittest.TestCase):
             chunk["metadata"]["knowledge_status"],
             "blocked_current_implementation",
         )
+        self.assertEqual(chunk["metadata"]["system_key"], "test_metric")
+        self.assertEqual(
+            chunk["metadata"]["allowed_interpretation"],
+            "仅可同条件复测。",
+        )
+        self.assertEqual(
+            chunk["metadata"]["prohibited_interpretation"],
+            "不得自动诊断。",
+        )
         self.assertIn("不得自动诊断", chunk["text"])
         self.assertEqual(question["expected_knowledge_ids"], ["KB-EMG-001"])
+
+    def test_duplicate_system_key_is_rejected(self) -> None:
+        document = _document()
+        duplicate = dict(document["entries"][0])
+        duplicate["knowledge_id"] = "KB-EMG-002"
+        document["entries"].append(duplicate)
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source = root / "source.json"
+            source.write_text(
+                json.dumps(document, ensure_ascii=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate system_key"):
+                prepare_review_json_knowledge_base(
+                    source,
+                    root / "out",
+                    allow_internal_trial=True,
+                )
 
 
 if __name__ == "__main__":

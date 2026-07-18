@@ -106,26 +106,38 @@ def main() -> int:
     context, packet = rag_client.augment_report_context(context)
     if not packet.get("used_in_prompt") or not packet.get("sources"):
         raise RuntimeError(f"RAG evidence was not eligible for Assist: {packet}")
+    marker_keys = rag_client.build_marker_system_keys(context)
+    if not packet.get("marker_grounding_complete") or set(
+        packet.get("marker_sources") or {}
+    ) != set(marker_keys):
+        raise RuntimeError(f"Exact marker grounding is incomplete: {packet}")
 
     events: "queue.Queue[dict]" = queue.Queue()
     started = time.perf_counter()
     clinical, generation_mode = report._reason_clinical(context, events)
+    validated = report_builder.validate_clinical(context, clinical)
     markdown = report_builder.render_markdown(context, clinical)
     elapsed = round(time.perf_counter() - started, 3)
     cited_ids = sorted(
         {
             *[
                 str(value).strip()
-                for value in clinical.get("rag_citations", [])
+                for value in validated.get("rag_citations", [])
                 if str(value).strip()
             ],
             *re.findall(
                 r"\[(KB-[A-Za-z0-9._:-]+)\]",
-                json.dumps(clinical, ensure_ascii=False),
+                markdown,
             ),
         }
     )
     source_ids = [str(source.get("knowledge_id") or "") for source in packet["sources"]]
+    marker_source_ids = [
+        str(source.get("knowledge_id") or "")
+        for source in (packet.get("marker_sources") or {}).values()
+    ]
+    allowed_ids = set(source_ids) | set(marker_source_ids)
+    marker_text = validated.get("marker_text") or {}
     result = {
         "schema_version": "rehab.rag.assist-smoke.v1",
         "status": "ok",
@@ -133,21 +145,37 @@ def main() -> int:
         "elapsed_seconds": elapsed,
         "collection": packet.get("collection"),
         "used_in_prompt": packet.get("used_in_prompt"),
+        "marker_grounding_complete": packet.get("marker_grounding_complete"),
         "source_ids": source_ids,
+        "marker_source_ids": marker_source_ids,
         "cited_ids": cited_ids,
-        "citations_valid": bool(cited_ids) and set(cited_ids).issubset(source_ids),
+        "citations_valid": bool(cited_ids) and set(cited_ids).issubset(allowed_ids),
+        "marker_citations_complete": all(
+            f"[{source.get('knowledge_id')}]"
+            in marker_text.get(system_key, {}).get("interpretation", "")
+            for system_key, source in (packet.get("marker_sources") or {}).items()
+        ),
+        "old_generic_phrase_count": sum(
+            "仅用于同设备同流程复测比较，无绝对参考范围" in value.get("interpretation", "")
+            for value in marker_text.values()
+        ),
         "trial_warning_rendered": "内部技术验证" in markdown
         and "未完成正式专家审核" in markdown,
-        "overall_interpretation": clinical.get("overall_interpretation"),
-        "overall_subtype": clinical.get("overall_subtype"),
+        "overall_interpretation": validated.get("overall_interpretation"),
+        "overall_subtype": validated.get("overall_subtype"),
     }
-    if not result["citations_valid"] or not result["trial_warning_rendered"]:
+    if (
+        not result["citations_valid"]
+        or not result["marker_citations_complete"]
+        or result["old_generic_phrase_count"]
+        or not result["trial_warning_rendered"]
+    ):
         raise RuntimeError(f"RAG Assist smoke assertions failed: {result}")
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(
-                {**result, "clinical": clinical, "markdown": markdown},
+                {**result, "clinical": validated, "markdown": markdown},
                 ensure_ascii=False,
                 indent=2,
             )

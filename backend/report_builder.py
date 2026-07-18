@@ -270,6 +270,11 @@ _UNSUPPORTED_ABSOLUTE_CLAIM = re.compile(
 )
 _EVIDENCE_AWARE_WORDS = ("复测", "同设备", "同流程", "单次", "不能直接", "不作")
 _CONDITIONAL_ADVICE_WORDS = ("复测", "结合", "若", "根据", "治疗师", "医师")
+_UNSUPPORTED_GROUNDED_STRATEGY = re.compile(
+    r"EMG|EEG|IMU|SPARC|CCI|IEMG|MDF|肌电|脑电|皮层|相干|角速度|震颤|"
+    r"神经兴奋性|中枢驱动|刺激参数",
+    re.IGNORECASE,
+)
 _GROUP_FOLLOW_UP = {
     "emg": "后续同条件复测应保持电极位置、设备增益和任务一致，并结合手部MAS、FMA手部分数及动作表现调整训练。",
     "eeg": "后续同条件复测应保持导联、任务和伪迹处理一致，并结合运动表现由康复治疗师调整训练。",
@@ -281,6 +286,64 @@ def _marker_value_text(marker: Dict[str, Any]) -> str:
     value = marker.get("value", "—")
     unit = str(marker.get("unit") or "").strip()
     return f"{value}{(' ' + unit) if unit else ''}"
+
+
+def _sentence(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text if text[-1] in "。！？；" else f"{text}。"
+
+
+def _grounded_marker_text(
+    marker: Dict[str, Any],
+    source: Dict[str, Any],
+) -> Optional[Dict[str, str]]:
+    """Build a marker row from its exact governed system-key knowledge."""
+    knowledge_id = str(source.get("knowledge_id") or "").strip()
+    claim = str(source.get("proposed_claim") or "").strip()
+    allowed = str(source.get("allowed_interpretation") or "").strip()
+    prohibited = str(source.get("prohibited_interpretation") or "").strip()
+    if not knowledge_id or not claim or not allowed or not prohibited:
+        return None
+
+    citation = f"[{knowledge_id}]"
+    interpretation = "".join(
+        (
+            f"本次记录值为{_marker_value_text(marker)}。",
+            _sentence(claim),
+            _sentence(allowed),
+            f"{_sentence(prohibited)}{citation}",
+        )
+    )
+    status = str(source.get("knowledge_status") or "")
+    status_label = str(source.get("knowledge_status_label") or status or "待审核")
+    action = str(source.get("implementation_action") or "").strip()
+    if status.startswith("blocked"):
+        advice_parts = ["当前指标定义尚未达到临床使用条件。"]
+        if action:
+            advice_parts.append(f"系统修正要求：{_sentence(action)}")
+        advice_parts.append("完成修正并验证前，不用于患者训练决策。")
+    elif status.startswith("conditional"):
+        advice_parts = ["当前证据仅支持条件性随访。"]
+        if action:
+            advice_parts.append(f"使用前要求：{_sentence(action)}")
+        advice_parts.append("完成规定的协议或标定后再同条件复测，当前不作单次临床定性。")
+    elif status == "research_only":
+        advice_parts = [
+            "当前证据仅支持研究性观察。",
+            "仅用于同条件下的纵向分析，训练调整须结合量表和动作表现。",
+        ]
+    else:
+        advice_parts = [
+            f"证据状态：{status_label}。",
+            "可作为辅助随访依据；训练调整须由治疗师结合量表和动作表现确认。",
+        ]
+    advice_parts.append(citation)
+    return {
+        "interpretation": interpretation,
+        "treatment_advice": "".join(advice_parts),
+    }
 
 
 def _enforce_marker_evidence_policy(
@@ -411,10 +474,29 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
 
     roman = str(context.get("stage_roman", ""))
     prefix = f"{roman}期"
+    rag_packet = context.get("rag_evidence") or {}
+    marker_grounding_complete = bool(
+        rag_packet.get("marker_grounding_used")
+        and rag_packet.get("marker_grounding_complete")
+    )
 
     # ── total interpretation ──
     if not _nonempty_str(clinical.get("overall_interpretation")):
         raise ClinicalUnavailable("缺少总体临床解读（overall_interpretation）")
+    overall_interpretation = clinical["overall_interpretation"].strip()
+    if marker_grounding_complete:
+        predictions = context.get("predictions") or {}
+        if _UNSUPPORTED_GROUNDED_STRATEGY.search(overall_interpretation):
+            overall_interpretation = (
+                "当前处于相应恢复阶段，手功能仍需巩固；后续应结合标准化量表、"
+                "动作检查及同条件复测进行专业复核。"
+            )
+        overall_interpretation = (
+            f"Brunnstrom手部分期为{prefix}，"
+            f"FMA手部分数为{predictions.get('FMA_UE')}/20，"
+            f"手部肌张力（MAS）为{predictions.get('hand_tone')}级。"
+            f"{overall_interpretation}"
+        )
 
     # ── per-biomarker interpretation + advice ──
     # Only markers that were actually measured (available=True) require an LLM
@@ -426,7 +508,13 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     src_mt = clinical.get("marker_text")
     if not isinstance(src_mt, dict):
         src_mt = {}
+    marker_sources = (
+        rag_packet.get("marker_sources") or {}
+        if rag_packet.get("marker_grounding_used")
+        else {}
+    )
     marker_text: Dict[str, Dict[str, str]] = {}
+    grounded_citations: List[str] = []
     for group in context["biomarkers"].get("groups", []):
         for m in group["markers"]:
             key = m["key"]
@@ -435,6 +523,11 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
                     "interpretation": "本次数据不足，未予解读",
                     "treatment_advice": "—",
                 }
+                continue
+            grounded = _grounded_marker_text(m, marker_sources.get(key) or {})
+            if grounded is not None:
+                marker_text[key] = grounded
+                grounded_citations.append(str(marker_sources[key]["knowledge_id"]))
                 continue
             txt = _normalize_marker_text_entry(src_mt.get(key))
             if txt is None:
@@ -445,12 +538,18 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
             })
 
     # ── overall subtype: 五要素一句话，分期前缀必须一致 ──
-    overall_subtype = clinical.get("overall_subtype")
-    if not _nonempty_str(overall_subtype):
-        raise ClinicalUnavailable("缺少综合亚型界定（overall_subtype）")
-    if prefix and not overall_subtype.lstrip().startswith(prefix):
-        raise ClinicalUnavailable(
-            f"综合亚型分期（{overall_subtype.strip()[:8]}…）与实测 Brunnstrom {prefix} 不一致")
+    if marker_grounding_complete:
+        overall_subtype = (
+            f"{prefix}-运动模式待动作检查确认，中枢驱动特征待同步协议验证，"
+            "协同分离程度待动作检查确认，关节活动度待角度测量确认"
+        )
+    else:
+        overall_subtype = clinical.get("overall_subtype")
+        if not _nonempty_str(overall_subtype):
+            raise ClinicalUnavailable("缺少综合亚型界定（overall_subtype）")
+        if prefix and not overall_subtype.lstrip().startswith(prefix):
+            raise ClinicalUnavailable(
+                f"综合亚型分期（{overall_subtype.strip()[:8]}…）与实测 Brunnstrom {prefix} 不一致")
 
     # ── treatment strategy: non-empty list of non-empty strings ──
     strat_src = clinical.get("treatment_strategy")
@@ -459,11 +558,36 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
     treatment_strategy = [s for s in (_normalize_strategy_item(item) for item in strat_src) if s]
     if not treatment_strategy:
         raise ClinicalUnavailable("治疗策略要点为空")
+    if marker_grounding_complete:
+        treatment_strategy = [
+            strategy
+            for strategy in treatment_strategy
+            if not _UNSUPPORTED_GROUNDED_STRATEGY.search(strategy)
+        ]
+        if not treatment_strategy:
+            treatment_strategy = [
+                "手功能巩固；每日2次、每次10-15分钟；根据任务完成质量与疲劳程度调整难度；"
+                "出现疼痛或张力明显变化时停止，并由康复专业人员复核。"
+            ]
 
-    warnings = [w.strip() for w in (clinical.get("warnings") or []) if _nonempty_str(w)]
+    if marker_grounding_complete:
+        warnings = [
+            "单次EMG、EEG和IMU结果不用于判断正常或异常，也不直接用于调整训练处方。",
+            "如出现疼痛、明显疲劳、肌张力变化或其他不适，应停止训练并联系康复专业人员。",
+        ]
+        if any(
+            not source.get("clinical_ready")
+            for source in marker_sources.values()
+        ):
+            warnings.insert(
+                0,
+                "本报告引用的试运行知识尚未完成正式专家审核，仅供内部技术验证。",
+            )
+    else:
+        warnings = [w.strip() for w in (clinical.get("warnings") or []) if _nonempty_str(w)]
 
     c: Dict[str, Any] = {
-        "overall_interpretation": clinical["overall_interpretation"].strip(),
+        "overall_interpretation": overall_interpretation,
         "marker_text": marker_text,
         "overall_subtype": overall_subtype.strip(),
         "treatment_strategy": treatment_strategy,
@@ -472,9 +596,12 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
         "next_assessment": NEXT_ASSESSMENT_TEXT,
         "rag_citations": list(
             dict.fromkeys(
-                value.strip()
-                for value in (clinical.get("rag_citations") or [])
-                if isinstance(value, str) and value.strip()
+                [
+                    value.strip()
+                    for value in (clinical.get("rag_citations") or [])
+                    if isinstance(value, str) and value.strip()
+                ]
+                + grounded_citations
             )
         ),
     }
@@ -612,7 +739,10 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     # 三、综合亚型界定与治疗策略
     out.append("## 三、综合亚型界定与治疗策略")
     out.append("")
-    out.append(f"根据上述生物标志物，患者可归类为：**{c['overall_subtype']}**")
+    out.append(
+        "结合临床量表、动作表现及上述标志物的适用边界，综合状态界定为："
+        f"**{c['overall_subtype']}**"
+    )
     out.append("")
     out.append("**治疗策略要点：**")
     out.append("")
@@ -621,13 +751,22 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     out.append("")
 
     rag_evidence = context.get("rag_evidence") or {}
-    cited_knowledge_ids = set(c.get("rag_citations") or [])
+    cited_knowledge_ids = list(dict.fromkeys(c.get("rag_citations") or []))
+    all_sources = list(rag_evidence.get("sources", []) or [])
+    all_sources.extend((rag_evidence.get("marker_sources") or {}).values())
+    sources_by_id = {
+        str(source.get("knowledge_id") or ""): source
+        for source in all_sources
+        if source.get("knowledge_id")
+    }
     cited_sources = [
-        source
-        for source in rag_evidence.get("sources", []) or []
-        if source.get("knowledge_id") in cited_knowledge_ids
+        sources_by_id[knowledge_id]
+        for knowledge_id in cited_knowledge_ids
+        if knowledge_id in sources_by_id
     ]
-    if rag_evidence.get("used_in_prompt") and cited_sources:
+    if (
+        rag_evidence.get("used_in_report") or rag_evidence.get("used_in_prompt")
+    ) and cited_sources:
         out.append("### 辅助知识证据来源")
         out.append("")
         if any(not source.get("clinical_ready") for source in cited_sources):

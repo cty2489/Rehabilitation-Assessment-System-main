@@ -20,7 +20,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare governed RAG review JSON")
     parser.add_argument("--input", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--collection", default="rehab_knowledge_trial_v0_1")
+    parser.add_argument("--collection", default="rehab_knowledge_trial_v0_2")
     parser.add_argument(
         "--allow-internal-trial",
         action="store_true",

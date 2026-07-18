@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Sequence
 
 
 @dataclass(frozen=True)
@@ -89,6 +89,32 @@ class QdrantVectorStore:
             VectorHit(score=float(point.score), payload=dict(point.payload or {}))
             for point in response.points
         ]
+
+    def lookup_by_system_keys(
+        self,
+        collection: str,
+        system_keys: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        """Return payloads whose governed metadata exactly matches a system key."""
+        keys = list(dict.fromkeys(str(value).strip() for value in system_keys if str(value).strip()))
+        if not keys:
+            return []
+        records, _ = self._client.scroll(
+            collection_name=collection,
+            scroll_filter=self._models.Filter(
+                should=[
+                    self._models.FieldCondition(
+                        key="metadata.system_key",
+                        match=self._models.MatchValue(value=key),
+                    )
+                    for key in keys
+                ]
+            ),
+            limit=min(256, max(len(keys) * 2, 32)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        return [dict(record.payload or {}) for record in records]
 
     def close(self) -> None:
         self._client.close()
