@@ -49,7 +49,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.23
+git checkout cloud-server-v1.1.24
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -167,6 +167,7 @@ ALLOW_LEGACY_ADMIN_BEARER=0
 ALLOW_LEGACY_DEVICE_TOKEN=0
 DEVICE_API_TOKEN=
 DEVICE_API_TOKENS_JSON='{"device_002":"generate-device-002-token","device_003":"generate-device-003-token"}'
+DEVICE_REQUIRE_REGISTERED_PATIENT=0
 
 LLM_PROVIDER=local
 LLM_REMOTE_URL=
@@ -454,12 +455,19 @@ DEVICE_API_TOKEN=
 第一版设备端流程：
 
 ```text
+POST /api/device/v1/patients             注册患者基本资料（首次评估前）
 POST /api/device/v1/assessments          上传 active 评估 zip 并获取 job_id
 POST /api/device/v1/assessments/raw      application/zip 直传 zip 的兼容接口
 GET  /api/device/v1/jobs/{job_id}        查询 queued/running/completed/failed
 GET  /api/device/v1/jobs/{job_id}/export.zip
 POST /api/device/v1/jobs/{job_id}/ack    设备端确认已保存结果
 ```
+
+新患者由设备端生成 `DEV001_0001` 形式的全局 `patient_id`，先按
+`rehab.patient.v1` JSON Schema 注册；网络超时后重复提交同一患者不会创建重复记录，
+身份字段冲突则返回 HTTP 409。设备升级期间保持
+`DEVICE_REQUIRE_REGISTERED_PATIENT=0`；全部设备完成联调后改为 `1` 并重启后端，
+此后评估上传只读取云端患者档案，未注册编号返回 HTTP 404。
 
 上传时建议发送 `Idempotency-Key: <device_id>:<assessment_id>`。网页评估和
 设备评估共用单 GPU FIFO 队列；设备状态响应包含 `phase`、`queue_position`、

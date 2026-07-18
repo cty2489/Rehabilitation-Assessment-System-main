@@ -94,6 +94,14 @@ class MySQLUnavailable(RuntimeError):
     """Raised when MySQL / pymysql is not usable; callers surface a clear error."""
 
 
+class PatientRegistrationConflict(ValueError):
+    """Raised when one patient_id is reused for different identity data."""
+
+    def __init__(self, fields: List[str]):
+        self.fields = tuple(fields)
+        super().__init__(f"患者编号对应的身份字段冲突：{', '.join(fields)}")
+
+
 def ping() -> bool:
     try:
         conn = get_conn()
@@ -683,6 +691,75 @@ def get_patient_by_business_id(patient_id: str) -> Optional[Dict[str, Any]]:
     finally:
         conn.close()
     return _norm_patient(row)
+
+
+def register_device_patient(patient: Any) -> tuple[Dict[str, Any], bool]:
+    """Create a device patient exactly once and reject identity collisions.
+
+    ``patient_id`` is the idempotency key. Repeating the same registration
+    returns the existing row without mutating it. Name, sex and age define the
+    identity fields for collision detection; clinical profile changes use the
+    explicit patient-update workflow instead of registration retries.
+    """
+    ts = now_dt()
+    values = {
+        "patient_id": _field(patient, "patient_id"),
+        "name": _field(patient, "name"),
+        "sex": _field(patient, "sex"),
+        "age": _field(patient, "age"),
+        "diagnosis": _field(patient, "diagnosis"),
+        "paralysis_side": _field(patient, "paralysis_side"),
+        "disease_days": _field(patient, "disease_days"),
+    }
+    conn = get_conn(autocommit=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO patients
+                  (patient_id, name, sex, age, diagnosis, paralysis_side,
+                   disease_days, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'device-enroll', %s, %s)
+                ON DUPLICATE KEY UPDATE patient_id=VALUES(patient_id)
+                """,
+                (
+                    values["patient_id"],
+                    values["name"],
+                    values["sex"],
+                    values["age"],
+                    values["diagnosis"],
+                    values["paralysis_side"],
+                    values["disease_days"],
+                    ts,
+                    ts,
+                ),
+            )
+            created = cur.rowcount == 1
+            cur.execute(
+                "SELECT * FROM patients WHERE patient_id=%s FOR UPDATE",
+                (values["patient_id"],),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("patient row was not available after device registration")
+            if not created:
+                conflicts = [
+                    key
+                    for key in ("name", "sex", "age")
+                    if row.get(key) != values[key]
+                ]
+                if conflicts:
+                    raise PatientRegistrationConflict(conflicts)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    normalized = _norm_patient(row)
+    if normalized is None:  # pragma: no cover - guarded above
+        raise RuntimeError("patient row normalization failed after device registration")
+    return normalized, created
 
 
 def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
@@ -1934,11 +2011,13 @@ def enroll_patient(basic: Dict[str, Any], first: Optional[Dict[str, Any]] = None
 
 __all__ = [
     "MySQLUnavailable",
+    "PatientRegistrationConflict",
     "init_db",
     "get_conn",
     "now_dt",
     "upsert_patient",
     "get_patient_by_business_id",
+    "register_device_patient",
     "get_patient",
     "update_patient",
     "list_patients",

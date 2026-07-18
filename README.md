@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。本项目为珠海复旦创新研究院医学人工智能科技创新中心团队研发。
 
-> `cloud-server-v1.1.23` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、26 项知识精确接地、论文式数字引用、RAG 知识库展示、统一临床工作台界面与 JSON/PDF/ZIP 回传整链路验收。
+> `cloud-server-v1.1.24` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备患者预注册、设备数据包、26 项知识精确接地、论文式数字引用、RAG 知识库展示、统一临床工作台界面与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.23
+cloud-server-v1.1.24
 ```
 
 该标签提供已在线上验证过的运行基线，包含：
@@ -20,6 +20,7 @@ cloud-server-v1.1.23
 - 26 项 biomarker 计算、报告解读和缺失项标记
 - 网页与设备端完整评估共用 FIFO 队列，避免单卡 GPU 并发导致互相拖慢或 OOM；前端和设备 API 都会返回排队信息
 - 设备任务支持持久化恢复、`Idempotency-Key` 去重、阶段/进度查询、结果下载和幂等 ACK
+- 设备端可先通过 `POST /api/device/v1/patients` 注册 `DEV001_0001` 形式的全局患者编号；重复注册幂等返回，身份冲突拒绝覆盖，后续评估只需发送 `patient_id`
 - RAG 以独立 CPU 服务运行；向量检索负责总体辅助证据，26 项 biomarker 按 `system_key` 精确绑定知识条目。正文采用统一的 `【1】【2】` 数字引用并在文末列出参考文献，内部知识 ID、来源 ID 和审核状态保留用于审计。未审核知识只有在内部试运行三重门禁、引用白名单和醒目警示同时生效时才可进入测试报告
 - 每台设备使用独立 token 且只能访问本设备任务；旧共享 token 仅在显式迁移开关开启时可用
 - 管理员可在“系统管理 → 设备凭证”生成、查看掩码、停用、轮换和撤销设备码；数据库仅保存哈希，明文只显示一次
@@ -57,6 +58,7 @@ cloud-server-v1.1.23
 - 前端采用统一的临床工作台视觉系统，提供清晰的业务导航、状态语义、桌面与窄屏响应式布局，并保持高密度表格和评估流程可扫描
 - 页面内登录保护，浏览器使用短时 HttpOnly 会话 Cookie，不在 localStorage 保存管理员密钥
 - 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，其中 JSON/PDF 采用去重后的设备端交付结构，并同步保存逐句引用编号与参考文献目录
+- 设备患者预注册采用 `rehab.patient.v1` JSON Schema；兼容期开关关闭时旧设备仍可上传完整资料，联调完成后可强制拒绝未注册患者
 
 ## 当前服务端口
 
@@ -106,7 +108,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.23
+git checkout cloud-server-v1.1.24
 ```
 
 2. 准备外部文件：
@@ -142,6 +144,7 @@ APP_AUTH_TOKEN=generate-a-long-random-token
 MYSQL_PASSWORD=change-this-mysql-password
 EXPORT_ROOT=/root/autodl-tmp/rehab_project/exports
 PDF_LATIN_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+DEVICE_REQUIRE_REGISTERED_PATIENT=0
 ```
 
 4. 安装依赖、构建前端、配置 MySQL 和 Nginx：
@@ -356,7 +359,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.23
+稳定演示/复现实验：使用 cloud-server-v1.1.24
 日常继续开发：使用 main
 ```
 

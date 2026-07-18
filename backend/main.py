@@ -53,6 +53,7 @@ from device_auth import (
     token_digest,
     token_hint,
 )
+from device_patient_policy import DevicePatientPolicyError, resolve_device_patient
 from eval_package import INSTITUTIONS, locate_manifest_root, read_eval_package, safe_extract_zip
 from inference import (
     CHECKPOINTS,
@@ -71,6 +72,8 @@ from schemas import (
     AuthLoginResponse,
     DeviceCredentialCreate,
     DeviceCredentialUpdate,
+    DevicePatientRegistrationRequest,
+    DevicePatientRegistrationResponse,
     EnrollmentRequest,
     LlmModelSettingsUpdate,
     LlmSettingsUpdate,
@@ -125,6 +128,7 @@ ADMIN_SESSION_COOKIE = os.environ.get("APP_SESSION_COOKIE_NAME", "rehab_admin_se
 ADMIN_SESSION_TTL_SECONDS = _env_int("APP_SESSION_TTL_SECONDS", 8 * 60 * 60)
 ALLOW_LEGACY_ADMIN_BEARER = _env_flag("ALLOW_LEGACY_ADMIN_BEARER")
 ALLOW_LEGACY_DEVICE_TOKEN = _env_flag("ALLOW_LEGACY_DEVICE_TOKEN")
+DEVICE_REQUIRE_REGISTERED_PATIENT = _env_flag("DEVICE_REQUIRE_REGISTERED_PATIENT")
 LOGIN_RATE_LIMIT = _env_int("APP_LOGIN_RATE_LIMIT", 5)
 LOGIN_RATE_WINDOW_SECONDS = _env_int("APP_LOGIN_RATE_WINDOW_SECONDS", 5 * 60)
 _LOGIN_FAILURES: Dict[str, List[float]] = {}
@@ -1236,28 +1240,6 @@ async def task_interface_online_status(_admin: None = Depends(_require_admin)):
 # --------------------------------------------------------------------------- #
 # Device-to-cloud HTTPS API                                                   #
 # --------------------------------------------------------------------------- #
-def _nonblank(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _valid_sex(value: Any) -> str:
-    text = str(value or "").strip()
-    if text not in {"男", "女"}:
-        raise ValueError("缺少有效 sex（男/女），请先入组患者或随请求提供")
-    return text
-
-
-def _valid_side(value: Any) -> str:
-    text = str(value or "").strip()
-    if text not in {"左", "右"}:
-        raise ValueError("缺少有效 paralysis_side（左/右），请先入组患者或随请求提供")
-    return text
-
-
 def _device_job_files(job_id: str) -> Dict[str, str]:
     base = f"/api/device/v1/jobs/{job_id}"
     return {
@@ -1418,38 +1400,38 @@ def _create_device_assessment_job(
         raise HTTPException(status_code=422, detail=detail)
 
     prefill = dict(pkg.patient_prefill)
-    business_pid = _nonblank(patient_id, prefill.get("patient_id"))
-    if not business_pid:
-        shutil.rmtree(input_path.parent, ignore_errors=True)
-        raise HTTPException(status_code=422, detail="缺少 patient_id，表单、查询参数或 manifest.json 至少提供一个")
+    requested_pid = str(patient_id or "").strip()
+    manifest_pid = str(prefill.get("patient_id") or "").strip()
+    business_pid = requested_pid or manifest_pid
 
     try:
-        enrolled = mysql_db.get_patient_by_business_id(business_pid) or {}
+        enrolled = mysql_db.get_patient_by_business_id(business_pid) if business_pid else None
     except mysql_db.MySQLUnavailable as exc:
         shutil.rmtree(input_path.parent, ignore_errors=True)
         raise _mysql_guard(exc) from exc
 
     try:
-        patient = PatientInfo(
-            patient_id=business_pid,
-            name=_nonblank(enrolled.get("name"), name, prefill.get("name"), business_pid),
-            sex=_valid_sex(_nonblank(enrolled.get("sex"), sex, prefill.get("sex"))),
-            age=enrolled.get("age") if enrolled.get("age") is not None else (
-                age if age is not None else prefill.get("age")
-            ),
-            diagnosis=_nonblank(enrolled.get("diagnosis"), diagnosis, prefill.get("diagnosis"), "未填写"),
-            disease_days=(
-                enrolled.get("disease_days")
-                if enrolled.get("disease_days") is not None
-                else disease_days if disease_days is not None else prefill.get("disease_days")
-            ),
-            paralysis_side=_valid_side(
-                _nonblank(enrolled.get("paralysis_side"), paralysis_side, prefill.get("paralysis_side"))
-            ),
+        patient = resolve_device_patient(
+            requested_patient_id=requested_pid,
+            manifest_patient_id=manifest_pid,
+            enrolled=enrolled,
+            require_registered=DEVICE_REQUIRE_REGISTERED_PATIENT,
+            request_profile={
+                "name": name,
+                "sex": sex,
+                "age": age,
+                "diagnosis": diagnosis,
+                "disease_days": disease_days,
+                "paralysis_side": paralysis_side,
+            },
+            manifest_profile=prefill,
         )
-    except Exception as exc:  # noqa: BLE001
+    except DevicePatientPolicyError as exc:
         shutil.rmtree(input_path.parent, ignore_errors=True)
-        raise HTTPException(status_code=422, detail=f"患者信息无效：{exc}") from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
 
     effective_device_id = (
         device_id or pkg.manifest_summary.get("device_id") or ""
@@ -1627,6 +1609,44 @@ def _restore_device_jobs() -> None:
                 )
             except Exception as update_exc:  # noqa: BLE001
                 print(f"[device_job][warn] failed to mark recovery error: {update_exc}")
+
+
+@app.post(
+    "/api/device/v1/patients",
+    response_model=DevicePatientRegistrationResponse,
+    status_code=201,
+)
+async def device_register_patient(
+    payload: DevicePatientRegistrationRequest,
+    response: Response,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    _device: DeviceCredential = Depends(_require_device),
+):
+    """Register a device-issued patient_id before the first assessment."""
+    if idempotency_key is not None and len(idempotency_key.strip()) > 255:
+        raise HTTPException(status_code=422, detail="Idempotency-Key 最长为 255 个字符")
+    try:
+        patient, created = mysql_db.register_device_patient(payload)
+    except mysql_db.PatientRegistrationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PATIENT_ID_CONFLICT",
+                "message": "该患者编号已对应其他身份信息",
+                "fields": list(exc.fields),
+            },
+        ) from exc
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+    response.status_code = 201 if created else 200
+    return {
+        "schema_version": "rehab.patient.v1",
+        "patient_id": patient["patient_id"],
+        "created": created,
+        "message": "患者注册成功" if created else "患者已注册",
+        "created_at": patient["created_at"],
+        "updated_at": patient["updated_at"],
+    }
 
 
 @app.post("/api/device/v1/assessments", status_code=202)

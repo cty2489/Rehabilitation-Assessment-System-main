@@ -207,6 +207,47 @@ class EnrollmentRequest(BaseModel):
     report: Optional[str] = None
 
 
+class DevicePatientRegistrationRequest(BaseModel):
+    """Patient profile created by an authenticated training device."""
+
+    schema_version: Literal["rehab.patient.v1"] = "rehab.patient.v1"
+    patient_id: str = Field(
+        ...,
+        min_length=8,
+        max_length=64,
+        pattern=r"^[A-Z][A-Z0-9]{2,31}_[0-9]{4,8}$",
+        description="设备端生成的全局患者编号，例如 DEV001_0001",
+    )
+    name: str = Field(..., min_length=1, max_length=128)
+    sex: Literal["男", "女"]
+    age: int = Field(..., ge=0, le=120)
+    diagnosis: str = Field(..., min_length=1, max_length=255)
+    paralysis_side: Literal["左", "右"]
+    disease_days: Optional[int] = Field(None, ge=0)
+
+    @field_validator("patient_id", mode="before")
+    @classmethod
+    def normalize_patient_id(cls, value: Any) -> str:
+        return str(value or "").strip().upper()
+
+    @field_validator("name", "diagnosis", mode="before")
+    @classmethod
+    def validate_registration_text(cls, value: Any) -> str:
+        text = str(value or "").strip()
+        if any(ord(char) < 32 for char in text):
+            raise ValueError("文本中不能包含控制字符")
+        return text
+
+
+class DevicePatientRegistrationResponse(BaseModel):
+    schema_version: Literal["rehab.patient.v1"] = "rehab.patient.v1"
+    patient_id: str
+    created: bool
+    message: str
+    created_at: str
+    updated_at: str
+
+
 class MysqlAssessmentItem(BaseModel):
     id: int
     created_at: str
