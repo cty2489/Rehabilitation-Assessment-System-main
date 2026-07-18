@@ -20,31 +20,31 @@ type KnowledgeTab = 'overview' | 'coverage' | 'entries' | 'sources'
 
 const TABS: { id: KnowledgeTab; label: string }[] = [
   { id: 'overview', label: '概览' },
-  { id: 'coverage', label: '26项映射' },
-  { id: 'entries', label: '知识条目' },
-  { id: 'sources', label: '来源文献' },
+  { id: 'coverage', label: '26项指标知识' },
+  { id: 'entries', label: '全部知识' },
+  { id: 'sources', label: '参考文献' },
 ]
 
-const STATUS_CLASS: Record<string, string> = {
-  blocked_current_implementation: 'knowledge-badge-blocked',
-  research_only: 'knowledge-badge-research',
-  conditional_after_protocol_fix: 'knowledge-badge-conditional',
-  guideline_candidate_pending_expert: 'knowledge-badge-guideline',
-}
+const RETRIEVAL_FLOW = [
+  {
+    title: '评估上下文',
+    detail: '患者信息、深度模型结果与可用 biomarker',
+  },
+  {
+    title: '检索问题',
+    detail: '按临床量表及 EEG、EMG、IMU 自动构造查询',
+  },
+  {
+    title: '双路检索',
+    detail: '总体知识向量召回，26 项指标按 system_key 精确匹配',
+  },
+  {
+    title: '报告引用',
+    detail: '证据进入报告生成，正文以【1】【2】关联参考文献',
+  },
+]
 
-function statusClass(status: string): string {
-  return STATUS_CLASS[status] || 'knowledge-badge-neutral'
-}
-
-function shortStatus(status: string): string {
-  const labels: Record<string, string> = {
-    blocked_current_implementation: '阻断',
-    research_only: '仅研究',
-    conditional_after_protocol_fix: '条件候选',
-    guideline_candidate_pending_expert: '指南候选',
-  }
-  return labels[status] || status || '未知'
-}
+const CATEGORY_ORDER = ['临床量表', 'EMG', 'EEG', 'IMU', '康复建议', '安全边界']
 
 function formatTime(value: string): string {
   if (!value) return '—'
@@ -52,12 +52,26 @@ function formatTime(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
 }
 
-function KnowledgeStatusBadge({ entry }: { entry: KnowledgeEntrySummary }) {
-  return (
-    <span className={`knowledge-badge ${statusClass(entry.knowledge_status)}`} title={entry.knowledge_status_label}>
-      {shortStatus(entry.knowledge_status)}
-    </span>
-  )
+function displayKnowledgeTitle(title: string): string {
+  return title
+    .replace(/（当前[^）]*）/g, '')
+    .replace(/（方向未标定）/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function ragServiceLabel(status: KnowledgeStatusResponse): string {
+  if (status.rag.mode === 'off') return '未启用'
+  if (!status.rag.service.reachable) return '未连接'
+  return status.rag.service.collection_matches ? '在线' : '索引待同步'
+}
+
+function reportAccessLabel(status: KnowledgeStatusResponse): string {
+  if (status.rag.mode === 'assist') {
+    return status.rag.assist_approved ? '已接入报告' : '待启用'
+  }
+  if (status.rag.mode === 'shadow') return '仅检索记录'
+  return '未接入'
 }
 
 function EntryTable({
@@ -73,34 +87,26 @@ function EntryTable({
         <thead>
           <tr>
             <th>知识条目</th>
-            <th>模态</th>
-            <th>系统键</th>
-            <th>治理状态</th>
-            <th>临床可用</th>
-            <th>来源</th>
+            <th>知识类型</th>
+            <th>关联指标</th>
+            <th>参考文献</th>
           </tr>
         </thead>
         <tbody>
           {items.length === 0 && (
-            <tr><td colSpan={6} className="knowledge-empty">没有符合条件的知识条目</td></tr>
+            <tr><td colSpan={4} className="knowledge-empty">没有符合条件的知识条目</td></tr>
           )}
           {items.map((entry) => (
             <tr key={entry.knowledge_id} className="knowledge-row">
               <td>
                 <button className="knowledge-entry-link" onClick={() => onSelect(entry.knowledge_id)}>
-                  <strong>{entry.title}</strong>
+                  <strong>{displayKnowledgeTitle(entry.title)}</strong>
                   <span>{entry.knowledge_id} · v{entry.entry_version}</span>
                 </button>
               </td>
               <td>{entry.category}</td>
               <td><code>{entry.system_key}</code></td>
-              <td><KnowledgeStatusBadge entry={entry} /></td>
-              <td>
-                <span className={`knowledge-readiness ${entry.clinical_ready ? 'ready' : 'not-ready'}`}>
-                  {entry.clinical_ready ? '是' : '否'}
-                </span>
-              </td>
-              <td>{entry.source_ids.length}</td>
+              <td>{entry.source_ids.length} 项</td>
             </tr>
           ))}
         </tbody>
@@ -126,63 +132,65 @@ function EvidenceDrawer({ entry, loading, onClose }: {
     <div className="knowledge-drawer-backdrop" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose()
     }}>
-      <aside className="knowledge-drawer" role="dialog" aria-modal="true" aria-label="知识条目详情">
+      <aside className="knowledge-drawer" role="dialog" aria-modal="true" aria-label="RAG知识条目详情">
         <header className="knowledge-drawer-head">
           <div>
             <span className="knowledge-drawer-id">{entry?.knowledge_id || '读取中'}</span>
-            <h2>{entry?.title || '正在读取知识条目'}</h2>
+            <h2>{entry ? displayKnowledgeTitle(entry.title) : '正在读取知识条目'}</h2>
           </div>
           <button className="knowledge-close" onClick={onClose} aria-label="关闭" title="关闭">×</button>
         </header>
-        {loading && <div className="knowledge-drawer-loading">正在读取证据…</div>}
+        {loading && <div className="knowledge-drawer-loading">正在读取知识内容…</div>}
         {entry && (
           <div className="knowledge-drawer-body">
             <div className="knowledge-drawer-meta">
-              <KnowledgeStatusBadge entry={entry} />
-              <code>{entry.system_key}</code>
               <span>{entry.category}</span>
+              <code>{entry.system_key}</code>
+              <span>{entry.source_ids.length} 项来源</span>
               <span>版本 {entry.entry_version}</span>
             </div>
 
-            <section className="knowledge-detail-section">
-              <h3>核心结论</h3>
+            <section className="knowledge-detail-section knowledge-detail-primary">
+              <h3>知识摘要</h3>
               <p>{entry.content || '—'}</p>
             </section>
-            <section className="knowledge-detail-section knowledge-detail-allowed">
-              <h3>允许解释</h3>
-              <p>{entry.allowed_interpretation || '—'}</p>
-            </section>
-            <section className="knowledge-detail-section knowledge-detail-prohibited">
-              <h3>禁止解释</h3>
-              <p>{entry.prohibited_interpretation || '—'}</p>
-            </section>
-            <section className="knowledge-detail-section">
-              <h3>采集与算法要求</h3>
-              <p>{entry.acquisition_and_algorithm_requirements || '—'}</p>
-            </section>
-            <section className="knowledge-detail-section">
-              <h3>参考范围政策</h3>
-              <p>{entry.reference_range_policy || '—'}</p>
-            </section>
-            <section className="knowledge-detail-section">
-              <h3>实施动作</h3>
-              <p>{entry.implementation_action || '—'}</p>
-            </section>
+            {entry.allowed_interpretation && (
+              <section className="knowledge-detail-section">
+                <h3>报告解读参考</h3>
+                <p>{entry.allowed_interpretation}</p>
+              </section>
+            )}
+            {entry.reference_range_policy && (
+              <section className="knowledge-detail-section">
+                <h3>数值解释说明</h3>
+                <p>{entry.reference_range_policy}</p>
+              </section>
+            )}
+            {entry.applicable_population.length > 0 && (
+              <section className="knowledge-detail-section">
+                <h3>适用范围</h3>
+                <p>{entry.applicable_population.join('；')}</p>
+              </section>
+            )}
 
             <section className="knowledge-detail-section">
-              <h3>证据来源</h3>
-              <div className="knowledge-source-list">
-                {entry.sources.map((source) => (
-                  <article key={source.source_id} className="knowledge-source-item">
-                    <span>{source.source_id} · {source.evidence_tier ? `证据等级 ${source.evidence_tier}` : '未分级'}</span>
-                    <strong>{source.title}</strong>
-                    <p>{source.scope || source.note || '—'}</p>
-                    {source.url && (
-                      <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
-                    )}
-                  </article>
-                ))}
-              </div>
+              <h3>参考文献</h3>
+              {entry.sources.length === 0 ? (
+                <p>暂无结构化来源</p>
+              ) : (
+                <div className="knowledge-source-list">
+                  {entry.sources.map((source) => (
+                    <article key={source.source_id} className="knowledge-source-item">
+                      <span>{source.source_id}{source.evidence_tier ? ` · 来源等级 ${source.evidence_tier}` : ''}</span>
+                      <strong>{source.title}</strong>
+                      <p>{source.scope || source.note || '—'}</p>
+                      {source.url && (
+                        <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -202,7 +210,6 @@ export default function KnowledgeGovernancePage() {
   const [drawerLoading, setDrawerLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('')
-  const [entryStatus, setEntryStatus] = useState('')
   const [sourceQuery, setSourceQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -257,14 +264,13 @@ export default function KnowledgeGovernancePage() {
     const needle = query.trim().toLocaleLowerCase()
     return (entries?.items || []).filter((entry) => {
       if (category && entry.category !== category) return false
-      if (entryStatus && entry.knowledge_status !== entryStatus) return false
       if (!needle) return true
       return [entry.title, entry.knowledge_id, entry.system_key, entry.category]
         .join(' ')
         .toLocaleLowerCase()
         .includes(needle)
     })
-  }, [entries, query, category, entryStatus])
+  }, [entries, query, category])
 
   const filteredSources = useMemo(() => {
     const needle = sourceQuery.trim().toLocaleLowerCase()
@@ -277,47 +283,51 @@ export default function KnowledgeGovernancePage() {
     ))
   }, [sources, sourceQuery])
 
-  const statusCount = (key: string, biomarkersOnly = false) => {
-    const item = status?.status_counts.find((candidate) => candidate.status === key)
-    return biomarkersOnly ? item?.biomarker_count || 0 : item?.count || 0
-  }
+  const categoryStats = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const entry of entries?.items || []) {
+      counts.set(entry.category, (counts.get(entry.category) || 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((left, right) => {
+        const leftIndex = CATEGORY_ORDER.indexOf(left.name)
+        const rightIndex = CATEGORY_ORDER.indexOf(right.name)
+        return (leftIndex < 0 ? 99 : leftIndex) - (rightIndex < 0 ? 99 : rightIndex)
+      })
+  }, [entries])
+
+  const largestCategory = Math.max(1, ...categoryStats.map((item) => item.count))
 
   return (
     <div className="knowledge-page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">知识与证据治理</h1>
-          <p className="page-sub">内部试运行知识、系统指标映射与来源证据</p>
+          <h1 className="page-title">RAG 知识库</h1>
+          <p className="page-sub">康复评估知识、26 项指标映射与报告引用来源</p>
         </div>
-        <button className="button secondary" onClick={load} disabled={loading} title="刷新知识状态">
+        <button className="button secondary" onClick={load} disabled={loading} title="刷新RAG知识库">
           <span aria-hidden="true">↻</span>{loading ? '读取中' : '刷新'}
         </button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-      {loading && !status && <div className="knowledge-initial-loading">正在读取知识发布包…</div>}
-      {status?.trial_release.warning && (
-        <div className="knowledge-trial-warning">
-          <strong>内部试运行</strong>
-          <span>{status.trial_release.warning}</span>
-        </div>
-      )}
+      {loading && !status && <div className="knowledge-initial-loading">正在读取 RAG 知识库…</div>}
       {status && !status.available && (
-        <div className="error-banner">{status.error || '知识发布包尚未准备完成'}</div>
+        <div className="error-banner">{status.error || 'RAG 知识库尚未准备完成'}</div>
       )}
 
       {status?.available && (
         <>
-          <section className="knowledge-metrics" aria-label="知识治理摘要">
-            <div><span>指标映射</span><strong>{status.counts.mapped_biomarkers}/26</strong></div>
-            <div className="metric-critical"><span>临床可用</span><strong>{status.counts.clinical_ready_biomarkers}/26</strong></div>
-            <div className="metric-danger"><span>阻断</span><strong>{statusCount('blocked_current_implementation', true)}</strong></div>
-            <div><span>仅研究</span><strong>{statusCount('research_only', true)}</strong></div>
-            <div className="metric-warning"><span>条件候选</span><strong>{statusCount('conditional_after_protocol_fix', true)}</strong></div>
-            <div><span>专家确认</span><strong>{status.counts.expert_verified_entries}</strong></div>
+          <section className="knowledge-metrics" aria-label="RAG知识库摘要">
+            <div><span>知识条目</span><strong>{status.counts.total_entries}</strong></div>
+            <div><span>26项指标知识</span><strong>{status.counts.mapped_biomarkers}/26</strong></div>
+            <div><span>参考文献</span><strong>{status.counts.sources}</strong></div>
+            <div><span>检索服务</span><strong className="metric-text">{ragServiceLabel(status)}</strong></div>
+            <div><span>报告接入</span><strong className="metric-text">{reportAccessLabel(status)}</strong></div>
           </section>
 
-          <div className="knowledge-tabs" role="tablist" aria-label="知识治理视图">
+          <div className="knowledge-tabs" role="tablist" aria-label="RAG知识库视图">
             {TABS.map((item) => (
               <button
                 key={item.id}
@@ -335,58 +345,46 @@ export default function KnowledgeGovernancePage() {
             <div className="knowledge-panel" role="tabpanel">
               <section className="knowledge-section">
                 <div className="knowledge-section-head">
-                  <div><h2>运行状态</h2><p>应用、内容、索引和模型版本分别记录</p></div>
+                  <div><h2>报告检索链路</h2><p>当前系统生成康复报告时使用的 RAG 数据路径</p></div>
                   <span className={`knowledge-runtime ${status.rag.service.reachable ? 'online' : 'offline'}`}>
-                    RAG {status.rag.mode.toUpperCase()} · {status.rag.service.status}
+                    RAG · {ragServiceLabel(status)}
                   </span>
                 </div>
-                <dl className="knowledge-version-grid">
-                  <div><dt>内容发布</dt><dd>{status.versions.content_release || '—'}</dd></div>
-                  <div><dt>索引集合</dt><dd>{status.versions.index_collection || '—'}</dd></div>
-                  <div><dt>源文档Schema</dt><dd>{status.versions.source_document || '—'}</dd></div>
-                  <div><dt>索引构建时间</dt><dd>{formatTime(status.versions.index_built_at_utc)}</dd></div>
-                  <div><dt>应用版本</dt><dd>{status.versions.application || '—'}</dd></div>
-                  <div><dt>报告模型</dt><dd>{status.versions.report_model || '—'}</dd></div>
-                </dl>
+                <ol className="knowledge-flow">
+                  {RETRIEVAL_FLOW.map((step, index) => (
+                    <li key={step.title}>
+                      <span className="knowledge-flow-index">{String(index + 1).padStart(2, '0')}</span>
+                      <div>
+                        <strong>{step.title}</strong>
+                        <p>{step.detail}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
               </section>
 
               <section className="knowledge-section">
                 <div className="knowledge-section-head">
-                  <div><h2>治理边界</h2><p>{status.counts.total_entries}条知识，{status.counts.sources}项结构化来源</p></div>
+                  <div><h2>知识库内容</h2><p>{status.counts.total_entries} 条结构化知识，关联 {status.counts.sources} 项来源</p></div>
                 </div>
-                <div className="knowledge-boundaries">
-                  <div>
-                    <h3>允许用途</h3>
-                    <ul>{(status.trial_release.allowed_usage || []).map((item) => <li key={item}>{item}</li>)}</ul>
+                <div className="knowledge-overview-grid">
+                  <div className="knowledge-category-list" aria-label="知识类型分布">
+                    {categoryStats.map((item) => (
+                      <div className="knowledge-category-row" key={item.name}>
+                        <div><span>{item.name}</span><strong>{item.count}</strong></div>
+                        <span className="knowledge-category-track">
+                          <span style={{ width: `${Math.max(8, Math.round(item.count / largestCategory * 100))}%` }} />
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="prohibited">
-                    <h3>禁止用途</h3>
-                    <ul>{(status.trial_release.prohibited_usage || []).map((item) => <li key={item}>{item}</li>)}</ul>
-                  </div>
+                  <dl className="knowledge-rag-meta">
+                    <div><dt>知识版本</dt><dd>{status.versions.content_release || '—'}</dd></div>
+                    <div><dt>向量集合</dt><dd>{status.versions.index_collection || '—'}</dd></div>
+                    <div><dt>索引更新时间</dt><dd>{formatTime(status.versions.index_built_at_utc)}</dd></div>
+                    <div><dt>报告引用方式</dt><dd>正文数字引用【n】</dd></div>
+                  </dl>
                 </div>
-              </section>
-
-              <section className="knowledge-section">
-                <div className="knowledge-section-head"><div><h2>条目状态</h2><p>总条目与26项生物标志物分别统计</p></div></div>
-                <div className="knowledge-table-wrap">
-                  <table className="knowledge-table compact">
-                    <thead><tr><th>治理状态</th><th>全部条目</th><th>26项指标</th></tr></thead>
-                    <tbody>
-                      {status.status_counts.map((item) => (
-                        <tr key={item.status}>
-                          <td><span className={`knowledge-badge ${statusClass(item.status)}`}>{shortStatus(item.status)}</span></td>
-                          <td>{item.count}</td>
-                          <td>{item.biomarker_count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {!status.validation.valid && (
-                  <div className="knowledge-validation">
-                    {status.validation.issues.map((issue) => <span key={issue}>{issue}</span>)}
-                  </div>
-                )}
               </section>
             </div>
           )}
@@ -394,7 +392,10 @@ export default function KnowledgeGovernancePage() {
           {tab === 'coverage' && coverage && (
             <div className="knowledge-panel" role="tabpanel">
               <div className="knowledge-panel-head">
-                <div><h2>系统指标映射</h2><p>已映射 {coverage.mapped}/{coverage.expected}，临床可用 {coverage.clinical_ready}/{coverage.expected}</p></div>
+                <div>
+                  <h2>26 项 biomarker 知识映射</h2>
+                  <p>已建立 {coverage.mapped}/{coverage.expected} 项 system_key 精确映射，报告按指标键取回对应知识</p>
+                </div>
               </div>
               <EntryTable items={coverage.items} onSelect={openEntry} />
             </div>
@@ -407,18 +408,14 @@ export default function KnowledgeGovernancePage() {
                   className="knowledge-search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索名称、编号或系统键"
+                  placeholder="搜索知识名称、编号或关联指标"
                   aria-label="搜索知识条目"
                 />
-                <select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按模态筛选">
-                  <option value="">全部模态</option>
+                <select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="按知识类型筛选">
+                  <option value="">全部类型</option>
                   {entries.filters.categories.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
-                <select value={entryStatus} onChange={(event) => setEntryStatus(event.target.value)} aria-label="按治理状态筛选">
-                  <option value="">全部状态</option>
-                  {entries.filters.statuses.map((item) => <option key={item.status} value={item.status}>{shortStatus(item.status)}</option>)}
-                </select>
-                <span>{filteredEntries.length} 条</span>
+                <span>{filteredEntries.length} 条知识</span>
               </div>
               <EntryTable items={filteredEntries} onSelect={openEntry} />
             </div>
@@ -431,21 +428,21 @@ export default function KnowledgeGovernancePage() {
                   className="knowledge-search"
                   value={sourceQuery}
                   onChange={(event) => setSourceQuery(event.target.value)}
-                  placeholder="搜索题名、类型、范围或来源编号"
-                  aria-label="搜索来源文献"
+                  placeholder="搜索文献题名、类型或来源编号"
+                  aria-label="搜索参考文献"
                 />
                 <span>{filteredSources.length} 项来源</span>
               </div>
               <div className="knowledge-table-wrap">
                 <table className="knowledge-table knowledge-source-table">
-                  <thead><tr><th>来源</th><th>类型</th><th>等级</th><th>年份</th><th>适用范围</th><th>关联条目</th></tr></thead>
+                  <thead><tr><th>参考文献</th><th>类型</th><th>来源等级</th><th>年份</th><th>支持内容</th><th>关联知识</th></tr></thead>
                   <tbody>
                     {filteredSources.map((source: KnowledgeSource) => (
                       <tr key={source.source_id}>
                         <td>
                           <strong>{source.title}</strong>
                           <span className="knowledge-source-id">{source.source_id}</span>
-                          {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer">原始来源</a>}
+                          {source.url && <a href={source.url} target="_blank" rel="noopener noreferrer">查看原始来源</a>}
                         </td>
                         <td>{source.source_type || '—'}</td>
                         <td><span className="knowledge-tier">{source.evidence_tier || '—'}</span></td>
