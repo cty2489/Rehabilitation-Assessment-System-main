@@ -13,19 +13,45 @@
  */
 import type { JSX } from 'react'
 
+function renderCitations(text: string, keyPrefix: string): (JSX.Element | string)[] {
+  const parts: (JSX.Element | string)[] = []
+  const re = /【(\d+)】/g
+  let last = 0
+  let match: RegExpExecArray | null
+  let index = 0
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index))
+    parts.push(
+      <span
+        key={`${keyPrefix}-c${index++}`}
+        className="report-citation"
+        title={`对应文末参考文献 ${match[1]}`}
+        aria-label={`参考文献 ${match[1]}`}
+      >
+        {match[0]}
+      </span>,
+    )
+    last = match.index + match[0].length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
 function renderInline(text: string): (JSX.Element | string)[] {
-  // Only **bold** is used in the report; split on it and keep the rest literal.
   const parts: (JSX.Element | string)[] = []
   const re = /\*\*([^*]+)\*\*/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index))
-    parts.push(<strong key={`b${i++}`}>{m[1]}</strong>)
+    if (m.index > last) {
+      parts.push(...renderCitations(text.slice(last, m.index), `p${i}`))
+    }
+    parts.push(<strong key={`b${i}`}>{renderCitations(m[1], `b${i}`)}</strong>)
+    i++
     last = m.index + m[0].length
   }
-  if (last < text.length) parts.push(text.slice(last))
+  if (last < text.length) parts.push(...renderCitations(text.slice(last), `t${i}`))
   return parts
 }
 

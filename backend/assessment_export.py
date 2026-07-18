@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from biomarker_refs import marker_ref
+from report_citations import citation_markers, extract_numeric_citations
 
 SCHEMA_VERSION = "rehab.assessment_result.v2"
 
@@ -189,6 +190,7 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
         "warnings": [],
         "next_assessment": None,
         "knowledge_evidence": [],
+        "reference_catalog": [],
     }
     lines = (report_text or "").splitlines()
     current_group: Optional[str] = None
@@ -263,6 +265,23 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
                                 "content": row[1],
                                 "duration": row[2],
                             })
+                elif headers[:6] == [
+                    "引用", "知识ID", "知识条目", "知识状态", "来源ID", "审核状态"
+                ]:
+                    for row in rows:
+                        if len(row) >= 6:
+                            parsed["knowledge_evidence"].append({
+                                "knowledge_id": row[1],
+                                "title": row[2],
+                                "knowledge_status": row[3],
+                                "citation_numbers": extract_numeric_citations(row[0]),
+                                "source_ids": [
+                                    value.strip()
+                                    for value in row[4].split("、")
+                                    if value.strip() and value.strip() != "—"
+                                ],
+                                "review_status": row[5],
+                            })
                 elif headers[:5] == ["知识ID", "标题", "知识状态", "来源", "审核状态"]:
                     for row in rows:
                         if len(row) >= 5:
@@ -278,6 +297,15 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
                                 "references": references,
                                 "review_status": row[4],
                             })
+            continue
+
+        reference_match = re.match(r"^【(\d+)】\s*(.+?)\s*$", clean)
+        if reference_match:
+            parsed["reference_catalog"].append({
+                "number": int(reference_match.group(1)),
+                "citation": reference_match.group(2).strip(),
+            })
+            i += 1
             continue
 
         if line.startswith("**临床解读"):
@@ -307,26 +335,92 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
 
 
 def _knowledge_evidence_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
-    entries = list(parsed.get("knowledge_evidence") or [])
+    entries = [dict(entry) for entry in (parsed.get("knowledge_evidence") or [])]
     references: List[Dict[str, Any]] = []
-    seen = set()
-    for entry in entries:
-        source_ids = []
-        for citation in entry.get("references") or []:
-            source_match = re.match(r"^\[(SRC-[A-Za-z0-9._:-]+)\]", citation)
-            source_id = source_match.group(1) if source_match else None
-            if source_id and source_id not in source_ids:
-                source_ids.append(source_id)
-            dedupe_key = source_id or citation
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            references.append({"source_id": source_id, "citation": citation})
-        entry["source_ids"] = source_ids
+    parsed_catalog = sorted(
+        (
+            dict(item)
+            for item in (parsed.get("reference_catalog") or [])
+            if item.get("number") and item.get("citation")
+        ),
+        key=lambda item: int(item["number"]),
+    )
+    if parsed_catalog:
+        references_by_number: Dict[int, Dict[str, Any]] = {}
+        source_by_number: Dict[int, str] = {}
+        knowledge_by_number: Dict[int, List[str]] = {}
+        for entry in entries:
+            numbers = [int(value) for value in (entry.get("citation_numbers") or [])]
+            source_ids = list(entry.get("source_ids") or [])
+            if len(numbers) == len(source_ids):
+                for number, source_id in zip(numbers, source_ids):
+                    source_by_number.setdefault(number, source_id)
+            for number in numbers:
+                knowledge_by_number.setdefault(number, [])
+                if entry.get("knowledge_id") not in knowledge_by_number[number]:
+                    knowledge_by_number[number].append(entry.get("knowledge_id"))
+        for item in parsed_catalog:
+            number = int(item["number"])
+            reference = {
+                "number": number,
+                "marker": f"【{number}】",
+                "source_id": source_by_number.get(number),
+                "citation": item["citation"],
+                "knowledge_ids": [
+                    value for value in knowledge_by_number.get(number, []) if value
+                ],
+            }
+            references.append(reference)
+            references_by_number[number] = reference
+        for entry in entries:
+            numbers = [int(value) for value in (entry.get("citation_numbers") or [])]
+            entry["citation_markers"] = citation_markers(numbers)
+            entry["references"] = [
+                references_by_number[number]["citation"]
+                for number in numbers
+                if number in references_by_number
+            ]
+    else:
+        seen: Dict[str, Dict[str, Any]] = {}
+        for entry in entries:
+            source_ids = []
+            numbers = []
+            for raw_citation in entry.get("references") or []:
+                source_match = re.match(
+                    r"^\[(SRC-[A-Za-z0-9._:-]+)\]\s*", raw_citation
+                )
+                source_id = source_match.group(1) if source_match else None
+                citation = (
+                    raw_citation[source_match.end():].strip()
+                    if source_match
+                    else str(raw_citation).strip()
+                )
+                if source_id and source_id not in source_ids:
+                    source_ids.append(source_id)
+                dedupe_key = source_id or citation
+                reference = seen.get(dedupe_key)
+                if reference is None:
+                    number = len(references) + 1
+                    reference = {
+                        "number": number,
+                        "marker": f"【{number}】",
+                        "source_id": source_id,
+                        "citation": citation,
+                        "knowledge_ids": [],
+                    }
+                    seen[dedupe_key] = reference
+                    references.append(reference)
+                if entry.get("knowledge_id") not in reference["knowledge_ids"]:
+                    reference["knowledge_ids"].append(entry.get("knowledge_id"))
+                numbers.append(reference["number"])
+            entry["source_ids"] = source_ids
+            entry["citation_numbers"] = list(dict.fromkeys(numbers))
+            entry["citation_markers"] = citation_markers(entry["citation_numbers"])
 
     unreviewed = any("未完成正式专家审核" in str(entry.get("review_status") or "") for entry in entries)
     return {
         "used_in_report": bool(entries),
+        "citation_style": "numeric_square_brackets_zh",
         "clinical_review_status": (
             "not_used" if not entries else "demo_unreviewed" if unreviewed else "reviewed"
         ),
@@ -421,7 +515,13 @@ def _biomarker_sections(assessment: Dict[str, Any], parsed: Dict[str, Any]) -> L
             "reference_range": reference_metadata,
             "valid_trial_count": marker.get("n_valid"),
             "interpretation": row_text.get("interpretation"),
+            "interpretation_citation_numbers": extract_numeric_citations(
+                row_text.get("interpretation")
+            ),
             "treatment_advice": row_text.get("treatment_advice"),
+            "treatment_advice_citation_numbers": extract_numeric_citations(
+                row_text.get("treatment_advice")
+            ),
             "interpretation_status": (
                 "legacy_hidden"
                 if row_text.get("legacy_reference_rule")
@@ -530,6 +630,9 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
                 "stage_number": stage,
                 "assessment_region": f"{assessment.get('paralysis_side')}手部" if assessment.get("paralysis_side") else None,
                 "clinical_interpretation": parsed.get("overall_interpretation"),
+                "citation_numbers": extract_numeric_citations(
+                    parsed.get("overall_interpretation")
+                ),
             }
         },
         "clinical_scores": _clinical_scores(assessment),
@@ -546,9 +649,14 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
             "subtype_classification": {
                 "main_stage": f"brunnstrom_stage_{stage_roman}" if stage_roman else None,
                 "overall_subtype": parsed.get("overall_subtype"),
+                "citation_numbers": extract_numeric_citations(parsed.get("overall_subtype")),
             },
             "treatment_strategy": {
                 "overall_strategies": parsed.get("treatment_strategy") or [],
+                "citation_numbers_by_strategy": [
+                    extract_numeric_citations(value)
+                    for value in (parsed.get("treatment_strategy") or [])
+                ],
             },
         },
         "next_week_training_plan": {
@@ -558,6 +666,10 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
         },
         "warnings_and_recommendations": {
             "warnings": parsed.get("warnings") or [],
+            "warning_citation_numbers": [
+                extract_numeric_citations(value)
+                for value in (parsed.get("warnings") or [])
+            ],
             "next_assessment": {
                 "recommendation": parsed.get("next_assessment"),
             },
@@ -801,12 +913,14 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     evidence = payload.get("knowledge_evidence") or {}
     evidence_entries = evidence.get("entries") or []
     if evidence_entries:
-        story.append(p("知识库证据来源", h2))
+        story.append(p("依据来源与参考文献", h2))
         if evidence.get("notice"):
             story.append(p(evidence.get("notice"), note))
-        evidence_rows = [["知识ID", "标题", "知识状态", "来源ID"]]
+        evidence_rows = [["引用", "知识ID", "知识条目", "知识状态", "来源ID"]]
         for entry in evidence_entries:
             evidence_rows.append([
+                entry.get("citation_markers")
+                or citation_markers(entry.get("citation_numbers") or []),
                 entry.get("knowledge_id"),
                 entry.get("title"),
                 entry.get("knowledge_status"),
@@ -815,7 +929,7 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
         story.append(
             kv_table(
                 evidence_rows,
-                [28 * mm, 62 * mm, 55 * mm, 37 * mm],
+                [22 * mm, 30 * mm, 54 * mm, 42 * mm, 34 * mm],
                 font_size=7.5,
             )
         )
@@ -823,7 +937,8 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
         if references:
             story.append(p("参考文献", h3))
             for item in references:
-                story.append(p(item.get("citation"), note))
+                marker = item.get("marker") or f"【{item.get('number')}】"
+                story.append(p(f"{marker}{item.get('citation')}", note))
 
     plan = payload.get("next_week_training_plan") or {}
     gestures = plan.get("recommended_gestures") or []

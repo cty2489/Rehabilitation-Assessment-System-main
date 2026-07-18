@@ -225,6 +225,54 @@ class AssessmentExportPayloadTests(unittest.TestCase):
             assessment_export.write_report_pdf(out, payload)
             self.assertGreater(out.stat().st_size, 1000)
 
+    def test_numeric_citations_are_preserved_per_claim_and_in_catalog(self) -> None:
+        assessment = _assessment()
+        assessment["report"] = _REPORT.replace(
+            "**临床解读：** VI期，主动运动基础较好，需继续巩固分离控制。",
+            "**临床解读：** VI期，主动运动基础较好，需继续巩固分离控制。【1】",
+        ).replace(
+            "| 标志物 | 当前值 | 参考范围 | 解读 | 治疗建议 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| 指浅屈肌积分肌电 | 1.2 uV.s | 设备特异量 | 屈肌激活偏高。 | 控制屈肌代偿。 |\n"
+            "| 缺失指标 | — | 设备特异量 | 本次数据不足，未予解读 | — |",
+            "| 标志物 | 当前值 | 解读 | 训练/随访建议 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 指浅屈肌积分肌电 | 1.2 uV.s | 仅用于同条件复测。【1】 | 结合量表调整训练。【1】【2】 |\n"
+            "| 缺失指标 | — | 本次数据不足，未予解读 | — |",
+        )
+        assessment["report"] += """
+
+## 七、依据来源与参考文献
+
+### 1. 知识库证据审计
+
+| 引用 | 知识ID | 知识条目 | 知识状态 | 来源ID | 审核状态 |
+| --- | --- | --- | --- | --- | --- |
+| 【1】【2】 | KB-EMG-009 | 屈伸肌积分肌电比 | 研究用途 | SRC-001、SRC-002 | 已审核 |
+
+### 2. 参考文献
+
+【1】第一篇测试文献
+
+【2】第二篇测试文献
+"""
+
+        payload = assessment_export.build_result_payload(assessment)
+        evidence = payload["knowledge_evidence"]
+        self.assertEqual(evidence["citation_style"], "numeric_square_brackets_zh")
+        self.assertEqual(evidence["entries"][0]["citation_numbers"], [1, 2])
+        self.assertEqual(evidence["entries"][0]["source_ids"], ["SRC-001", "SRC-002"])
+        self.assertEqual([item["number"] for item in evidence["references"]], [1, 2])
+        self.assertEqual(evidence["references"][0]["source_id"], "SRC-001")
+
+        indicator = payload["biomarker_sections"][0]["indicators"][0]
+        self.assertEqual(indicator["interpretation_citation_numbers"], [1])
+        self.assertEqual(indicator["treatment_advice_citation_numbers"], [1, 2])
+        self.assertEqual(
+            payload["stage_assessment"]["brunnstrom_stage"]["citation_numbers"],
+            [1],
+        )
+
     def test_report_pdf_can_be_written_from_v2_payload(self) -> None:
         payload = assessment_export.build_result_payload(_assessment())
         with tempfile.TemporaryDirectory() as td:

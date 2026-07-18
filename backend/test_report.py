@@ -102,10 +102,24 @@ class AdaptationTests(unittest.TestCase):
                 },
             )
 
-        with self.assertRaisesRegex(ValueError, "rag_citations"):
+        without_binding = {
+            "overall_interpretation": "只在顶层声明，没有逐句引用",
+            "rag_citations": ["KB-EMG-002"],
+        }
+        report._validate_rag_citations(context, without_binding)
+        self.assertEqual(without_binding["rag_citations"], [])
+
+        inline_only = {"overall_interpretation": "逐句引用 [KB-EMG-002]"}
+        report._validate_rag_citations(context, inline_only)
+        self.assertEqual(inline_only["rag_citations"], ["KB-EMG-002"])
+
+        with self.assertRaisesRegex(ValueError, "不得自行生成"):
             report._validate_rag_citations(
                 context,
-                {"overall_interpretation": "没有声明引用"},
+                {
+                    "overall_interpretation": "模型自行编号【1】",
+                    "rag_citations": ["KB-EMG-002"],
+                },
             )
 
     def test_prediction_mentions_must_match_measured_values(self) -> None:

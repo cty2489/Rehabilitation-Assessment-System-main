@@ -118,6 +118,9 @@ def main() -> int:
     validated = report_builder.validate_clinical(context, clinical)
     markdown = report_builder.render_markdown(context, clinical)
     elapsed = round(time.perf_counter() - started, 3)
+    event_log = []
+    while not events.empty():
+        event_log.append(events.get_nowait())
     cited_ids = sorted(
         {
             *[
@@ -142,6 +145,7 @@ def main() -> int:
         "schema_version": "rehab.rag.assist-smoke.v1",
         "status": "ok",
         "generation_mode": generation_mode,
+        "events": event_log,
         "elapsed_seconds": elapsed,
         "collection": packet.get("collection"),
         "used_in_prompt": packet.get("used_in_prompt"),
@@ -161,6 +165,10 @@ def main() -> int:
         ),
         "trial_warning_rendered": "内部技术验证" in markdown
         and "未完成正式专家审核" in markdown,
+        "numeric_citations_rendered": bool(re.search(r"【\d+】", markdown))
+        and "## 七、依据来源与参考文献" in markdown
+        and "### 2. 参考文献" in markdown
+        and "[KB-" not in markdown,
         "overall_interpretation": validated.get("overall_interpretation"),
         "overall_subtype": validated.get("overall_subtype"),
     }
@@ -169,6 +177,7 @@ def main() -> int:
         or not result["marker_citations_complete"]
         or result["old_generic_phrase_count"]
         or not result["trial_warning_rendered"]
+        or not result["numeric_citations_rendered"]
     ):
         raise RuntimeError(f"RAG Assist smoke assertions failed: {result}")
     if args.output:

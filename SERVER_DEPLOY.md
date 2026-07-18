@@ -49,7 +49,7 @@ mkdir -p /root/autodl-tmp/rehab_project
 cd /root/autodl-tmp/rehab_project
 git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
-git checkout cloud-server-v1.1.20
+git checkout cloud-server-v1.1.21
 ```
 
 如果是继续开发或验证最新代码，也可以使用 `main` 分支：
@@ -427,8 +427,9 @@ KNOWLEDGE_RUNTIME_ROOT=/root/autodl-tmp/rehab_project/knowledge_base/runtime
 `result.json` 的 `schema_version` 为 `rehab.assessment_result.v2`。正式交付文件不再包含
 `report.content`、`biomarkers_raw`、`prediction_json` 或 trial 全量调试字段；数据不足的
 biomarker 只进入 `biomarker_coverage.missing_keys`，不生成临床解读。启用 Assist 且实际采用
-知识时，`knowledge_evidence` 保存条目 ID、知识状态、审核状态、来源 ID 和去重参考文献；未使用
-知识时该对象保留稳定结构并返回 `used_in_report=false`。
+知识时，`knowledge_evidence` 保存逐句数字引用、条目 ID、知识状态、审核状态、来源 ID 和去重
+参考文献；网页、Word、JSON 与 PDF 使用同一套 `【1】【2】` 编号。未使用知识时该对象保留稳定
+结构并返回 `used_in_report=false`。
 
 接口：
 

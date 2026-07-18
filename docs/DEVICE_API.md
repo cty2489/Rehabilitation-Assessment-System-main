@@ -417,11 +417,18 @@ natural_language_summary
 百分位。
 
 `knowledge_evidence` 用于审计本次报告实际采用的 RAG 知识，包含
-`used_in_report`、`clinical_review_status`、`notice`、`entries` 和去重后的
-`references`。每个条目会给出 `knowledge_id`、知识状态、审核说明和 `source_ids`。
+`used_in_report`、`citation_style`、`clinical_review_status`、`notice`、`entries` 和去重后的
+`references`。每个条目会给出 `knowledge_id`、`citation_numbers`、知识状态、审核说明和
+`source_ids`；每条参考文献包含 `number`、`marker`、`source_id`、标准引用文字和关联的
+`knowledge_ids`。正文中的 `【1】【2】` 与这里的编号严格一致。
 当前内部试运行知识会明确返回 `clinical_review_status=demo_unreviewed`，设备端不得把它
 显示为“专家已审核”或“临床指南”。RAG 未参与报告时，设备端应接受
 `used_in_report=false` 和空数组，不应将其视为接口错误。
+
+每个 biomarker 的 `interpretation_citation_numbers` 与
+`treatment_advice_citation_numbers` 分别记录解读和建议采用的参考文献编号；总体解读、综合
+亚型、治疗策略和预警也提供相应的 `citation_numbers` 字段。没有文献编号的患者数值和量表
+结果表示其直接来自本次评估，不应由设备端擅自补充文献。
 
 报告不再输出 EMG、EEG、IMU 各自的模态亚型，只在
 `subtype_classification_and_treatment_strategy.subtype_classification.overall_subtype`

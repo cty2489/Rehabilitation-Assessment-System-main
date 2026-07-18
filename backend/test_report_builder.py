@@ -283,9 +283,11 @@ class ValidateClinicalTests(unittest.TestCase):
 class RenderTests(unittest.TestCase):
     def test_exact_marker_source_is_rendered_with_its_reference(self) -> None:
         md = report_builder.render_markdown(_grounded_context(), _valid_clinical("VI"))
-        self.assertIn("[KB-EMG-009]", md)
-        self.assertIn("辅助知识证据来源", md)
-        self.assertIn("[SRC-001] 测试文献", md)
+        self.assertNotIn("[KB-EMG-009]", md)
+        self.assertIn("【1】", md)
+        self.assertIn("依据来源与参考文献", md)
+        self.assertIn("知识库证据审计", md)
+        self.assertIn("【1】测试文献", md)
 
     def test_footnote_fragments_deduped(self) -> None:
         md = report_builder.render_markdown(_context(6), _valid_clinical("VI"))
@@ -342,9 +344,10 @@ class RenderTests(unittest.TestCase):
             ],
         }
         clinical = _valid_clinical("VI")
+        clinical["overall_interpretation"] += "[KB-001]"
         clinical["rag_citations"] = ["KB-001"]
         md = report_builder.render_markdown(context, clinical)
-        self.assertIn("辅助知识证据来源", md)
+        self.assertIn("依据来源与参考文献", md)
         self.assertIn("KB-001", md)
         self.assertIn("指南候选", md)
         self.assertIn("王医生 / 2026-07-16", md)

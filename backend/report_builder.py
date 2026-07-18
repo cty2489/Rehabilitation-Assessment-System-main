@@ -28,6 +28,12 @@ import re
 from typing import Any, Dict, List, Optional
 
 from biomarker_refs import marker_ref, normalize_evidence_note
+from report_citations import (
+    build_reference_catalog,
+    citation_markers,
+    extract_knowledge_ids,
+    render_numeric_citations,
+)
 from schemas import PatientInfo, PredictionResult
 
 import gestures
@@ -632,6 +638,9 @@ def validate_clinical(context: Dict[str, Any], clinical: Optional[Dict[str, Any]
         c["gesture_plan"] = []
         c["weekly_plan"] = []
         c["gesture_ready"] = False
+    c["rag_citations"] = list(
+        dict.fromkeys(c["rag_citations"] + extract_knowledge_ids(c))
+    )
     return c
 
 
@@ -643,6 +652,24 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     """
     c = validate_clinical(context, clinical)
     p = context["patient"]
+    rag_evidence = context.get("rag_evidence") or {}
+    citation_enabled = bool(
+        rag_evidence.get("used_in_report") or rag_evidence.get("used_in_prompt")
+    )
+    citation_catalog = (
+        build_reference_catalog(
+            rag_evidence,
+            extract_knowledge_ids(c),
+            body=c,
+        )
+        if citation_enabled
+        else {"style": "numeric_square_brackets_zh", "knowledge": {}, "references": []}
+    )
+    references = list(citation_catalog.get("references") or [])
+
+    def cited(value: Any) -> str:
+        return render_numeric_citations(value, citation_catalog)
+
     out: List[str] = []
 
     out.append("# 智能康复评估报告")
@@ -660,6 +687,12 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         out.append(
             "> **信号质量复核：** 本次采集中存在同步回退、时长不足或采样率不一致的试次，"
             "请先复核原始信号与设备佩戴情况，再解读结果。"
+        )
+        out.append("")
+    if references:
+        out.append(
+            "> **引用说明：** 正文中的【1】【2】等编号对应报告末尾参考文献；"
+            "未标注文献编号的患者数值、量表结果和分期直接来自本次评估。"
         )
         out.append("")
 
@@ -685,7 +718,7 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         [[r["metric"], r["value"], r["trend"]] for r in context["overall_rows"]],
     ))
     out.append("")
-    out.append(f"**临床解读：** {c['overall_interpretation']}")
+    out.append(f"**临床解读：** {cited(c['overall_interpretation'])}")
     out.append("")
 
     # 关键生物标志物输出与解读
@@ -715,8 +748,8 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
             rows.append([
                 m["name"],
                 value_disp,
-                txt.get("interpretation", "—"),
-                txt.get("treatment_advice", "—"),
+                cited(txt.get("interpretation", "—")),
+                cited(txt.get("treatment_advice", "—")),
             ])
         out.append(_table(["标志物", "当前值", "解读", "训练/随访建议"], rows))
         # Per-group note (e.g. ROM is an estimate). Each marker's note
@@ -741,68 +774,14 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     out.append("")
     out.append(
         "结合临床量表、动作表现及上述标志物的适用边界，综合状态界定为："
-        f"**{c['overall_subtype']}**"
+        f"**{cited(c['overall_subtype'])}**"
     )
     out.append("")
     out.append("**治疗策略要点：**")
     out.append("")
     for i, s in enumerate(c["treatment_strategy"], 1):
-        out.append(f"{i}. {s}")
+        out.append(f"{i}. {cited(s)}")
     out.append("")
-
-    rag_evidence = context.get("rag_evidence") or {}
-    cited_knowledge_ids = list(dict.fromkeys(c.get("rag_citations") or []))
-    all_sources = list(rag_evidence.get("sources", []) or [])
-    all_sources.extend((rag_evidence.get("marker_sources") or {}).values())
-    sources_by_id = {
-        str(source.get("knowledge_id") or ""): source
-        for source in all_sources
-        if source.get("knowledge_id")
-    }
-    cited_sources = [
-        sources_by_id[knowledge_id]
-        for knowledge_id in cited_knowledge_ids
-        if knowledge_id in sources_by_id
-    ]
-    if (
-        rag_evidence.get("used_in_report") or rag_evidence.get("used_in_prompt")
-    ) and cited_sources:
-        out.append("### 辅助知识证据来源")
-        out.append("")
-        if any(not source.get("clinical_ready") for source in cited_sources):
-            out.append(
-                "> 实验提示：本次显式启用了未完成临床审核的 Demo 知识，仅可用于内部技术验证，"
-                "不得据此执行诊疗或训练处方。"
-            )
-            out.append("")
-        evidence_rows = []
-        for source in cited_sources:
-            references = source.get("references") or []
-            source_text = "；".join(str(value) for value in references if value) or (
-                f"{source.get('source_document_id') or '—'}"
-                f" / 条目{source.get('source_entry_number') or '—'}"
-            )
-            review_text = (
-                f"{source.get('reviewed_by')} / {source.get('reviewed_at')}"
-                if source.get("clinical_ready")
-                else "内部试运行 / 未完成正式专家审核"
-            )
-            evidence_rows.append([
-                source.get("knowledge_id") or "—",
-                source.get("title") or "—",
-                source.get("knowledge_status_label")
-                or source.get("knowledge_status")
-                or "—",
-                source_text,
-                review_text,
-            ])
-        out.append(
-            _table(
-                ["知识ID", "标题", "知识状态", "来源", "审核状态"],
-                evidence_rows,
-            )
-        )
-        out.append("")
 
     # 四、下周具体训练参数
     out.append("## 四、下周具体训练参数")
@@ -827,7 +806,13 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         out.append("### 1. 推荐手势组合（从26个中动态选取）")
         out.append("")
         g_rows = [
-            [str(i), g["name"], g.get("purpose", ""), g.get("force", ""), g.get("reps", "")]
+            [
+                str(i),
+                cited(g["name"]),
+                cited(g.get("purpose", "")),
+                cited(g.get("force", "")),
+                cited(g.get("reps", "")),
+            ]
             for i, g in enumerate(c["gesture_plan"], 1)
         ]
         out.append(_table(["顺序", "手势名称", "训练目的", "辅助力度设置", "重复次数"], g_rows))
@@ -836,7 +821,10 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
         out.append("")
         out.append(_table(
             ["训练日", "训练内容", "预计时长"],
-            [[w["day"], w["content"], w["duration"]] for w in c["weekly_plan"]],
+            [
+                [cited(w["day"]), cited(w["content"]), cited(w["duration"])]
+                for w in c["weekly_plan"]
+            ],
         ))
         out.append("")
 
@@ -844,14 +832,56 @@ def render_markdown(context: Dict[str, Any], clinical: Optional[Dict[str, Any]])
     out.append("## 五、预警与特殊建议")
     out.append("")
     for i, w in enumerate(c["warnings"], 1):
-        out.append(f"{i}. {w}")
+        out.append(f"{i}. {cited(w)}")
     out.append("")
 
     # 六、下次评估时间
     out.append("## 六、下次评估时间")
     out.append("")
-    out.append(f"建议：{c['next_assessment']}")
+    out.append(f"建议：{cited(c['next_assessment'])}")
     out.append("")
+
+    knowledge_items = list((citation_catalog.get("knowledge") or {}).values())
+    if references and knowledge_items:
+        out.append("## 七、依据来源与参考文献")
+        out.append("")
+        if any(not item.get("clinical_ready") for item in knowledge_items):
+            out.append(
+                "> 实验提示：本次引用包含尚未完成正式临床审核的试运行知识，仅可用于内部技术验证，"
+                "不得据此执行诊疗或训练处方。"
+            )
+            out.append("")
+        out.append("### 1. 知识库证据审计")
+        out.append("")
+        evidence_rows = []
+        for item in knowledge_items:
+            review_text = (
+                f"{item.get('reviewed_by')} / {item.get('reviewed_at')}"
+                if item.get("clinical_ready")
+                else "内部试运行 / 未完成正式专家审核"
+            )
+            evidence_rows.append([
+                citation_markers(item.get("citation_numbers") or []),
+                item.get("knowledge_id") or "—",
+                item.get("title") or "—",
+                item.get("knowledge_status_label")
+                or item.get("knowledge_status")
+                or "—",
+                "、".join(item.get("source_ids") or []) or "—",
+                review_text,
+            ])
+        out.append(
+            _table(
+                ["引用", "知识ID", "知识条目", "知识状态", "来源ID", "审核状态"],
+                evidence_rows,
+            )
+        )
+        out.append("")
+        out.append("### 2. 参考文献")
+        out.append("")
+        for reference in references:
+            out.append(f"{reference['marker']}{reference['citation']}")
+            out.append("")
 
     return "\n".join(out).rstrip() + "\n"
 

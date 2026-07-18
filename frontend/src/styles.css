@@ -1750,6 +1750,16 @@ body::before {
 .markdown-report .md-h3 { font-size: 15.5px; margin: 16px 0 8px; color: var(--teal-500); }
 .markdown-report .md-h4 { font-size: 14px; margin: 12px 0 6px; color: var(--ink-700, #45607a); }
 .markdown-report .md-p { font-size: 14px; line-height: 1.85; margin: 6px 0; }
+.markdown-report .report-citation {
+  display: inline-block;
+  margin: 0 1px;
+  color: var(--teal-700);
+  font-size: 0.78em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: super;
+  white-space: nowrap;
+}
 .markdown-report .md-ol, .markdown-report .md-ul { margin: 6px 0 10px; padding-left: 22px; }
 .markdown-report .md-ol li, .markdown-report .md-ul li { font-size: 14px; line-height: 1.8; margin: 2px 0; }
 .markdown-report .md-quote { margin: 8px 0; padding: 8px 12px; font-size: 13px;
