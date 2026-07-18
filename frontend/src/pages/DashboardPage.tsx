@@ -1,4 +1,12 @@
 import { useEffect, useState } from 'react'
+import {
+  ClipboardCheck,
+  FileWarning,
+  Hand,
+  Plus,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react'
 import { fetchAssessments, fetchStats } from '../api'
 import { useAuth, useRoute } from '../app/AppContext'
 import { AssessmentOverviewItem, StatsSummary } from '../types'
@@ -24,17 +32,18 @@ export default function DashboardPage() {
           <p className="page-sub">智能康复评估平台 · 总览</p>
         </div>
         <button className="button" onClick={() => navigate('assessment')}>
-          ＋ 开始新评估
+          <Plus aria-hidden="true" />
+          开始新评估
         </button>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
       <div className="stat-row">
-        <StatCard label="患者总数" value={stats?.patient_count ?? '—'} />
-        <StatCard label="评估总次数" value={stats?.assessment_count ?? '—'} />
-        <StatCard label="报告失败数" value={stats?.report_failed_count ?? '—'} tone="warn" />
-        <StatCard label="平均 FMA-UE" value={stats?.avg_fma_ue ?? '—'} />
+        <StatCard label="患者总数" value={stats?.patient_count ?? '—'} icon={UsersRound} />
+        <StatCard label="评估总次数" value={stats?.assessment_count ?? '—'} icon={ClipboardCheck} tone="blue" />
+        <StatCard label="报告失败数" value={stats?.report_failed_count ?? '—'} icon={FileWarning} tone="warn" />
+        <StatCard label="平均 FMA-UE" value={stats?.avg_fma_ue ?? '—'} icon={Hand} tone="green" />
       </div>
 
       <div className="grid-2-cards">
@@ -78,19 +87,24 @@ export default function DashboardPage() {
   )
 }
 
-function StatCard({
+export function StatCard({
   label,
   value,
+  icon: Icon,
   tone,
 }: {
   label: string
   value: React.ReactNode
-  tone?: 'warn'
+  icon: LucideIcon
+  tone?: 'blue' | 'green' | 'warn'
 }) {
   return (
-    <div className={`stat-card ${tone === 'warn' ? 'warn' : ''}`}>
-      <div className="stat-value">{value}</div>
-      <div className="stat-label">{label}</div>
+    <div className={`stat-card ${tone || ''}`}>
+      <div className="stat-card-icon" aria-hidden="true"><Icon /></div>
+      <div>
+        <div className="stat-value">{value}</div>
+        <div className="stat-label">{label}</div>
+      </div>
     </div>
   )
 }

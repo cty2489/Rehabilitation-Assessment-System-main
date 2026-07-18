@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Play } from 'lucide-react'
 import PatientForm from '../components/PatientForm'
 import FileUpload from '../components/FileUpload'
 import ProgressSteps from '../components/ProgressSteps'
@@ -243,11 +244,12 @@ export default function AssessmentPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">康复评估</h1>
-          <p className="page-sub">EEG · EMG · IMU 多模态融合　/　CMK-AGN × Yi-1.5-6B</p>
+          <p className="page-sub">多模态评分 · 26 项生物标志物 · AI 康复报告</p>
         </div>
         {phase === 'processing' && (
           <button className="button secondary" onClick={handleRestart}>
-            ← 返回
+            <ArrowLeft aria-hidden="true" />
+            返回
           </button>
         )}
       </div>
@@ -267,6 +269,7 @@ export default function AssessmentPage() {
           />
           <div className="actions">
             <button className="button" onClick={handleSubmit}>
+              <Play aria-hidden="true" />
               开始评估
             </button>
           </div>

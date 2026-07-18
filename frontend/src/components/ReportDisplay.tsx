@@ -1,3 +1,4 @@
+import { Download, FileText, RotateCcw, UserRound } from 'lucide-react'
 import MarkdownReport from './MarkdownReport'
 
 interface Props {
@@ -47,20 +48,24 @@ export default function ReportDisplay({
       {done && (
         <div className="actions">
           <button className="button secondary" onClick={onRestart}>
+            <RotateCcw aria-hidden="true" />
             重新评估
           </button>
           {!reportFailed && (
             <>
               <button className="button" onClick={onExportMarkdown}>
+                <Download aria-hidden="true" />
                 导出 Markdown
               </button>
               <button className="button secondary" onClick={onExportWord}>
+                <FileText aria-hidden="true" />
                 导出 Word
               </button>
             </>
           )}
           {onViewPatient && (
             <button className="button secondary" onClick={onViewPatient}>
+              <UserRound aria-hidden="true" />
               查看患者档案
             </button>
           )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Search } from 'lucide-react'
 import { fetchAssessments } from '../api'
 import { useRoute } from '../app/AppContext'
 import { AssessmentOverviewItem } from '../types'
@@ -34,12 +35,16 @@ export default function RecordsOverviewPage() {
           <h1 className="page-title">评估记录总览</h1>
           <p className="page-sub">跨患者按时间排列的全部评估记录（共 {total} 条）</p>
         </div>
-        <input
-          className="search-input"
-          placeholder="搜索患者姓名 / 编号"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <label className="search-field">
+          <Search aria-hidden="true" />
+          <span className="sr-only">搜索评估记录</span>
+          <input
+            className="search-input"
+            placeholder="搜索患者姓名 / 编号"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </label>
       </div>
 
       {error && <div className="error-banner">{error}</div>}

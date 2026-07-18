@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Archive, FileJson, FileText } from 'lucide-react'
 import { downloadAssessmentExport, type AssessmentExportKind } from '../api'
 import { AssessmentRecord } from '../types'
 import { fmtDateTime } from '../util'
@@ -148,12 +149,15 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
         </div>
         <div className="record-export-actions" aria-label="导出评估结果">
           <button className="button secondary" onClick={() => download('json')} disabled={!!downloading}>
+            <FileJson aria-hidden="true" />
             {downloading === 'json' ? '生成中...' : 'JSON'}
           </button>
           <button className="button secondary" onClick={() => download('pdf')} disabled={!!downloading}>
+            <FileText aria-hidden="true" />
             {downloading === 'pdf' ? '生成中...' : 'PDF'}
           </button>
           <button className="button secondary" onClick={() => download('zip')} disabled={!!downloading}>
+            <Archive aria-hidden="true" />
             {downloading === 'zip' ? '生成中...' : 'ZIP'}
           </button>
         </div>

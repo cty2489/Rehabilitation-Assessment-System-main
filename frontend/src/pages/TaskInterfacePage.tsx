@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft, CloudUpload, RadioTower } from 'lucide-react'
 import PatientForm from '../components/PatientForm'
 import MarkdownReport from '../components/MarkdownReport'
 import ProgressSteps from '../components/ProgressSteps'
@@ -206,31 +207,38 @@ export default function TaskInterfacePage() {
     <div>
       <div className="page-head">
         <div>
-          <h1 className="page-title">任务一与任务三对接接口页面</h1>
-          <p className="page-sub">数据采集（任务一）→ 评估系统（任务三）　/　在线 · 离线双模式</p>
+          <h1 className="page-title">设备接口</h1>
+          <p className="page-sub">训练设备与云端评估系统的数据对接</p>
         </div>
         {processing && (
           <button className="button secondary" onClick={handleRestart}>
-            ← 返回
+            <ArrowLeft aria-hidden="true" />
+            返回
           </button>
         )}
       </div>
 
       {/* Mode tabs */}
-      <div className="card" style={{ display: 'flex', gap: 12 }}>
+      <div className="mode-switch" role="tablist" aria-label="数据接入模式">
         <button
-          className={`button ${mode === 'offline' ? '' : 'secondary'}`}
+          className={mode === 'offline' ? 'active' : ''}
           onClick={() => setMode('offline')}
           disabled={processing}
+          role="tab"
+          aria-selected={mode === 'offline'}
         >
-          离线模式（上传数据包）
+          <CloudUpload aria-hidden="true" />
+          离线数据包
         </button>
         <button
-          className={`button ${mode === 'online' ? '' : 'secondary'}`}
+          className={mode === 'online' ? 'active' : ''}
           onClick={() => setMode('online')}
           disabled={processing}
+          role="tab"
+          aria-selected={mode === 'online'}
         >
-          在线模式（设备端实时采集）
+          <RadioTower aria-hidden="true" />
+          在线采集
         </button>
       </div>
 

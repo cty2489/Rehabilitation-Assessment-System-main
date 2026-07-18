@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { ClipboardCheck, Hand, Layers3, UsersRound } from 'lucide-react'
 import { fetchStats } from '../api'
 import { StatsSummary } from '../types'
-import { BarChart } from './DashboardPage'
+import { BarChart, StatCard } from './DashboardPage'
 
 const HAND_FN_LABEL: Record<string, string> = {
   '1': 'Brunnstrom 1 期',
@@ -45,10 +46,10 @@ export default function StatisticsPage() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="stat-row">
-        <div className="stat-card"><div className="stat-value">{stats?.patient_count ?? '—'}</div><div className="stat-label">患者总数</div></div>
-        <div className="stat-card"><div className="stat-value">{stats?.assessment_count ?? '—'}</div><div className="stat-label">评估次数</div></div>
-        <div className="stat-card"><div className="stat-value">{stats?.avg_fma_ue ?? '—'}</div><div className="stat-label">平均 FMA-UE</div></div>
-        <div className="stat-card"><div className="stat-value">{Object.values(handFn).reduce((a, b) => a + b, 0) || '—'}</div><div className="stat-label">Brunnstrom 样本数</div></div>
+        <StatCard label="患者总数" value={stats?.patient_count ?? '—'} icon={UsersRound} />
+        <StatCard label="评估次数" value={stats?.assessment_count ?? '—'} icon={ClipboardCheck} tone="blue" />
+        <StatCard label="平均 FMA-UE" value={stats?.avg_fma_ue ?? '—'} icon={Hand} tone="green" />
+        <StatCard label="Brunnstrom 样本数" value={Object.values(handFn).reduce((a, b) => a + b, 0) || '—'} icon={Layers3} />
       </div>
 
       <div className="grid-2-cards">

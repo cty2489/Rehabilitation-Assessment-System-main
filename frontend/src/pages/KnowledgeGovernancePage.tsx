@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import {
   fetchKnowledgeCoverage,
   fetchKnowledgeEntries,
@@ -307,7 +308,8 @@ export default function KnowledgeGovernancePage() {
           <p className="page-sub">康复评估知识、26 项指标映射与报告引用来源</p>
         </div>
         <button className="button secondary" onClick={load} disabled={loading} title="刷新RAG知识库">
-          <span aria-hidden="true">↻</span>{loading ? '读取中' : '刷新'}
+          <RefreshCw size={15} aria-hidden="true" />
+          {loading ? '读取中' : '刷新'}
         </button>
       </div>
 

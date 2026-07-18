@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { Ban, Copy, KeyRound, LogOut, PauseCircle, PlayCircle, RefreshCw, X } from 'lucide-react'
 import {
   createDeviceCredential,
   fetchDeviceCredentials,
@@ -149,7 +150,10 @@ export default function SystemManagementPage() {
             </div>
           </div>
           <div className="actions">
-            <button className="button secondary" onClick={logout}>退出登录</button>
+            <button className="button secondary" onClick={logout}>
+              <LogOut aria-hidden="true" />
+              退出登录
+            </button>
           </div>
         </div>
 
@@ -214,6 +218,7 @@ export default function SystemManagementPage() {
             />
           </label>
           <button className="button credential-create-button" disabled={creating}>
+            <KeyRound aria-hidden="true" />
             {creating ? '生成中…' : '生成设备码'}
           </button>
         </form>
@@ -226,9 +231,13 @@ export default function SystemManagementPage() {
             </div>
             <div className="credential-secret-actions">
               <button className="button secondary tiny" onClick={copySecret}>
+                <Copy aria-hidden="true" />
                 {copied ? '已复制' : '复制'}
               </button>
-              <button className="button secondary tiny" onClick={() => setSecret(null)}>关闭</button>
+              <button className="button secondary tiny" onClick={() => setSecret(null)}>
+                <X aria-hidden="true" />
+                关闭
+              </button>
             </div>
           </div>
         )}
@@ -270,16 +279,26 @@ export default function SystemManagementPage() {
                     <td>
                       <div className="credential-actions">
                         {record.status === 'active' && (
-                          <button className="button secondary tiny" disabled={busy} onClick={() => setStatus(record, 'disabled')}>停用</button>
+                          <button className="button secondary tiny" disabled={busy} onClick={() => setStatus(record, 'disabled')}>
+                            <PauseCircle aria-hidden="true" />
+                            停用
+                          </button>
                         )}
                         {record.status === 'disabled' && (
-                          <button className="button secondary tiny" disabled={busy} onClick={() => setStatus(record, 'active')}>启用</button>
+                          <button className="button secondary tiny" disabled={busy} onClick={() => setStatus(record, 'active')}>
+                            <PlayCircle aria-hidden="true" />
+                            启用
+                          </button>
                         )}
                         <button className="button secondary tiny" disabled={busy} onClick={() => rotate(record)}>
+                          <RefreshCw aria-hidden="true" />
                           {record.status === 'revoked' ? '重新生成' : '轮换'}
                         </button>
                         {record.status !== 'revoked' && (
-                          <button className="button danger tiny" disabled={busy} onClick={() => revoke(record)}>撤销</button>
+                          <button className="button danger tiny" disabled={busy} onClick={() => revoke(record)}>
+                            <Ban aria-hidden="true" />
+                            撤销
+                          </button>
                         )}
                       </div>
                     </td>

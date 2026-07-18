@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft, ChevronDown, ChevronRight, Pencil, Plus, Save, X } from 'lucide-react'
 import { fetchPatient, fetchPatients, updatePatient } from '../api'
 import { useRoute } from '../app/AppContext'
 import RecordDetail from '../components/RecordDetail'
@@ -145,7 +146,8 @@ function PatientDetailView({ id }: { id: number }) {
       <div className="page-head">
         <div>
           <button className="link-back" onClick={() => navigate('patients', null)}>
-            ← 返回患者列表
+            <ArrowLeft aria-hidden="true" />
+            返回患者列表
           </button>
           <h1 className="page-title">
             {patient.name}
@@ -156,6 +158,7 @@ function PatientDetailView({ id }: { id: number }) {
           </p>
         </div>
         <button className="button" onClick={() => navigate('assessment')}>
+          <Plus aria-hidden="true" />
           为该患者新评估
         </button>
       </div>
@@ -169,14 +172,17 @@ function PatientDetailView({ id }: { id: number }) {
           <span className="h2-suffix">Profile · Editable</span>
           {!editing ? (
             <button className="button secondary inline-btn" onClick={() => setEditing(true)}>
+              <Pencil aria-hidden="true" />
               编辑
             </button>
           ) : (
             <span className="inline-btn-group">
               <button className="button secondary inline-btn" onClick={() => { setEditing(false); load() }}>
+                <X aria-hidden="true" />
                 取消
               </button>
               <button className="button inline-btn" onClick={save} disabled={saving}>
+                <Save aria-hidden="true" />
                 {saving ? '保存中…' : '保存'}
               </button>
             </span>
@@ -277,7 +283,9 @@ function PatientDetailView({ id }: { id: number }) {
                     {rec.report_status === 'failed' && (
                       <span className="badge badge-warn">报告未生成</span>
                     )}
-                    <span className="record-caret">{open ? '▾' : '▸'}</span>
+                    <span className="record-caret" aria-hidden="true">
+                      {open ? <ChevronDown /> : <ChevronRight />}
+                    </span>
                   </button>
                   {open && <RecordDetail record={rec} />}
                 </div>

@@ -2,14 +2,14 @@
 
 本项目是一个面向康复评估业务的完整 Web 系统，支持患者入组、评估数据包导入、EEG/EMG/IMU 多模态评分、26 项 biomarker 输出、AI 康复报告生成、MySQL 结构化存储和前端可视化查看。本项目为珠海复旦创新研究院医学人工智能科技创新中心团队研发。
 
-> `cloud-server-v1.1.22` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、26 项知识精确接地、论文式数字引用、RAG 知识库展示与 JSON/PDF/ZIP 回传整链路验收。
+> `cloud-server-v1.1.23` 是当前云服务器稳定标签，已完成真实 GPU、MySQL、设备数据包、26 项知识精确接地、论文式数字引用、RAG 知识库展示、统一临床工作台界面与 JSON/PDF/ZIP 回传整链路验收。
 
 ## 当前稳定基线
 
 当前云服务器可运行基线版本：
 
 ```text
-cloud-server-v1.1.22
+cloud-server-v1.1.23
 ```
 
 该标签提供已在线上验证过的运行基线，包含：
@@ -54,6 +54,7 @@ cloud-server-v1.1.22
 - 当前云端默认使用 Qwen3-8B HF 原版权重生成康复评估报告；DeepSeek-R1-Distill-Qwen-7B、GLM-4-9B、Mistral-7B-Instruct-v0.3、Baichuan2-7B-Chat 和 InternLM3-8B-Instruct 可在“模型设置”中切换为 baseline 对照；Qwen2.5-7B-Instruct GGUF 仅保留为手动回退/对照
 - MySQL 保存患者、评估主记录、trial 明细、biomarker 明细和报告
 - React 前端提供仪表盘、患者管理、康复评估、记录总览、统计分析和只读的 RAG 知识库展示页面
+- 前端采用统一的临床工作台视觉系统，提供清晰的业务导航、状态语义、桌面与窄屏响应式布局，并保持高密度表格和评估流程可扫描
 - 页面内登录保护，浏览器使用短时 HttpOnly 会话 Cookie，不在 localStorage 保存管理员密钥
 - 评估结果可导出 `result.json`、`report.pdf`、`export.zip`，其中 JSON/PDF 采用去重后的设备端交付结构，并同步保存逐句引用编号与参考文献目录
 
@@ -105,7 +106,7 @@ git clone https://github.com/cty2489/Rehabilitation-Assessment-System-main.git
 cd Rehabilitation-Assessment-System-main
 
 # 推荐先部署当前稳定基线；后续开发可直接使用 main
-git checkout cloud-server-v1.1.22
+git checkout cloud-server-v1.1.23
 ```
 
 2. 准备外部文件：
@@ -355,7 +356,7 @@ CI 只运行不依赖 GPU/模型权重的单元测试，使用轻量的 `backend
 推荐规则：
 
 ```text
-稳定演示/复现实验：使用 cloud-server-v1.1.22
+稳定演示/复现实验：使用 cloud-server-v1.1.23
 日常继续开发：使用 main
 ```
 

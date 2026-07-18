@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { RefreshCw, Save } from 'lucide-react'
 import { fetchHealth, fetchLlmSettings, updateLlmSettings } from '../api'
 import { HealthStatus, LlmModelOption, LlmSettings } from '../types'
 
@@ -78,6 +79,7 @@ export default function ModelSettingsPage() {
           <p className="page-sub">选择报告生成使用的大模型</p>
         </div>
         <button className="button secondary" onClick={load} disabled={saving}>
+          <RefreshCw aria-hidden="true" />
           刷新状态
         </button>
       </div>
@@ -131,6 +133,7 @@ export default function ModelSettingsPage() {
           )}
           <div className="actions">
             <button className="button" onClick={saveModelSelection} disabled={!dirty || saving}>
+              <Save aria-hidden="true" />
               {saving ? '保存中…' : '保存设置'}
             </button>
           </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Activity, LockKeyhole, LogIn, ShieldCheck, UserRound } from 'lucide-react'
 import { useAuth } from '../app/AppContext'
 
 export default function LoginPage() {
@@ -27,42 +28,49 @@ export default function LoginPage() {
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand">
           <div className="brand-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 12h3l2 -6 3 12 3 -8 2 4h7" />
-            </svg>
+            <Activity />
           </div>
           <div>
             <h1>智能康复评估平台</h1>
-            <div className="subtitle">EEG · EMG · IMU 多模态融合　/　CMK-AGN × Yi-1.5-6B</div>
+            <div className="subtitle">EEG · EMG · IMU 多模态康复评估</div>
           </div>
         </div>
 
         <div className="field">
           <label>用户名</label>
-          <input
-            type="text"
-            value={username}
-            placeholder="请输入用户名"
-            onChange={(e) => setUsername(e.target.value)}
-            autoFocus
-          />
+          <div className="login-input-wrap">
+            <UserRound aria-hidden="true" />
+            <input
+              type="text"
+              value={username}
+              placeholder="请输入用户名"
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoFocus
+            />
+          </div>
         </div>
         <div className="field">
           <label>密码</label>
-          <input
-            type="password"
-            value={password}
-            placeholder="请输入密码"
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div className="login-input-wrap">
+            <LockKeyhole aria-hidden="true" />
+            <input
+              type="password"
+              value={password}
+              placeholder="请输入密码"
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
         </div>
 
-        {error && <div className="error-banner">{error}</div>}
+        {error && <div className="error-banner" role="alert">{error}</div>}
 
         <button className="button login-button" type="submit" disabled={loading}>
+          <LogIn aria-hidden="true" />
           {loading ? '登录中...' : '登录'}
         </button>
-        <p className="login-hint">请输入演示账号密码</p>
+        <p className="login-hint"><ShieldCheck aria-hidden="true" />受控医疗业务系统</p>
       </form>
     </div>
   )
