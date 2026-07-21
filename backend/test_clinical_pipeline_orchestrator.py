@@ -108,24 +108,6 @@ class FakeReportLlm:
         values = list(messages)
         self.calls.append((values, attempt))
         unavailable = '"status":"unavailable"' in values[1]["content"]
-        citations = [] if unavailable else ["SRC-001"]
-        generator_input = json.loads(
-            values[1]["content"].split("【输入】\n", 1)[1].split(
-                "\n【唯一允许的输出形状】", 1
-            )[0]
-        )
-        report_findings = []
-        for finding in generator_input["findings"]["findings"]:
-            statement = str(finding["description"])
-            if finding["modality"] == "clinical_scale" and "模型预测" not in statement:
-                statement = f"模型预测结果：{statement}"
-            report_findings.append(
-                {
-                    "finding_id": finding["finding_id"],
-                    "statement": statement,
-                    "citations": citations,
-                }
-            )
         evidence_summary = (
             "检索证据不可用，本次仅使用结构化观察和固定核心知识。"
             if unavailable
@@ -134,11 +116,9 @@ class FakeReportLlm:
         return json.dumps(
             {
                 "summary": "量表结果来自模型预测，当前仅作结构化观察描述。",
-                "findings": report_findings,
                 "evidence_summary": evidence_summary,
                 "limitations": ["模型预测结果仍需结合临床实测复核。"],
                 "recommendations": ["建议由康复专业人员进行人工复核。"],
-                "citations": citations,
             },
             ensure_ascii=False,
         )
@@ -336,7 +316,11 @@ class ClinicalPipelineOrchestratorTests(unittest.TestCase):
         self.assertEqual(result.status, PipelineRunStatus.COMPLETED)
         self.assertEqual(result.retrieval.status, RetrievalStatus.UNAVAILABLE)
         self.assertIn("检索证据不可用", result.report.evidence_summary)
-        self.assertEqual(result.report.citations, [])
+        self.assertEqual(
+            result.report.citations,
+            ["SRC-CORE-1", "SRC-CORE-2", "SRC-CORE-3", "SRC-CORE-4"],
+        )
+        self.assertNotIn("SRC-001", result.report.citations)
         self.assertEqual(result.validation.status, ValidationStatus.WARNING)
         self.assertEqual(len(planner_llm.calls), 1)
         self.assertEqual(len(report_llm.calls), 1)

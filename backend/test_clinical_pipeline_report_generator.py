@@ -177,10 +177,6 @@ def _report_input(
 
 
 def _valid_payload(status: RetrievalStatus) -> dict:
-    citations = ["SRC-001"] if status in {
-        RetrievalStatus.COMPLETE,
-        RetrievalStatus.PARTIAL,
-    } else []
     evidence_summary = {
         RetrievalStatus.COMPLETE: "现有检索证据覆盖本次知识主题。",
         RetrievalStatus.PARTIAL: "证据覆盖不完整，第二个主题没有合格证据。",
@@ -189,17 +185,9 @@ def _valid_payload(status: RetrievalStatus) -> dict:
     }[status]
     return {
         "summary": "量表结果来自模型预测，当前仅作结构化观察描述。",
-        "findings": [
-            {
-                "finding_id": "prediction:FMA_UE",
-                "statement": "模型预测的FMA手部子量表结果为8分。",
-                "citations": citations,
-            }
-        ],
         "evidence_summary": evidence_summary,
         "limitations": ["模型预测结果仍需结合标准化临床实测复核。"],
         "recommendations": ["建议由康复专业人员结合临床实测进行人工复核。"],
-        "citations": citations,
     }
 
 
@@ -223,7 +211,7 @@ class ReportGeneratorTests(unittest.TestCase):
             model,
             messages,
             sample=False,
-            max_new_tokens=3072,
+            max_new_tokens=1024,
         )
 
     def test_complete_generates_report_with_one_llm_call(self) -> None:
@@ -237,7 +225,11 @@ class ReportGeneratorTests(unittest.TestCase):
 
         self.assertIsInstance(result, ReportResult)
         self.assertEqual(result.report_model_id, MODEL_ID)
-        self.assertEqual(result.citations, ["SRC-001"])
+        self.assertEqual(result.citations, ["SRC-CORE-001", "SRC-001"])
+        self.assertEqual(
+            result.findings[0].citations,
+            ["SRC-CORE-001", "SRC-001"],
+        )
         self.assertIn("模型预测", result.summary)
         self.assertEqual(len(llm.calls), 1)
 
@@ -251,7 +243,7 @@ class ReportGeneratorTests(unittest.TestCase):
         )
 
         self.assertIn("证据覆盖不完整", result.evidence_summary)
-        self.assertEqual(result.citations, ["SRC-001"])
+        self.assertEqual(result.citations, ["SRC-CORE-001", "SRC-001"])
 
     def test_insufficient_states_evidence_is_insufficient(self) -> None:
         llm = FakeReportLlmClient(
@@ -268,9 +260,9 @@ class ReportGeneratorTests(unittest.TestCase):
         )
 
         self.assertIn("证据不足", result.evidence_summary)
-        self.assertEqual(result.citations, [])
+        self.assertEqual(result.citations, ["SRC-CORE-001"])
 
-    def test_unavailable_does_not_fabricate_citations(self) -> None:
+    def test_unavailable_uses_core_sources_without_fabricating_rag_sources(self) -> None:
         llm = FakeReportLlmClient(
             [json.dumps(_valid_payload(RetrievalStatus.UNAVAILABLE), ensure_ascii=False)]
         )
@@ -280,13 +272,12 @@ class ReportGeneratorTests(unittest.TestCase):
         )
 
         self.assertIn("检索证据不可用", result.evidence_summary)
-        self.assertEqual(result.citations, [])
-        self.assertEqual(result.findings[0].citations, [])
+        self.assertEqual(result.citations, ["SRC-CORE-001"])
+        self.assertEqual(result.findings[0].citations, ["SRC-CORE-001"])
+        self.assertNotIn("SRC-001", result.citations)
 
     def test_core_knowledge_source_is_allowed_when_retrieval_unavailable(self) -> None:
         payload = _valid_payload(RetrievalStatus.UNAVAILABLE)
-        payload["citations"] = ["SRC-CORE-001"]
-        payload["findings"][0]["citations"] = ["SRC-CORE-001"]
         llm = FakeReportLlmClient(
             [json.dumps(payload, ensure_ascii=False)]
         )
@@ -297,26 +288,28 @@ class ReportGeneratorTests(unittest.TestCase):
 
         self.assertEqual(result.citations, ["SRC-CORE-001"])
 
-    def test_omitting_an_input_finding_is_retried_then_rejected(self) -> None:
+    def test_all_findings_are_assembled_without_llm_copying_rows(self) -> None:
         payload = _valid_payload(RetrievalStatus.COMPLETE)
-        encoded = json.dumps(payload, ensure_ascii=False)
-        llm = FakeReportLlmClient([encoded, encoded])
+        llm = FakeReportLlmClient([json.dumps(payload, ensure_ascii=False)])
 
-        with self.assertRaisesRegex(ReportGenerationError, "连续两次"):
-            ReportGenerator(llm).generate(
-                _report_input(
-                    RetrievalStatus.COMPLETE,
-                    findings=[_finding(), _biomarker_finding()],
-                )
+        result = ReportGenerator(llm).generate(
+            _report_input(
+                RetrievalStatus.COMPLETE,
+                findings=[_finding(), _biomarker_finding()],
             )
+        )
 
-        self.assertEqual(len(llm.calls), 2)
-        self.assertIn("每一个finding_id", llm.calls[0][0][0]["content"])
+        self.assertEqual(len(result.findings), 2)
+        self.assertEqual(
+            [finding.finding_id for finding in result.findings],
+            ["prediction:FMA_UE", "biomarker:movement_smoothness_sparc"],
+        )
+        self.assertIn("-1.4", result.findings[1].statement)
+        self.assertIn("确定性代码", llm.calls[0][0][0]["content"])
 
-    def test_unknown_source_id_is_rejected_without_fallback(self) -> None:
+    def test_llm_cannot_inject_unknown_source_id(self) -> None:
         invalid = _valid_payload(RetrievalStatus.COMPLETE)
         invalid["citations"] = ["SRC-NOT-RETRIEVED"]
-        invalid["findings"][0]["citations"] = ["SRC-NOT-RETRIEVED"]
         llm = FakeReportLlmClient(
             [
                 json.dumps(invalid, ensure_ascii=False),
@@ -332,7 +325,7 @@ class ReportGeneratorTests(unittest.TestCase):
     def test_diagnosis_mechanism_drug_and_exact_dose_are_rejected(self) -> None:
         cases = (
             ("summary", "诊断为脑卒中。"),
-            ("statement", "病理机制为皮质损伤。"),
+            ("summary", "病理机制为皮质损伤。"),
             ("recommendation", "建议服用某种药物。"),
             ("recommendation", "建议每天训练3次。"),
         )
@@ -341,8 +334,6 @@ class ReportGeneratorTests(unittest.TestCase):
                 invalid = deepcopy(_valid_payload(RetrievalStatus.COMPLETE))
                 if field == "summary":
                     invalid["summary"] = text
-                elif field == "statement":
-                    invalid["findings"][0]["statement"] = text
                 else:
                     invalid["recommendations"] = [text]
                 encoded = json.dumps(invalid, ensure_ascii=False)

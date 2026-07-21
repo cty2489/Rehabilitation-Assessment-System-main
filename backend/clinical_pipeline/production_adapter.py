@@ -387,7 +387,7 @@ def render_compatible_markdown(
         "",
         "## 三、检索证据说明",
         "",
-        f"{_one_line(report.evidence_summary)}{markers(report.citations)}",
+        _one_line(report.evidence_summary),
         "",
         "## 四、康复建议",
         "",
