@@ -5,6 +5,7 @@ from .core_knowledge import CoreKnowledgeProvider
 from .contracts import PipelineMode, PipelineRunTrace
 from .interpreter import Interpreter
 from .knowledge_planner import KnowledgePlanner
+from .orchestrator import ClinicalPipelineOrchestrator
 from .report_generator import ReportGenerator, ReportResult
 from .report_input import ReportInputAssembler
 from .retriever import Retriever
@@ -14,6 +15,7 @@ from .validator import ValidationResult, Validator
 __all__ = [
     "PipelineConfig",
     "CoreKnowledgeProvider",
+    "ClinicalPipelineOrchestrator",
     "PipelineMode",
     "PipelineRunTrace",
     "Interpreter",
