@@ -230,6 +230,8 @@ class ReportGeneratorTests(unittest.TestCase):
             result.findings[0].citations,
             ["SRC-CORE-001", "SRC-001"],
         )
+        self.assertIn("仅描述模型预测分数及量表范围", result.findings[0].statement)
+        self.assertIn("解释边界：不得作为确定性诊断", result.findings[0].statement)
         self.assertIn("模型预测", result.summary)
         self.assertEqual(len(llm.calls), 1)
 

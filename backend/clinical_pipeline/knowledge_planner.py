@@ -183,6 +183,9 @@ def _planner_messages(
         "不得输出诊断、病理机制结论、康复建议、训练方案、训练剂量或needs_retrieval。"
         "不得回答查询本身，也不得把患者观察写成确定性临床结论。"
         "topic.finding_ids只能使用输入中已有的finding_id，query.topic_id只能引用本次topics。"
+        "当输入包含临床量表finding时，除指标解释证据外，还要规划独立的康复干预适用条件查询。"
+        "至少分别检索：任务特异/重复/渐进训练与CIMT适用条件；FES适用条件；"
+        "镜像反馈与痉挛管理适用条件。这些查询只用于获取证据，不代表直接推荐治疗。"
         "只返回一个合法JSON对象，不要Markdown、代码块或额外文字。"
     )
     if retry:

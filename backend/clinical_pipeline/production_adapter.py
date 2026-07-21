@@ -328,6 +328,10 @@ def render_compatible_markdown(
         finding.finding_id: finding.name
         for finding in (result.interpretation.findings if result.interpretation else [])
     }
+    finding_modalities = {
+        finding.finding_id: finding.modality.value
+        for finding in (result.interpretation.findings if result.interpretation else [])
+    }
     source_details: Dict[str, Dict[str, str]] = {}
     if result.core_knowledge is not None:
         for entry in result.core_knowledge.entries:
@@ -350,6 +354,23 @@ def render_compatible_markdown(
                     },
                 )
 
+    try:
+        snapshot = knowledge_admin.load_snapshot()
+    except Exception:  # noqa: BLE001 - references retain contract fallback details
+        snapshot = None
+    if snapshot is not None:
+        for source in snapshot.sources:
+            source_id = str(source.get("source_id") or "").strip()
+            if source_id not in source_ids:
+                continue
+            detail = source_details.setdefault(source_id, {})
+            detail["source_title"] = str(source.get("title") or "").strip()
+            detail["year"] = str(source.get("year") or "").strip()
+            detail["evidence_tier"] = str(
+                source.get("evidence_tier") or ""
+            ).strip()
+            detail["url"] = str(source.get("url") or "").strip()
+
     lines = ["# 智能康复评估报告", ""]
 
     age = _field(patient, "age")
@@ -366,54 +387,95 @@ def render_compatible_markdown(
         "## 二、综合评估结果",
         "",
         f"**临床解读：** {_one_line(report.summary)}",
-        "",
-        "| 观察项 | 结果描述 | 依据来源 |",
-        "|---|---|---|",
     ])
-    for finding in report.findings:
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _table_cell(finding_names.get(finding.finding_id) or finding.finding_id),
-                    _table_cell(finding.statement),
-                    markers(finding.citations) or "—",
-                ]
+    modality_groups = [
+        ("clinical_scale", "临床任务模型预测"),
+        ("emg", "肌电指标"),
+        ("eeg", "脑电指标"),
+        ("multimodal", "脑肌多模态指标"),
+        ("imu", "运动学指标"),
+    ]
+    rendered_ids: set[str] = set()
+    for modality, label in modality_groups:
+        group = [
+            finding
+            for finding in report.findings
+            if finding_modalities.get(finding.finding_id) == modality
+        ]
+        if not group:
+            continue
+        lines.extend([
+            "",
+            f"### {label}",
+            "",
+            "| 指标 | 本次结果与知识解读 | 依据 |",
+            "|---|---|---|",
+        ])
+        for finding in group:
+            rendered_ids.add(finding.finding_id)
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _table_cell(
+                            finding_names.get(finding.finding_id)
+                            or finding.finding_id
+                        ),
+                        _table_cell(finding.statement),
+                        markers(finding.citations) or "—",
+                    ]
+                )
+                + " |"
             )
-            + " |"
-        )
+    for finding in report.findings:
+        if finding.finding_id in rendered_ids:
+            continue
+        lines.extend([
+            "",
+            "| 指标 | 本次结果与知识解读 | 依据 |",
+            "|---|---|---|",
+            "| "
+            + " | ".join([
+                _table_cell(finding_names.get(finding.finding_id) or finding.finding_id),
+                _table_cell(finding.statement),
+                markers(finding.citations) or "—",
+            ])
+            + " |",
+        ])
 
-    lines.extend([
-        "",
-        "## 三、检索证据说明",
-        "",
-        _one_line(report.evidence_summary),
-        "",
-        "## 四、康复建议",
-        "",
-    ])
+    lines.extend(["", "## 三、康复策略建议", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
         for index, value in enumerate(report.recommendations, start=1)
     )
-    lines.extend(["", "## 五、报告说明", ""])
+    lines.extend(["", "## 四、进一步个体化所需信息", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
         for index, value in enumerate(report.limitations, start=1)
     )
 
-    lines.extend(["", "## 六、依据来源与参考文献", ""])
+    lines.extend(["", "## 五、依据来源与参考文献", ""])
     if not source_ids:
         lines.append("本次报告未引用外部检索来源。")
     else:
         for source_id in source_ids:
             detail = source_details.get(source_id, {})
-            parts = [source_id]
-            if detail.get("title"):
-                parts.append(detail["title"])
-            if detail.get("knowledge_id"):
-                parts.append(detail["knowledge_id"])
-            lines.append(f"【{citation_numbers[source_id]}】" + "；".join(parts))
+            title = detail.get("source_title") or detail.get("title") or source_id
+            metadata = [value for value in [
+                detail.get("year"),
+                (
+                    f"证据等级 {detail['evidence_tier']}"
+                    if detail.get("evidence_tier")
+                    else ""
+                ),
+            ] if value]
+            suffix = f"（{'，'.join(metadata)}）" if metadata else ""
+            url = detail.get("url") or ""
+            link = f" [原文链接]({url})" if url else ""
+            lines.append(
+                f"【{citation_numbers[source_id]}】{title}{suffix}{link}"
+                f" · {source_id}"
+            )
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

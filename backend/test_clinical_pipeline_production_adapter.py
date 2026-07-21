@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from clinical_pipeline.contracts import (
     CanonicalPredictions,
@@ -324,7 +326,36 @@ class ProductionAdapterTests(unittest.TestCase):
             quality={"status": "pass"},
         )
 
-        self.assertIn("【1】SRC-CORE-001；FMA_UE；CORE-FMA-HAND", markdown)
+        self.assertIn("【1】FMA_UE · SRC-CORE-001", markdown)
+
+    def test_reference_list_uses_bibliographic_source_details(self) -> None:
+        result = _completed_result(validation_status=ValidationStatus.PASSED)
+        snapshot = SimpleNamespace(
+            sources=(
+                {
+                    "source_id": "SRC-001",
+                    "title": "FMA protocol",
+                    "year": 2015,
+                    "evidence_tier": "A",
+                    "url": "https://example.test/fma",
+                },
+            )
+        )
+
+        with patch(
+            "clinical_pipeline.production_adapter.knowledge_admin.load_snapshot",
+            return_value=snapshot,
+        ):
+            markdown = render_compatible_markdown(
+                patient=_patient(),
+                result=result,
+                assessment_validation_status="research_assessment",
+                quality={"status": "pass"},
+            )
+
+        self.assertIn("【1】FMA protocol（2015，证据等级 A）", markdown)
+        self.assertIn("[原文链接](https://example.test/fma)", markdown)
+        self.assertNotIn("检索证据说明", markdown)
 
     def test_manual_review_stays_in_audit_metadata_not_visible_report(self) -> None:
         result = _completed_result(validation_status=ValidationStatus.MANUAL_REVIEW)
@@ -340,7 +371,7 @@ class ProductionAdapterTests(unittest.TestCase):
         self.assertNotIn("Validator：", markdown)
         self.assertNotIn("设备端工程验证提示", markdown)
         self.assertNotIn("信号质量复核", markdown)
-        self.assertIn("【1】SRC-001；FMA解释边界；KB-001", markdown)
+        self.assertIn("【1】FMA解释边界 · SRC-001", markdown)
         self.assertEqual(
             orchestration_metadata(result)["validation_status"], "manual_review"
         )

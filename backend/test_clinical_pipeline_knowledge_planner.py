@@ -145,6 +145,8 @@ class KnowledgePlannerTests(unittest.TestCase):
         self.assertEqual(len(llm.calls), 1)
         self.assertEqual(llm.calls[0][1], 1)
         self.assertIn("core_knowledge", llm.calls[0][0][1]["content"])
+        self.assertIn("任务特异", llm.calls[0][0][0]["content"])
+        self.assertIn("FES", llm.calls[0][0][0]["content"])
 
     def test_needs_retrieval_is_forbidden_and_triggers_retry(self) -> None:
         forbidden = {**_valid_payload(), "needs_retrieval": True}
