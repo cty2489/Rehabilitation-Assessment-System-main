@@ -101,12 +101,19 @@ def _narrative_text(report: ReportResult) -> str:
 
 
 def _allowed_source_ids(report_input: ReportGenerationInput) -> set[str]:
-    return {
+    core_sources = {
+        source_id.strip()
+        for entry in report_input.core_knowledge.entries
+        for source_id in entry.source_ids
+        if source_id.strip()
+    }
+    retrieval_sources = {
         source_id.strip()
         for evidence in report_input.retrieval.evidence
         for source_id in evidence.source_ids
         if source_id.strip()
     }
+    return core_sources | retrieval_sources
 
 
 def _cited_source_ids(report: ReportResult) -> set[str]:
@@ -169,7 +176,7 @@ class Validator:
                 ValidationIssue(
                     code="forged_source_id",
                     level="manual_review",
-                    message="报告引用了本次Retriever未返回的source_id。",
+                    message="报告引用了本次固定核心知识和Retriever均未提供的source_id。",
                     details={"source_ids": unknown},
                 )
             )

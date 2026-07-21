@@ -26,7 +26,7 @@ from .orchestrator import (
     PipelineRunStatus,
 )
 from .report_generator import ExistingReportLlmClient, ReportGenerator, ReportResult
-from .validator import ValidationResult, ValidationStatus
+from .validator import ValidationResult
 
 
 class ProductionAdapterError(ValueError):
@@ -313,7 +313,7 @@ def render_compatible_markdown(
     quality: Mapping[str, Any],
 ) -> str:
     """Render ``ReportResult`` for the existing Markdown/SSE frontend surface."""
-    report, validation = require_completed_report(result)
+    report, _validation = require_completed_report(result)
     source_ids = _ordered_citations(report)
     citation_numbers = {value: index for index, value in enumerate(source_ids, start=1)}
 
@@ -329,6 +329,16 @@ def render_compatible_markdown(
         for finding in (result.interpretation.findings if result.interpretation else [])
     }
     source_details: Dict[str, Dict[str, str]] = {}
+    if result.core_knowledge is not None:
+        for entry in result.core_knowledge.entries:
+            for source_id in entry.source_ids:
+                source_details.setdefault(
+                    source_id,
+                    {
+                        "knowledge_id": entry.knowledge_id,
+                        "title": entry.system_key,
+                    },
+                )
     if result.retrieval is not None:
         for evidence in result.retrieval.evidence:
             for source_id in evidence.source_ids:
@@ -341,26 +351,6 @@ def render_compatible_markdown(
                 )
 
     lines = ["# 智能康复评估报告", ""]
-    if validation.status == ValidationStatus.WARNING:
-        lines.extend([
-            "> **报告校验提示：** 本报告存在证据覆盖或数据质量限制，允许展示，解读时需结合专业复核。",
-            "",
-        ])
-    elif validation.status == ValidationStatus.MANUAL_REVIEW:
-        lines.extend([
-            "> **人工复核要求：** 本报告触发人工复核，在康复专业人员确认前不得直接作为诊疗或训练处方依据。",
-            "",
-        ])
-    if assessment_validation_status == "engineering_validation_only":
-        lines.extend([
-            "> **设备端工程验证提示：** 当前结果用于接口联调和同条件复测观察，尚不能替代临床量表实测。",
-            "",
-        ])
-    if quality.get("status") == "needs_review":
-        lines.extend([
-            "> **信号质量复核：** 本次采集存在需要复核的信号质量问题，请先检查原始数据和设备佩戴情况。",
-            "",
-        ])
 
     age = _field(patient, "age")
     disease_days = _field(patient, "disease_days")
@@ -373,7 +363,7 @@ def render_compatible_markdown(
         f"- 病程：{_table_cell(disease_days) if disease_days is not None else '—'}天",
         f"- 诊断信息：{_table_cell(_field(patient, 'diagnosis'))}，{_table_cell(_field(patient, 'paralysis_side'))}侧",
         "",
-        "## 二、本次结构化评估结果",
+        "## 二、综合评估结果",
         "",
         f"**临床解读：** {_one_line(report.summary)}",
         "",
@@ -406,23 +396,13 @@ def render_compatible_markdown(
         f"{index}. {_one_line(value)}"
         for index, value in enumerate(report.recommendations, start=1)
     )
-    lines.extend(["", "## 五、预警与局限", ""])
+    lines.extend(["", "## 五、报告说明", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
         for index, value in enumerate(report.limitations, start=1)
     )
 
-    lines.extend(["", "## 六、报告校验状态", ""])
-    status_text = {
-        ValidationStatus.PASSED: "通过",
-        ValidationStatus.WARNING: "警告",
-        ValidationStatus.MANUAL_REVIEW: "需要人工复核",
-    }[validation.status]
-    lines.append(f"- Validator：{status_text}")
-    for issue in validation.issues:
-        lines.append(f"- {_one_line(issue.message)}")
-
-    lines.extend(["", "## 七、依据来源与参考文献", ""])
+    lines.extend(["", "## 六、依据来源与参考文献", ""])
     if not source_ids:
         lines.append("本次报告未引用外部检索来源。")
     else:

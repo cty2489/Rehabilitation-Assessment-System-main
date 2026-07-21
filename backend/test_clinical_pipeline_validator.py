@@ -192,6 +192,27 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(result.status, ValidationStatus.WARNING)
         self.assertEqual(result.issues[0].details["retrieval_status"], "unavailable")
 
+    def test_core_knowledge_citation_is_valid_without_retrieval_evidence(self) -> None:
+        report = _replace_report(
+            _report(RetrievalStatus.UNAVAILABLE),
+            citations=["SRC-CORE-001"],
+            findings=[
+                {
+                    "finding_id": "prediction:FMA_UE",
+                    "statement": "模型预测的FMA手部子量表结果为8分。",
+                    "citations": ["SRC-CORE-001"],
+                }
+            ],
+        )
+
+        result = Validator().validate(
+            report,
+            _report_input(RetrievalStatus.UNAVAILABLE),
+        )
+
+        self.assertEqual(result.status, ValidationStatus.WARNING)
+        self.assertNotIn("forged_source_id", [issue.code for issue in result.issues])
+
     def test_missing_evidence_limit_disclosure_is_manual_review(self) -> None:
         report = _replace_report(
             _report(RetrievalStatus.PARTIAL),

@@ -74,6 +74,24 @@ def _finding() -> Finding:
     )
 
 
+def _biomarker_finding() -> Finding:
+    return Finding(
+        finding_id="biomarker:movement_smoothness_sparc",
+        metric_key="movement_smoothness_sparc",
+        name="运动平滑度SPARC",
+        value=-1.4,
+        unit="",
+        status=FindingStatus.NOT_CLASSIFIABLE,
+        modality=FindingModality.IMU,
+        description="本次设备测量值为-1.4，仅用于同条件观察。",
+        basis=FindingBasis(
+            kind=FindingBasisKind.NO_RELIABLE_REFERENCE,
+            description="该指标没有可靠通用参考范围。",
+        ),
+        source_field="biomarkers.movement_smoothness_sparc",
+    )
+
+
 def _plan(topic_count: int = 1) -> KnowledgePlan:
     return KnowledgePlan(
         planner_model_id="planner-test-model",
@@ -110,7 +128,11 @@ def _evidence() -> RetrievalEvidence:
     )
 
 
-def _report_input(status: RetrievalStatus) -> ReportGenerationInput:
+def _report_input(
+    status: RetrievalStatus,
+    *,
+    findings: list[Finding] | None = None,
+) -> ReportGenerationInput:
     topic_count = 2 if status == RetrievalStatus.PARTIAL else 1
     plan = _plan(topic_count)
     evidence = [_evidence()] if status in {
@@ -134,7 +156,7 @@ def _report_input(status: RetrievalStatus) -> ReportGenerationInput:
     return ReportGenerationInput(
         run_id=f"run-{status.value}",
         quality_decision=QualityDecision.PASS,
-        findings=InterpretationResult(findings=[_finding()]),
+        findings=InterpretationResult(findings=findings or [_finding()]),
         core_knowledge=CoreKnowledgeBundle(
             bundle_id="core-1",
             version="core-v1",
@@ -260,6 +282,36 @@ class ReportGeneratorTests(unittest.TestCase):
         self.assertIn("检索证据不可用", result.evidence_summary)
         self.assertEqual(result.citations, [])
         self.assertEqual(result.findings[0].citations, [])
+
+    def test_core_knowledge_source_is_allowed_when_retrieval_unavailable(self) -> None:
+        payload = _valid_payload(RetrievalStatus.UNAVAILABLE)
+        payload["citations"] = ["SRC-CORE-001"]
+        payload["findings"][0]["citations"] = ["SRC-CORE-001"]
+        llm = FakeReportLlmClient(
+            [json.dumps(payload, ensure_ascii=False)]
+        )
+
+        result = ReportGenerator(llm).generate(
+            _report_input(RetrievalStatus.UNAVAILABLE)
+        )
+
+        self.assertEqual(result.citations, ["SRC-CORE-001"])
+
+    def test_omitting_an_input_finding_is_retried_then_rejected(self) -> None:
+        payload = _valid_payload(RetrievalStatus.COMPLETE)
+        encoded = json.dumps(payload, ensure_ascii=False)
+        llm = FakeReportLlmClient([encoded, encoded])
+
+        with self.assertRaisesRegex(ReportGenerationError, "连续两次"):
+            ReportGenerator(llm).generate(
+                _report_input(
+                    RetrievalStatus.COMPLETE,
+                    findings=[_finding(), _biomarker_finding()],
+                )
+            )
+
+        self.assertEqual(len(llm.calls), 2)
+        self.assertIn("每一个finding_id", llm.calls[0][0][0]["content"])
 
     def test_unknown_source_id_is_rejected_without_fallback(self) -> None:
         invalid = _valid_payload(RetrievalStatus.COMPLETE)

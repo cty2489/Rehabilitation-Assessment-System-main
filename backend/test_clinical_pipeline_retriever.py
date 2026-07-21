@@ -16,17 +16,22 @@ from clinical_pipeline.contracts import (
 from clinical_pipeline.retriever import Retriever
 
 
-def _settings() -> rag_client.RagClientSettings:
+def _settings(
+    *,
+    mode: str = "off",
+    shadow_include_demo: bool = False,
+    allow_demo_in_prompt: bool = False,
+) -> rag_client.RagClientSettings:
     return rag_client.RagClientSettings(
-        mode="off",
+        mode=mode,
         service_url="http://127.0.0.1:8010",
         timeout_seconds=2.0,
         top_k_per_query=2,
         max_sources=6,
         max_context_chars=8000,
         assist_approved=False,
-        shadow_include_demo=False,
-        allow_demo_in_prompt=False,
+        shadow_include_demo=shadow_include_demo,
+        allow_demo_in_prompt=allow_demo_in_prompt,
         trace_enabled=False,
         trace_path=Path("/unused/retriever-trace.jsonl"),
     )
@@ -132,6 +137,17 @@ class RetrieverTests(unittest.TestCase):
                 {"key": "q2", "text": "测试检索查询2"},
             ],
         )
+
+    def test_assist_mode_includes_development_evidence_when_enabled(self) -> None:
+        transport = Mock(return_value=_response([_hit(1)]))
+
+        Retriever(
+            settings=_settings(mode="assist", allow_demo_in_prompt=True),
+            transport=transport,
+        ).retrieve(_plan(), attempt_id="attempt-development-evidence")
+
+        _, payload, _ = transport.call_args.args
+        self.assertTrue(payload["include_demo"])
 
     def test_partial_topic_coverage_returns_partial(self) -> None:
         transport = Mock(return_value=_response([_hit(1)], []))

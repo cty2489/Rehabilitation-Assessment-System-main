@@ -6,6 +6,8 @@ from pathlib import Path
 
 from clinical_pipeline.contracts import (
     CanonicalPredictions,
+    CoreKnowledgeBundle,
+    CoreKnowledgeEntry,
     Finding,
     FindingBasis,
     FindingBasisKind,
@@ -111,6 +113,7 @@ def _completed_result(
     *,
     retrieval_status: RetrievalStatus = RetrievalStatus.COMPLETE,
     validation_status: ValidationStatus = ValidationStatus.PASSED,
+    core_only_citation: bool = False,
 ) -> OrchestrationResult:
     query = RetrievalQuery(
         query_id="query-1",
@@ -133,6 +136,8 @@ def _completed_result(
             )
         ]
         citations = ["SRC-001"]
+    elif core_only_citation:
+        citations = ["SRC-CORE-001"]
     retrieval = RetrievalResult(
         attempt_id="retrieval-attempt-1",
         status=retrieval_status,
@@ -194,6 +199,18 @@ def _completed_result(
         trace=PipelineRunTrace(run_id="pipeline-production"),
         quality_gate=QualityGateResult(decision=QualityDecision.PASS),
         interpretation=_interpretation(),
+        core_knowledge=CoreKnowledgeBundle(
+            bundle_id="core-production",
+            version="core-v1",
+            entries=[
+                CoreKnowledgeEntry(
+                    knowledge_id="CORE-FMA-HAND",
+                    system_key="FMA_UE",
+                    allowed_interpretation="仅描述模型预测分数及量表范围。",
+                    source_ids=["SRC-CORE-001"],
+                )
+            ],
+        ),
         retrieval=retrieval,
         report=report,
         validation=validation,
@@ -271,7 +288,7 @@ class ProductionAdapterTests(unittest.TestCase):
         self.assertEqual(orchestrator._knowledge_planner._model_id, "same-model")
         self.assertEqual(orchestrator._report_generator._model_id, "same-model")
 
-    def test_unavailable_retrieval_renders_a_limited_warning_report(self) -> None:
+    def test_unavailable_retrieval_keeps_visible_report_clean(self) -> None:
         result = _completed_result(
             retrieval_status=RetrievalStatus.UNAVAILABLE,
             validation_status=ValidationStatus.WARNING,
@@ -284,14 +301,32 @@ class ProductionAdapterTests(unittest.TestCase):
             quality={"status": "pass"},
         )
 
-        self.assertIn("报告校验提示", markdown)
+        self.assertNotIn("报告校验提示", markdown)
+        self.assertNotIn("报告校验状态", markdown)
+        self.assertNotIn("Validator：", markdown)
         self.assertIn("检索证据不可用", markdown)
         self.assertIn("本次报告未引用外部检索来源", markdown)
         self.assertEqual(
             orchestration_metadata(result)["retrieval_status"], "unavailable"
         )
 
-    def test_manual_review_is_explicit_in_markdown_and_metadata(self) -> None:
+    def test_core_knowledge_citation_has_reference_details(self) -> None:
+        result = _completed_result(
+            retrieval_status=RetrievalStatus.UNAVAILABLE,
+            validation_status=ValidationStatus.WARNING,
+            core_only_citation=True,
+        )
+
+        markdown = render_compatible_markdown(
+            patient=_patient(),
+            result=result,
+            assessment_validation_status="research_assessment",
+            quality={"status": "pass"},
+        )
+
+        self.assertIn("【1】SRC-CORE-001；FMA_UE；CORE-FMA-HAND", markdown)
+
+    def test_manual_review_stays_in_audit_metadata_not_visible_report(self) -> None:
         result = _completed_result(validation_status=ValidationStatus.MANUAL_REVIEW)
 
         markdown = render_compatible_markdown(
@@ -301,10 +336,10 @@ class ProductionAdapterTests(unittest.TestCase):
             quality={"status": "needs_review"},
         )
 
-        self.assertIn("人工复核要求", markdown)
-        self.assertIn("Validator：需要人工复核", markdown)
-        self.assertIn("设备端工程验证提示", markdown)
-        self.assertIn("信号质量复核", markdown)
+        self.assertNotIn("人工复核要求", markdown)
+        self.assertNotIn("Validator：", markdown)
+        self.assertNotIn("设备端工程验证提示", markdown)
+        self.assertNotIn("信号质量复核", markdown)
         self.assertIn("【1】SRC-001；FMA解释边界；KB-001", markdown)
         self.assertEqual(
             orchestration_metadata(result)["validation_status"], "manual_review"

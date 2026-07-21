@@ -102,13 +102,20 @@ class Retriever:
             f"q{index}": query
             for index, query in enumerate(plan.queries, start=1)
         }
+        include_demo = (
+            self._settings.mode == "assist"
+            and self._settings.allow_demo_in_prompt
+        ) or (
+            self._settings.mode == "shadow"
+            and self._settings.shadow_include_demo
+        )
         payload = {
             "queries": [
                 {"key": wire_key, "text": query.text}
                 for wire_key, query in wire_to_query.items()
             ],
             "top_k": self._settings.top_k_per_query,
-            "include_demo": False,
+            "include_demo": include_demo,
         }
 
         try:
