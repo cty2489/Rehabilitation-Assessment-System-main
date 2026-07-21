@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from pydantic import ValidationError
 
@@ -17,6 +17,7 @@ def _payload(**overrides):
         "diagnosis": "脑梗死",
         "paralysis_side": "左",
         "disease_days": 120,
+        "hand_brunnstrom_stage": "III",
     }
     payload.update(overrides)
     return payload
@@ -32,6 +33,7 @@ def _row(**overrides):
         "diagnosis": "脑梗死",
         "paralysis_side": "左",
         "disease_days": 120,
+        "hand_function": 3,
         "source": "device-enroll",
         "created_at": "2026-07-19 10:00:00",
         "updated_at": "2026-07-19 10:00:00",
@@ -92,8 +94,36 @@ class DevicePatientSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             DevicePatientRegistrationRequest(**_payload(patient_id="P001"))
 
+    def test_hand_brunnstrom_stage_accepts_only_roman_one_to_six(self):
+        parsed = DevicePatientRegistrationRequest(**_payload())
+        self.assertEqual(parsed.hand_brunnstrom_stage, "III")
+        for invalid in ("3", "VII", "iii"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                DevicePatientRegistrationRequest(
+                    **_payload(hand_brunnstrom_stage=invalid)
+                )
+
+    def test_hand_brunnstrom_stage_remains_optional_for_old_devices(self):
+        parsed = DevicePatientRegistrationRequest(
+            **_payload(hand_brunnstrom_stage=None)
+        )
+        self.assertIsNone(parsed.hand_brunnstrom_stage)
+
 
 class DevicePatientRegistrationSqlTests(unittest.TestCase):
+    def test_existing_patient_table_gets_hand_function_column(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"Field": name}
+            for name in ("id", "birth_date", "id_number", "phone", "onset_date")
+        ]
+
+        mysql_db._ensure_patient_schema(cursor)
+
+        cursor.execute.assert_any_call(
+            "ALTER TABLE patients ADD COLUMN hand_function INT"
+        )
+
     def test_first_registration_commits_one_patient(self):
         conn = _RegistrationConnection(_row(), created=True)
         with patch.object(mysql_db, "get_conn", return_value=conn) as get_conn:
@@ -102,12 +132,16 @@ class DevicePatientRegistrationSqlTests(unittest.TestCase):
         get_conn.assert_called_once_with(autocommit=False)
         self.assertTrue(created)
         self.assertEqual(patient["patient_id"], "DEV001_0001")
+        self.assertEqual(patient["hand_function"], 3)
+        self.assertEqual(patient["hand_brunnstrom_stage"], "III")
         self.assertTrue(conn.committed)
         self.assertFalse(conn.rolled_back)
         self.assertTrue(conn.closed)
         insert_sql = conn.cursor_obj.queries[0][0]
         self.assertIn("'device-enroll'", insert_sql)
         self.assertIn("ON DUPLICATE KEY UPDATE", insert_sql)
+        insert_params = conn.cursor_obj.queries[0][1]
+        self.assertEqual(insert_params[7], 3)
 
     def test_identical_retry_returns_existing_patient(self):
         conn = _RegistrationConnection(_row(), created=False)
@@ -133,7 +167,12 @@ class DevicePatientRegistrationSqlTests(unittest.TestCase):
         self.assertTrue(conn.closed)
 
     def test_registration_retry_does_not_overwrite_clinical_profile(self):
-        existing = _row(diagnosis="脑出血", paralysis_side="右", disease_days=30)
+        existing = _row(
+            diagnosis="脑出血",
+            paralysis_side="右",
+            disease_days=30,
+            hand_function=4,
+        )
         conn = _RegistrationConnection(existing, created=False)
         with patch.object(mysql_db, "get_conn", return_value=conn):
             patient, created = mysql_db.register_device_patient(_payload())
@@ -141,6 +180,8 @@ class DevicePatientRegistrationSqlTests(unittest.TestCase):
         self.assertFalse(created)
         self.assertEqual(patient["diagnosis"], "脑出血")
         self.assertEqual(patient["paralysis_side"], "右")
+        self.assertEqual(patient["hand_function"], 4)
+        self.assertEqual(patient["hand_brunnstrom_stage"], "IV")
         self.assertTrue(conn.committed)
 
 

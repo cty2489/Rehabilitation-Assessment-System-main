@@ -78,9 +78,15 @@ Idempotency-Key: DEV001:patient:DEV001_0001
   "age": 62,
   "diagnosis": "脑梗死",
   "paralysis_side": "左",
-  "disease_days": 120
+  "disease_days": 120,
+  "hand_brunnstrom_stage": "III"
 }
 ```
+
+`hand_brunnstrom_stage` 表示登记时的Brunnstrom手功能分期，只允许 `I` 到
+`VI`。云端将其转换为患者档案的初始 `hand_function`（`1` 到 `6`）；后续评估
+产生的模型预测 `hand_function` 仍保存在各自评估记录中。为兼容旧设备，该字段
+当前可省略，但新设备注册患者时应当上传。
 
 首次创建返回 HTTP 201：
 
@@ -88,6 +94,7 @@ Idempotency-Key: DEV001:patient:DEV001_0001
 {
   "schema_version": "rehab.patient.v1",
   "patient_id": "DEV001_0001",
+  "hand_brunnstrom_stage": "III",
   "created": true,
   "message": "患者注册成功",
   "created_at": "2026-07-19 10:30:00",
@@ -97,7 +104,8 @@ Idempotency-Key: DEV001:patient:DEV001_0001
 
 网络超时后使用同一 `patient_id` 重试。相同身份资料返回 HTTP 200 和
 `created=false`，不会重复创建患者；相同编号对应不同姓名、性别或年龄时返回
-HTTP 409 `PATIENT_ID_CONFLICT`，不会覆盖原档案。
+HTTP 409 `PATIENT_ID_CONFLICT`，不会覆盖原档案。注册重试也不会修改已经保存的
+初始 `hand_function`；需要修正时由医院端患者管理页面编辑。
 
 ```python
 import requests
@@ -111,6 +119,7 @@ payload = {
     "diagnosis": "脑梗死",
     "paralysis_side": "左",
     "disease_days": 120,
+    "hand_brunnstrom_stage": "III",
 }
 response = requests.post(
     f"{CLOUD_URL}/api/device/v1/patients",

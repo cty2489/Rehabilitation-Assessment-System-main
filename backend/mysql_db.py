@@ -36,13 +36,22 @@ _init_lock = threading.Lock()
 _initialized = False
 
 _PATIENT_EXTRA_COLUMNS: Dict[str, str] = {
+    "hand_function": "INT",
     "birth_date": "VARCHAR(32)",
     "id_number": "VARCHAR(32)",
     "phone": "VARCHAR(32)",
     "onset_date": "VARCHAR(32)",
 }
 
-_PATIENT_CORE = ("name", "sex", "age", "diagnosis", "disease_days", "paralysis_side")
+_PATIENT_CORE = (
+    "name",
+    "sex",
+    "age",
+    "diagnosis",
+    "disease_days",
+    "paralysis_side",
+    "hand_function",
+)
 _PATIENT_EXTENDED = ("birth_date", "id_number", "phone", "onset_date")
 _PATIENT_EDITABLE = _PATIENT_CORE + _PATIENT_EXTENDED
 
@@ -100,6 +109,28 @@ class PatientRegistrationConflict(ValueError):
     def __init__(self, fields: List[str]):
         self.fields = tuple(fields)
         super().__init__(f"患者编号对应的身份字段冲突：{', '.join(fields)}")
+
+
+_BRUNNSTROM_STAGES = ("I", "II", "III", "IV", "V", "VI")
+
+
+def _hand_function_from_stage(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return _BRUNNSTROM_STAGES.index(str(value)) + 1
+    except ValueError:
+        return None
+
+
+def _stage_from_hand_function(value: Any) -> Optional[str]:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= numeric <= len(_BRUNNSTROM_STAGES):
+        return _BRUNNSTROM_STAGES[numeric - 1]
+    return None
 
 
 def ping() -> bool:
@@ -203,6 +234,9 @@ def _norm_patient(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for key in ("name", "sex", "diagnosis", "paralysis_side"):
         if row.get(key) is None:
             row[key] = ""
+    row["hand_brunnstrom_stage"] = _stage_from_hand_function(
+        row.get("hand_function")
+    )
     return row
 
 
@@ -302,6 +336,7 @@ CREATE TABLE IF NOT EXISTS patients (
   diagnosis       VARCHAR(255),
   paralysis_side  VARCHAR(8),
   disease_days    INT,
+  hand_function   INT,
   birth_date      VARCHAR(32),
   id_number       VARCHAR(32),
   phone           VARCHAR(32),
@@ -710,6 +745,9 @@ def register_device_patient(patient: Any) -> tuple[Dict[str, Any], bool]:
         "diagnosis": _field(patient, "diagnosis"),
         "paralysis_side": _field(patient, "paralysis_side"),
         "disease_days": _field(patient, "disease_days"),
+        "hand_function": _hand_function_from_stage(
+            _field(patient, "hand_brunnstrom_stage")
+        ),
     }
     conn = get_conn(autocommit=False)
     try:
@@ -718,8 +756,8 @@ def register_device_patient(patient: Any) -> tuple[Dict[str, Any], bool]:
                 """
                 INSERT INTO patients
                   (patient_id, name, sex, age, diagnosis, paralysis_side,
-                   disease_days, source, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'device-enroll', %s, %s)
+                   disease_days, hand_function, source, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'device-enroll', %s, %s)
                 ON DUPLICATE KEY UPDATE patient_id=VALUES(patient_id)
                 """,
                 (
@@ -730,6 +768,7 @@ def register_device_patient(patient: Any) -> tuple[Dict[str, Any], bool]:
                     values["diagnosis"],
                     values["paralysis_side"],
                     values["disease_days"],
+                    values["hand_function"],
                     ts,
                     ts,
                 ),

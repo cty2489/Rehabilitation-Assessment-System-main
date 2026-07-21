@@ -99,6 +99,7 @@ class PatientUpdate(BaseModel):
     diagnosis: Optional[str] = None
     disease_days: Optional[int] = Field(None, ge=0)
     paralysis_side: Optional[Literal["左", "右"]] = None
+    hand_function: Optional[int] = Field(None, ge=1, le=6)
     birth_date: Optional[str] = None      # 出生年月日 yyyy-mm-dd
     id_number: Optional[str] = None       # 身份证号
     phone: Optional[str] = None           # 手机号
@@ -143,6 +144,7 @@ class PatientSummary(BaseModel):
     diagnosis: str
     disease_days: Optional[int] = None
     paralysis_side: str
+    hand_function: Optional[int] = None
     birth_date: Optional[str] = None
     id_number: Optional[str] = None
     phone: Optional[str] = None
@@ -224,6 +226,9 @@ class DevicePatientRegistrationRequest(BaseModel):
     diagnosis: str = Field(..., min_length=1, max_length=255)
     paralysis_side: Literal["左", "右"]
     disease_days: Optional[int] = Field(None, ge=0)
+    hand_brunnstrom_stage: Optional[
+        Literal["I", "II", "III", "IV", "V", "VI"]
+    ] = Field(None, description="登记时的Brunnstrom手功能分期，映射为初始hand_function")
 
     @field_validator("patient_id", mode="before")
     @classmethod
@@ -242,6 +247,9 @@ class DevicePatientRegistrationRequest(BaseModel):
 class DevicePatientRegistrationResponse(BaseModel):
     schema_version: Literal["rehab.patient.v1"] = "rehab.patient.v1"
     patient_id: str
+    hand_brunnstrom_stage: Optional[
+        Literal["I", "II", "III", "IV", "V", "VI"]
+    ] = None
     created: bool
     message: str
     created_at: str

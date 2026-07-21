@@ -6,6 +6,14 @@ import RecordDetail from '../components/RecordDetail'
 import { DIAGNOSIS_OPTIONS, PatientDetail, PatientSummary, PatientUpdate } from '../types'
 import { fmtDate, fmtDateTime } from '../util'
 
+const BRUNNSTROM_STAGES = ['I', 'II', 'III', 'IV', 'V', 'VI'] as const
+
+function formatInitialHandFunction(value: number | null) {
+  return value != null && value >= 1 && value <= 6
+    ? `${BRUNNSTROM_STAGES[value - 1]}期`
+    : '—'
+}
+
 export default function PatientManagementPage() {
   const { selectedPatientId, navigate } = useRoute()
 
@@ -51,6 +59,7 @@ function PatientListView({ onOpen }: { onOpen: (id: number) => void }) {
                 <th>性别</th>
                 <th>年龄</th>
                 <th>诊断</th>
+                <th>初始手功能</th>
                 <th>评估次数</th>
                 <th>最近评估</th>
               </tr>
@@ -63,6 +72,7 @@ function PatientListView({ onOpen }: { onOpen: (id: number) => void }) {
                   <td>{p.sex}</td>
                   <td>{p.age ?? '—'}</td>
                   <td>{p.diagnosis}</td>
+                  <td>{formatInitialHandFunction(p.hand_function)}</td>
                   <td>{p.assessment_count}</td>
                   <td>{fmtDateTime(p.last_assessed_at)}</td>
                 </tr>
@@ -98,6 +108,7 @@ function PatientDetailView({ id }: { id: number }) {
           diagnosis: p.diagnosis,
           disease_days: p.disease_days,
           paralysis_side: p.paralysis_side as PatientUpdate['paralysis_side'],
+          hand_function: p.hand_function,
           birth_date: p.birth_date ?? '',
           id_number: p.id_number ?? '',
           phone: p.phone ?? '',
@@ -197,6 +208,10 @@ function PatientDetailView({ id }: { id: number }) {
             <Info label="诊断" value={patient.diagnosis} />
             <Info label="病程（天）" value={patient.disease_days ?? '—'} />
             <Info label="偏瘫侧" value={`${patient.paralysis_side}侧`} />
+            <Info
+              label="初始Brunnstrom手功能分期"
+              value={formatInitialHandFunction(patient.hand_function)}
+            />
             <Info label="出生年月日" value={fmtDate(patient.birth_date)} />
             <Info label="身份证号" value={patient.id_number || '—'} />
             <Info label="手机号" value={patient.phone || '—'} />
@@ -240,6 +255,19 @@ function PatientDetailView({ id }: { id: number }) {
               <select value={form.paralysis_side} onChange={(e) => set('paralysis_side', e.target.value)}>
                 <option value="左">左</option>
                 <option value="右">右</option>
+              </select>
+            </Field>
+            <Field label="初始Brunnstrom手功能分期">
+              <select
+                value={form.hand_function ?? ''}
+                onChange={(e) =>
+                  set('hand_function', e.target.value === '' ? null : Number(e.target.value))
+                }
+              >
+                <option value="">未填写</option>
+                {BRUNNSTROM_STAGES.map((stage, index) => (
+                  <option key={stage} value={index + 1}>{stage}期</option>
+                ))}
               </select>
             </Field>
             <Field label="出生年月日">

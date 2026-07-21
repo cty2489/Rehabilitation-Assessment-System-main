@@ -316,6 +316,7 @@ export interface PatientSummary {
   diagnosis: string
   disease_days: number | null
   paralysis_side: string
+  hand_function: number | null
   birth_date: string | null
   id_number: string | null
   phone: string | null
@@ -337,6 +338,7 @@ export interface PatientUpdate {
   diagnosis?: string
   disease_days?: number | null
   paralysis_side?: ParalysisSide
+  hand_function?: number | null
   birth_date?: string | null
   id_number?: string | null
   phone?: string | null

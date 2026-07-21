@@ -1643,6 +1643,7 @@ async def device_register_patient(
     return {
         "schema_version": "rehab.patient.v1",
         "patient_id": patient["patient_id"],
+        "hand_brunnstrom_stage": patient.get("hand_brunnstrom_stage"),
         "created": created,
         "message": "患者注册成功" if created else "患者已注册",
         "created_at": patient["created_at"],
