@@ -64,7 +64,7 @@ from inference import (
     error_event,
     run_pipeline,
 )
-from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url, stream_report
+from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url
 from schemas import (
     AssessmentOverview,
     AssessmentResult,
@@ -667,6 +667,76 @@ def _device_failure_details(exc: Exception) -> tuple[str, bool]:
     return "ANALYSIS_FAILED", True
 
 
+def _load_production_adapter():
+    """Load planner_rag only when an assessment reaches report generation."""
+    from clinical_pipeline import production_adapter
+
+    return production_adapter
+
+
+def _generate_planner_rag_report(
+    state: SessionState,
+    predictions_raw: Dict[str, Any],
+    biomarkers: Optional[Dict[str, Any]],
+    quality: Dict[str, Any],
+    assessment_validation_status: str,
+):
+    """Run the only production report path and preserve the legacy SSE surface."""
+    production_adapter = _load_production_adapter()
+    state.queue.put({"type": "step_start", "step": "report", "label": "AI 报告生成"})
+    state.queue.put({
+        "type": "step_detail",
+        "step": "report",
+        "detail": "正在解释结构化结果并生成知识检索计划。",
+    })
+    request = production_adapter.adapt_production_input(
+        patient=state.patient,
+        predictions_raw=predictions_raw,
+        biomarkers=biomarkers,
+        quality=quality,
+        assessment_id=state.assessment_id,
+        patient_id=state.patient.patient_id,
+        report_model_id=state.report_model_id,
+        context_id=state.session_id,
+    )
+    orchestrator = production_adapter.build_production_orchestrator(
+        request.report_model_id
+    )
+    pipeline_result = orchestrator.run(request.assessment_input)
+    _report, validation = production_adapter.require_completed_report(pipeline_result)
+
+    if pipeline_result.retrieval is not None:
+        state.queue.put({
+            "type": "step_detail",
+            "step": "report",
+            "detail": f"知识检索已完成，状态：{pipeline_result.retrieval.status.value}。",
+        })
+    if validation.status.value == "warning":
+        state.queue.put({
+            "type": "step_detail",
+            "step": "report",
+            "detail": "报告校验结果为 warning，已在报告中披露证据或数据限制。",
+        })
+    elif validation.status.value == "manual_review":
+        state.queue.put({
+            "type": "step_detail",
+            "step": "report",
+            "detail": "报告触发人工复核，已在报告中明确标记。",
+        })
+
+    markdown = production_adapter.render_compatible_markdown(
+        patient=state.patient,
+        result=pipeline_result,
+        assessment_validation_status=assessment_validation_status,
+        quality=quality,
+    )
+    for offset in range(0, len(markdown), 80):
+        state.queue.put({"type": "report_chunk", "chunk": markdown[offset:offset + 80]})
+    state.queue.put({"type": "step_done", "step": "report"})
+    state.queue.put({"type": "report_generation", "mode": "planner_rag"})
+    return markdown, production_adapter.orchestration_metadata(pipeline_result)
+
+
 def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
     """Run the full pipeline + report generation on a worker thread."""
     try:
@@ -703,7 +773,7 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
         )
         biomarkers = predictions_raw.get("_biomarkers")
         quality = predictions_raw.get("_quality") or {}
-        validation_status = str(
+        assessment_validation_status = str(
             predictions_raw.get("_validation_status") or "research_assessment"
         )
 
@@ -718,47 +788,30 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             except Exception as exc:  # noqa: BLE001
                 print(f"[device_job][warn] failed to update report phase: {exc}")
 
-        # Every flow (康复评估 page / device / task-interface) persists to MySQL;
-        # the SQLite legacy store has been retired.
+        # Every flow (康复评估 page / device / task-interface) persists to MySQL.
         store = mysql_db
-
-        # Previous assessment (for the report's 变化趋势 column) — read BEFORE we
-        # insert this one so it reflects the prior visit, not the current.
-        try:
-            history = store.latest_assessment_for_patient(state.patient.patient_id)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[history][warn] {exc}")
-            history = None
 
         if state.cancel_event.is_set():
             raise AssessmentCancelled("评估任务已取消")
-        report_generation = "failed"
         try:
-            report_text, report_generation = stream_report(
-                state.patient,
-                predictions,
-                state.queue,
+            report_text, pipeline_metadata = _generate_planner_rag_report(
+                state,
+                predictions_raw,
                 biomarkers=biomarkers,
-                history=history,
-                report_model=report_model,
-                assessment_context={
-                    "rag_correlation_id": state.session_id,
-                    "institution": state.institution,
-                    "assessment_type": "active",
-                    "quality": quality,
-                    "validation_status": validation_status,
-                },
+                quality=quality,
+                assessment_validation_status=assessment_validation_status,
             )
             if state.cancel_event.is_set():
                 raise AssessmentCancelled("评估任务已取消")
-            app.state.report_ready = report_generation == "llm"
+            quality = dict(quality)
+            quality["clinical_pipeline"] = pipeline_metadata
+            report_generation = "planner_rag"
+            app.state.report_ready = True
         except AssessmentCancelled:
             raise
         except Exception:
-            # Report generation failed — predictions are still kept and the SSE
-            # error event was already emitted by stream_report.
-            report_text = None
             app.state.report_ready = False
+            raise
 
         result = AssessmentResult(
             session_id=state.session_id,
@@ -766,12 +819,12 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
             predictions=predictions,
             report=report_text,
             quality=quality,
-            validation_status=validation_status,
+            validation_status=assessment_validation_status,
         )
 
-        # Persist before exposing a completed result. A failed/empty report is
-        # still a valid assessment row with report_status='failed', while a DB
-        # transaction failure must fail the session instead of emitting `done`.
+        # Persist only a completed planner_rag report before exposing the result.
+        # Pipeline or transaction failures fail the session instead of emitting
+        # `done` or falling back to the legacy report path.
         try:
             if state.device_job_id:
                 mysql_db.update_device_job(
@@ -809,7 +862,7 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                     trials=state.trial_details,
                     biomarkers=biomarkers,
                     quality=quality,
-                    validation_status=validation_status,
+                    validation_status=assessment_validation_status,
                 )
                 state.assessment_db_id = int(assessment_db_id)
         except Exception as exc:  # noqa: BLE001
