@@ -6,6 +6,7 @@ from .contracts import PipelineMode, PipelineRunTrace
 from .interpreter import Interpreter
 from .knowledge_planner import KnowledgePlanner
 from .report_input import ReportInputAssembler
+from .retriever import Retriever
 from .state_machine import PlannerRagStateMachine
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "KnowledgePlanner",
     "PlannerRagStateMachine",
     "ReportInputAssembler",
+    "Retriever",
 ]
