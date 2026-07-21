@@ -4,6 +4,7 @@ from .config import PipelineConfig
 from .core_knowledge import CoreKnowledgeProvider
 from .contracts import PipelineMode, PipelineRunTrace
 from .interpreter import Interpreter
+from .knowledge_planner import KnowledgePlanner
 from .report_input import ReportInputAssembler
 from .state_machine import PlannerRagStateMachine
 
@@ -13,6 +14,7 @@ __all__ = [
     "PipelineMode",
     "PipelineRunTrace",
     "Interpreter",
+    "KnowledgePlanner",
     "PlannerRagStateMachine",
     "ReportInputAssembler",
 ]
