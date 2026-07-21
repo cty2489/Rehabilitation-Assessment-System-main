@@ -9,6 +9,7 @@ from .report_generator import ReportGenerator, ReportResult
 from .report_input import ReportInputAssembler
 from .retriever import Retriever
 from .state_machine import PlannerRagStateMachine
+from .validator import ValidationResult, Validator
 
 __all__ = [
     "PipelineConfig",
@@ -22,4 +23,6 @@ __all__ = [
     "ReportInputAssembler",
     "ReportResult",
     "Retriever",
+    "ValidationResult",
+    "Validator",
 ]
