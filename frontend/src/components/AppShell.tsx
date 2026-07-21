@@ -10,6 +10,7 @@ import SystemManagementPage from '../pages/SystemManagementPage'
 import ModelSettingsPage from '../pages/ModelSettingsPage'
 import TaskInterfacePage from '../pages/TaskInterfacePage'
 import KnowledgeGovernancePage from '../pages/KnowledgeGovernancePage'
+import GuidelineTestPage from '../pages/GuidelineTestPage'
 
 export default function AppShell() {
   const { route } = useRoute()
@@ -27,6 +28,7 @@ export default function AppShell() {
           {route === 'stats' && <StatisticsPage />}
           {route === 'task-interface' && <TaskInterfacePage />}
           {route === 'knowledge' && <KnowledgeGovernancePage />}
+          {(route === 'rag-guidelines' || route === 'rag-guidelines-test') && <GuidelineTestPage />}
           {route === 'system' && <SystemManagementPage />}
           {route === 'llm-settings' && <ModelSettingsPage />}
         </main>

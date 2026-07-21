@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field as PydanticField, field_validator
 
 import knowledge_admin
 import llm_settings
@@ -2541,6 +2542,75 @@ async def mysql_delete_patient(
         if state.assessment_db_id in removed_ids or state.patient.patient_id == business_patient_id:
             SESSIONS.pop(session_id, None)
     return {"deleted": deleted}
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge and research evidence retrieval (isolated from production        #
+# assessment workflows).                                                       #
+# --------------------------------------------------------------------------- #
+
+
+def _validate_top_k(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("top_k must be an integer, not a boolean")
+    if isinstance(value, float):
+        raise ValueError("top_k must be an integer, not a float")
+    if isinstance(value, str):
+        raise ValueError("top_k must be an integer, not a string")
+    if not isinstance(value, int):
+        raise ValueError("top_k must be an integer")
+    return value
+
+
+class GuidelineSearchRequest(BaseModel):
+    query: str = PydanticField(..., min_length=1, max_length=2000)
+    top_k: int = PydanticField(default=3, ge=1, le=5)
+
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def reject_non_integer_top_k(cls, value: Any) -> int:
+        return _validate_top_k(value)
+
+
+@app.get("/api/rag/guidelines/status")
+@app.get("/api/rag/guidelines/test/status", include_in_schema=False)
+async def rag_guideline_status(
+    _admin: None = Depends(_require_admin),
+):
+    """Return status for the isolated research-evidence retriever."""
+    from rag_guideline_test_service import get_status
+
+    return (await get_status()).to_dict()
+
+
+@app.post("/api/rag/guidelines/search")
+@app.post("/api/rag/guidelines/test/search", include_in_schema=False)
+async def rag_guideline_search(
+    body: GuidelineSearchRequest,
+    _admin: None = Depends(_require_admin),
+):
+    """Search the research-evidence collection; never enter report generation."""
+    from rag_guideline_test_service import RAG_GUIDELINE_TEST_ENABLED, search_guidelines
+
+    if not RAG_GUIDELINE_TEST_ENABLED:
+        raise HTTPException(
+            status_code=404,
+            detail="知识库尚未启用：请联系管理员启用后重试。",
+        )
+
+    try:
+        result = await search_guidelines(body.query, top_k=body.top_k)
+    except RuntimeError as exc:
+        if "rag_guideline_test_disabled" in str(exc):
+            raise HTTPException(
+                status_code=404,
+                detail="知识库尚未启用：请联系管理员启用后重试。",
+            ) from exc
+        raise HTTPException(status_code=503, detail="知识库检索服务异常，请稍后再试。") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return result.to_dict()
 
 
 # --------------------------------------------------------------------------- #

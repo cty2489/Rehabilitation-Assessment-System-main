@@ -6,6 +6,8 @@ import {
   DeviceCredentialSecret,
   DeviceCredentialStatus,
   EnrollmentRequest,
+  GuidelineTestSearchResponse,
+  GuidelineTestStatus,
   HealthStatus,
   KnowledgeCoverageResponse,
   KnowledgeEntriesResponse,
@@ -311,3 +313,29 @@ export async function deleteMysqlAssessment(id: number): Promise<{ deleted: numb
   }
   return res.json()
 }
+
+// Knowledge and research evidence retrieval API ----------------------------- //
+export function fetchGuidelineStatus(): Promise<GuidelineTestStatus> {
+  return getJSON('/api/rag/guidelines/status')
+}
+
+export async function searchGuidelines(
+  query: string,
+  topK = 3,
+): Promise<GuidelineTestSearchResponse> {
+  const res = await fetch('/api/rag/guidelines/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ query, top_k: topK }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
+}
+
+// Compatibility aliases for older internal callers. The browser uses the
+// neutral endpoints above; these names can be removed after downstream tests
+// and integrations migrate.
+export const fetchGuidelineTestStatus = fetchGuidelineStatus
+export const searchGuidelineTest = searchGuidelines

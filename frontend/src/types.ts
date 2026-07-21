@@ -23,6 +23,9 @@ export type Route =
   | 'records'
   | 'stats'
   | 'knowledge'
+  | 'rag-guidelines'
+  // Legacy route kept only so an already-open internal link still resolves.
+  | 'rag-guidelines-test'
   | 'system'
   | 'llm-settings'
   | 'task-interface'
@@ -485,4 +488,68 @@ export interface BiomarkerCoverage {
   available: number
   total: number
   missing_keys: string[]
+}
+
+// Isolated guideline RAG test page. These responses are never clinical-ready. //
+export interface GuidelineTestStatus {
+  mode: 'test_only'
+  allowed_rag_mode: 'test_only'
+  enabled: boolean
+  service_reachable: boolean
+  collection: string
+  clinical_ready: false
+  allow_demo: boolean
+  error?: string
+}
+
+export interface GuidelineTestReference {
+  index: number
+  source_id: string
+  title: string
+  year: string
+  doi: string
+  page_locator: string
+}
+
+export interface GuidelineTestHit {
+  rank: number
+  score: number
+  source_id: string
+  title: string
+  year: string
+  doi: string
+  page_locator: string
+  text: string
+  citation_index: number
+  citation_indices: number[]
+  chunk_id: string
+  references: GuidelineTestReference[]
+  source_type: string
+  knowledge_type: string
+  evidence_scope: string
+  research_type: string
+  sample_size: string
+  applicable_scope: string
+  limitations: string[]
+  license: string
+  non_clinical_statement: string
+  research_only: boolean
+  expert_verified: boolean
+}
+
+export interface GuidelineTestSearchResponse {
+  schema_version: string
+  mode: 'test_only'
+  allowed_rag_mode: 'test_only'
+  test_report_banner: string
+  query: string
+  top_k: number
+  dataset: string
+  clinical_ready: false
+  results: GuidelineTestHit[]
+  cached: boolean
+  elapsed_ms: number
+  citations: GuidelineTestReference[]
+  reason_code: string
+  blocked_message?: string
 }
