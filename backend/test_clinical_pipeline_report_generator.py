@@ -303,6 +303,22 @@ class ReportGeneratorTests(unittest.TestCase):
 
                 self.assertEqual(len(llm.calls), 2)
 
+    def test_negated_diagnosis_limitation_is_not_rejected(self) -> None:
+        payload = _valid_payload(RetrievalStatus.INSUFFICIENT)
+        payload["summary"] = (
+            "量表结果来自模型预测；当前证据不足以支持明确诊断。"
+        )
+        llm = FakeReportLlmClient(
+            [json.dumps(payload, ensure_ascii=False)]
+        )
+
+        result = ReportGenerator(llm).generate(
+            _report_input(RetrievalStatus.INSUFFICIENT)
+        )
+
+        self.assertIn("不足以支持明确诊断", result.summary)
+        self.assertEqual(len(llm.calls), 1)
+
     def test_invalid_json_is_retried_once(self) -> None:
         llm = FakeReportLlmClient(
             [

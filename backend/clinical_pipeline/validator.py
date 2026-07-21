@@ -60,7 +60,7 @@ _LIMITATION_TEXT = {
 }
 _INLINE_SOURCE_ID = re.compile(r"(?<![A-Za-z0-9._:-])SRC-[A-Za-z0-9._:-]+")
 _DETERMINISTIC_DIAGNOSIS = re.compile(
-    r"(?:诊断|确诊)\s*(?:为|是|：|:)|(?:明确诊断|可确诊|已经确诊)",
+    r"(?:诊断|确诊)\s*(?:为|是|：|:)|(?:可确诊|已经确诊)",
     re.IGNORECASE,
 )
 _MECHANISM_CONCLUSION = re.compile(

@@ -264,6 +264,25 @@ class ValidatorTests(unittest.TestCase):
             [issue.code for issue in result.issues],
         )
 
+    def test_negated_diagnosis_limitation_is_not_manual_review(self) -> None:
+        report = _replace_report(
+            _report(RetrievalStatus.INSUFFICIENT),
+            summary=(
+                "量表结果来自模型预测；当前证据不足以支持明确诊断。"
+            ),
+        )
+
+        result = Validator().validate(
+            report,
+            _report_input(RetrievalStatus.INSUFFICIENT),
+        )
+
+        self.assertEqual(result.status, ValidationStatus.WARNING)
+        self.assertNotIn(
+            "deterministic_diagnosis",
+            [issue.code for issue in result.issues],
+        )
+
     def test_exact_training_dose_is_manual_review(self) -> None:
         report = _replace_report(
             _report(RetrievalStatus.COMPLETE),

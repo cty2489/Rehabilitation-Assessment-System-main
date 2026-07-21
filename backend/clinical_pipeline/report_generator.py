@@ -64,7 +64,7 @@ _LEADING_THINK_BLOCK = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 _DETERMINISTIC_DIAGNOSIS = re.compile(
-    r"(?:诊断|确诊)\s*(?:为|是|：|:)|(?:明确诊断|可确诊|已经确诊)",
+    r"(?:诊断|确诊)\s*(?:为|是|：|:)|(?:可确诊|已经确诊)",
     re.IGNORECASE,
 )
 _MECHANISM_CONCLUSION = re.compile(
