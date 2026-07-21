@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowLeft, CloudUpload, RadioTower } from 'lucide-react'
 import PatientForm from '../components/PatientForm'
 import MarkdownReport from '../components/MarkdownReport'
@@ -90,7 +91,7 @@ function prefillToPatient(p: EvalPackageParse['patient_prefill']): PatientInfo {
 }
 
 export default function TaskInterfacePage() {
-  const { navigate } = useRoute()
+  const { navigate, route } = useRoute()
   const [mode, setMode] = useState<Mode>('offline')
 
   // Offline-mode local state
@@ -397,6 +398,35 @@ export default function TaskInterfacePage() {
             </>
           )}
         </>
+      )}
+
+      {route !== 'task-interface' && (parsing || (!processing && parsed)) && createPortal(
+        <button
+          type="button"
+          className={`background-upload-status${parsed && !parsing ? ' complete' : ''}`}
+          onClick={() => navigate('task-interface')}
+          aria-label="返回设备接口查看数据包进度"
+        >
+          <CloudUpload aria-hidden="true" />
+          <span className="background-upload-copy">
+            <strong>
+              {parsing
+                ? uploadProgress?.phase === 'server_processing'
+                  ? '数据包校验中'
+                  : `数据包上传中 ${uploadProgress?.percent ?? 0}%`
+                : '数据包解析完成'}
+            </strong>
+            <span>
+              {parsing && uploadProgress?.phase === 'uploading'
+                ? `${formatFileSize(uploadProgress.loadedBytes)} / ${formatFileSize(uploadProgress.totalBytes)}`
+                : '点击返回设备接口查看'}
+            </span>
+          </span>
+          {parsing && uploadProgress && (
+            <progress max={100} value={uploadProgress.percent} />
+          )}
+        </button>,
+        document.body,
       )}
     </div>
   )

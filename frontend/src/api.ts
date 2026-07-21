@@ -285,6 +285,7 @@ export function parseEvalPackage(
 
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
+    let lastReportedPercent = -1
     request.open('POST', '/api/task-interface/parse')
     request.withCredentials = true
     request.timeout = 30 * 60 * 1000
@@ -297,6 +298,8 @@ export function parseEvalPackage(
       const percent = totalBytes > 0
         ? Math.min(99, Math.round((event.loaded / totalBytes) * 100))
         : 0
+      if (percent === lastReportedPercent) return
+      lastReportedPercent = percent
       onProgress?.({
         phase: 'uploading',
         loadedBytes: event.loaded,

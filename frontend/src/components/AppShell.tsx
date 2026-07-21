@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import { useRoute } from '../app/AppContext'
@@ -14,6 +15,15 @@ import GuidelineTestPage from '../pages/GuidelineTestPage'
 
 export default function AppShell() {
   const { route } = useRoute()
+  const [taskInterfaceVisited, setTaskInterfaceVisited] = useState(
+    route === 'task-interface',
+  )
+
+  useEffect(() => {
+    if (route === 'task-interface') setTaskInterfaceVisited(true)
+  }, [route])
+
+  const renderTaskInterface = taskInterfaceVisited || route === 'task-interface'
 
   return (
     <div className="layout">
@@ -26,7 +36,11 @@ export default function AppShell() {
           {route === 'assessment' && <AssessmentPage />}
           {route === 'records' && <RecordsOverviewPage />}
           {route === 'stats' && <StatisticsPage />}
-          {route === 'task-interface' && <TaskInterfacePage />}
+          {renderTaskInterface && (
+            <div hidden={route !== 'task-interface'}>
+              <TaskInterfacePage />
+            </div>
+          )}
           {route === 'knowledge' && <KnowledgeGovernancePage />}
           {(route === 'rag-guidelines' || route === 'rag-guidelines-test') && <GuidelineTestPage />}
           {route === 'system' && <SystemManagementPage />}
