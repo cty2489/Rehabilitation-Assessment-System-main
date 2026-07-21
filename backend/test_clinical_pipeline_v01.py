@@ -14,6 +14,8 @@ from clinical_pipeline.contracts import (
     CoreKnowledgeBundle,
     CoreKnowledgeEntry,
     Finding,
+    FindingBasis,
+    FindingBasisKind,
     FindingModality,
     FindingStatus,
     InterpretationResult,
@@ -48,6 +50,12 @@ def _findings() -> InterpretationResult:
                 value=8,
                 status=FindingStatus.OBSERVED,
                 modality=FindingModality.CLINICAL_SCALE,
+                description="测试观察结果",
+                basis=FindingBasis(
+                    kind=FindingBasisKind.SCALE_DEFINITION,
+                    description="测试量表定义",
+                ),
+                source_field="predictions.FMA_UE",
             )
         ],
     )

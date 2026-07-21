@@ -100,6 +100,26 @@ class FindingModality(str, Enum):
     MULTIMODAL = "multimodal"
 
 
+class FindingBasisKind(str, Enum):
+    SCALE_DEFINITION = "scale_definition"
+    SCALE_READING = "scale_reading"
+    ABSOLUTE_REFERENCE_RANGE = "absolute_reference_range"
+    DIRECTIONAL_TREND = "directional_trend"
+    NO_RELIABLE_REFERENCE = "no_reliable_reference"
+    MISSING_INPUT = "missing_input"
+
+
+class FindingBasis(ContractModel):
+    kind: FindingBasisKind
+    description: str = Field(min_length=1)
+    reference_type: Optional[Literal["healthy_norm", "directional_trend", "none"]] = None
+    absolute_comparison_applicable: bool = False
+    lower_bound: Optional[float] = None
+    upper_bound: Optional[float] = None
+    expected_direction: Optional[str] = Field(default=None, max_length=64)
+    source_ids: List[str] = Field(default_factory=list)
+
+
 class Finding(ContractModel):
     finding_id: str = Field(min_length=1, max_length=128)
     metric_key: str = Field(min_length=1, max_length=128)
@@ -109,6 +129,9 @@ class Finding(ContractModel):
     status: FindingStatus
     severity: FindingSeverity = FindingSeverity.UNKNOWN
     modality: FindingModality
+    description: str = Field(min_length=1)
+    basis: FindingBasis
+    source_field: str = Field(min_length=1, max_length=255)
 
 
 class KnownCombination(ContractModel):
@@ -116,6 +139,55 @@ class KnownCombination(ContractModel):
     finding_ids: List[str] = Field(min_length=2)
     relation: str = Field(min_length=1, max_length=128)
     rule_id: str = Field(min_length=1, max_length=128)
+
+
+class CanonicalPatientInfo(ContractModel):
+    patient_id: str = Field(min_length=1, max_length=64)
+    age: Optional[int] = None
+    sex: Optional[str] = Field(default=None, max_length=32)
+    diagnosis: Optional[str] = Field(default=None, max_length=255)
+    disease_days: Optional[int] = None
+    paralysis_side: Optional[str] = Field(default=None, max_length=32)
+
+
+class CanonicalPredictions(ContractModel):
+    FMA_UE: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    hand_tone: Optional[Literal["0", "1", "1+", "2", "3", "4"]] = None
+    hand_function: Optional[int] = Field(default=None, ge=1, le=6)
+
+
+class CanonicalBiomarker(ContractModel):
+    metric_key: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    value: Optional[float] = None
+    unit: Optional[str] = Field(default=None, max_length=64)
+    modality: Literal[
+        FindingModality.EEG,
+        FindingModality.EMG,
+        FindingModality.IMU,
+    ]
+    available: bool = True
+    n_valid: int = Field(default=0, ge=0)
+
+
+class CanonicalAssessmentContext(ContractModel):
+    schema_version: Literal["rehab.canonical-assessment-context.v1"] = (
+        "rehab.canonical-assessment-context.v1"
+    )
+    context_id: str = Field(default_factory=lambda: f"context-{uuid4().hex}")
+    assessment_id: Optional[str] = Field(default=None, max_length=128)
+    quality_decision: Literal[QualityDecision.PASS, QualityDecision.REVIEW]
+    patient: CanonicalPatientInfo
+    predictions: CanonicalPredictions
+    biomarkers: List[CanonicalBiomarker] = Field(default_factory=list)
+    quality_metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def biomarker_keys_are_unique(self) -> "CanonicalAssessmentContext":
+        keys = [marker.metric_key for marker in self.biomarkers]
+        if len(keys) != len(set(keys)):
+            raise ValueError("canonical biomarker metric_key values must be unique")
+        return self
 
 
 class InterpretationResult(ContractModel):
@@ -269,9 +341,15 @@ class PipelineRunTrace(ContractModel):
 __all__ = [
     "CallComponent",
     "CallStatus",
+    "CanonicalAssessmentContext",
+    "CanonicalBiomarker",
+    "CanonicalPatientInfo",
+    "CanonicalPredictions",
     "CoreKnowledgeBundle",
     "CoreKnowledgeEntry",
     "Finding",
+    "FindingBasis",
+    "FindingBasisKind",
     "FindingModality",
     "FindingSeverity",
     "FindingStatus",
