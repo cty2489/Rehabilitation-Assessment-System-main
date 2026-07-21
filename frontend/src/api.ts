@@ -259,6 +259,13 @@ export interface EvalPackageParse {
   enrolled: boolean
 }
 
+export interface PackageUploadProgress {
+  phase: 'uploading' | 'server_processing'
+  loadedBytes: number
+  totalBytes: number
+  percent: number
+}
+
 async function postForm<T>(url: string, form: FormData): Promise<T> {
   const res = await fetch(url, { method: 'POST', headers: authHeaders(), body: form })
   if (!res.ok) {
@@ -267,11 +274,69 @@ async function postForm<T>(url: string, form: FormData): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export function parseEvalPackage(institution: Institution, file: File): Promise<EvalPackageParse> {
+export function parseEvalPackage(
+  institution: Institution,
+  file: File,
+  onProgress?: (progress: PackageUploadProgress) => void,
+): Promise<EvalPackageParse> {
   const form = new FormData()
   form.append('institution', institution)
   form.append('package', file)
-  return postForm('/api/task-interface/parse', form)
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', '/api/task-interface/parse')
+    request.withCredentials = true
+    request.timeout = 30 * 60 * 1000
+    Object.entries(authHeaders()).forEach(([name, value]) => request.setRequestHeader(name, value))
+
+    request.upload.onprogress = (event) => {
+      const totalBytes = event.lengthComputable && event.total > 0
+        ? event.total
+        : file.size
+      const percent = totalBytes > 0
+        ? Math.min(99, Math.round((event.loaded / totalBytes) * 100))
+        : 0
+      onProgress?.({
+        phase: 'uploading',
+        loadedBytes: event.loaded,
+        totalBytes,
+        percent,
+      })
+    }
+    request.upload.onload = () => {
+      onProgress?.({
+        phase: 'server_processing',
+        loadedBytes: file.size,
+        totalBytes: file.size,
+        percent: 100,
+      })
+    }
+
+    request.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = request.responseText ? JSON.parse(request.responseText) : null
+      } catch {
+        payload = null
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(payload as EvalPackageParse)
+        return
+      }
+      if (request.status === 401 || request.status === 403) {
+        window.dispatchEvent(new Event('rehab:unauthorized'))
+      }
+      const detail = payload && typeof payload === 'object'
+        ? (payload as { detail?: unknown }).detail
+        : null
+      reject(new Error(typeof detail === 'string' ? detail : `HTTP ${request.status}`))
+    }
+    request.onerror = () => reject(new Error('数据包上传失败，请检查网络连接后重试'))
+    request.ontimeout = () => reject(new Error('数据包上传或服务器校验超时，请检查网络后重试'))
+    request.onabort = () => reject(new Error('数据包上传已取消'))
+    request.send(form)
+  })
 }
 
 export function submitOffline(form: FormData): Promise<{ session_id: string; n_trials: number }> {
