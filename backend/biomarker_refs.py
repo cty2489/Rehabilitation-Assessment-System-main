@@ -47,7 +47,7 @@ _DIR_WORD = {"increase": "升高", "decrease": "下降"}
 # The current implementation computes SPARC from acceleration magnitude, while
 # the literature range was derived from velocity SPARC. Keep the literature
 # metadata for audit, but never compare the two absolute scales.
-_NONCOMPARABLE_HEALTHY_NORMS = set()
+_NONCOMPARABLE_HEALTHY_NORMS = {"movement_smoothness_sparc"}
 
 
 def normalize_evidence_note(value: Any) -> str:
