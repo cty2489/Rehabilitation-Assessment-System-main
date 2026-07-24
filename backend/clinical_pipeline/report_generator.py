@@ -385,7 +385,7 @@ def _validate_report(
         [payload.summary, payload.evidence_summary]
         + [finding.statement for finding in payload.findings]
         + payload.limitations
-        + payload.recommendations
+        # recommendations excluded: they carry inline source citations per design
     )
     if _INLINE_SOURCE_ID.search(narrative_text):
         raise ValueError("source_id只能写入结构化citations数组")

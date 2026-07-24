@@ -3270,3 +3270,61 @@ summary:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+.rag-source-card {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #cde3df;
+  border-radius: 8px;
+  background: #f5fbfa;
+}
+
+.rag-source-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #174d49;
+}
+
+.rag-source-card-head span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #d9efeb;
+  color: #24635d;
+  font-size: 12px;
+}
+
+.rag-source-access {
+  margin: 8px 0;
+  color: #48625e;
+  font-size: 13px;
+}
+
+.rag-source-excerpt summary {
+  cursor: pointer;
+  color: #176d65;
+  font-weight: 600;
+}
+
+.rag-source-excerpt p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: #344b47;
+  line-height: 1.65;
+}
+
+.rag-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  color: #647a76;
+  font-size: 12px;
+}
+
+.rag-source-links a {
+  color: #0f766e;
+  font-weight: 600;
+}

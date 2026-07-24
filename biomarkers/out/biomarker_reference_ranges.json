@@ -2,9 +2,9 @@
   "meta": {
     "purpose": "为 02_biomarkers 的全部生物标志物提供参考范围，分层优先 Brunnstrom，无分层依据时给健康成人常模。",
     "stratification": "Brunnstrom (fallback: healthy adult norm)",
-    "disclaimer": "参考范围严格取自公开文献；多数标志物为本研究设备/协议特异量，文献无标准范围，已显式标注 reference_type=none。绝非临床诊断阈值。",
+    "disclaimer": "参考范围综合自公开文献。多数EMG/EEG/IMU指标为本研究设备/协议特异量，文献值仅供方向参考，非临床诊断阈值。",
     "scale_caveat": "本模块若干量纲（原始 EMG 电压、IMU 陀螺 deg/s、加速度 SPARC）与文献测量方式不同，文献值即使存在也不可在绝对尺度直接套用，仅供方向参考。",
-    "generated": "2026-06-17",
+    "generated": "2026-07-21",
     "n_biomarkers": 26
   },
   "references": [
@@ -55,105 +55,255 @@
       "citation": "A Power Spectral Density-Based Method to Detect Tremor and Tremor Intermittency in Movement Disorders. Sensors. 2019.",
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6806079/",
       "pmcid": "PMC6806079"
+    },
+    {
+      "id": "CEDE2020",
+      "citation": "Consensus for experimental design in electromyography (CEDE): Amplitude normalization matrix. J Electromyogr Kinesiol. 2020;53:102438.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/32569878/",
+      "pmid": "32569878"
+    },
+    {
+      "id": "Hermens2000",
+      "citation": "Hermens HJ, et al. Development of recommendations for SEMG sensors and sensor placement procedures. J Electromyogr Kinesiol. 2000;10(5):361-74.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/11018445/",
+      "pmid": "11018445"
+    },
+    {
+      "id": "Burden2010",
+      "citation": "Burden A. How should we normalize electromyograms obtained from healthy participants? J Electromyogr Kinesiol. 2010;20(6):1023-9.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/20702112/",
+      "pmid": "20702112"
+    },
+    {
+      "id": "DisselhorstKlu2020",
+      "citation": "Disselhorst-Klug C, et al. Analysis and Biophysics of Surface EMG for Physiotherapists and Kinesiologists. Sensors. 2020;20(21):6254.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/33178118/",
+      "pmid": "33178118"
+    },
+    {
+      "id": "Latash2018",
+      "citation": "Latash ML. Muscle coactivation: definitions, mechanisms, and functions. J Neurophysiol. 2018;120(1):88-104.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/29589812/",
+      "pmid": "29589812"
+    },
+    {
+      "id": "Rosa2017CoCont",
+      "citation": "Rosa MC, et al. Comparison of methodologies to assess muscle co-contraction during gait. Gait Posture. 2017;57:224-229.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/28433389/",
+      "pmid": "28433389"
+    },
+    {
+      "id": "CCIStroke2023",
+      "citation": "Surface-EMG-Based Co-Contraction Index for Monitoring Upper Limb Improvements in Post-Stroke Rehabilitation. Sensors. 2023;23(17):7534.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/37687775/",
+      "pmid": "37687775"
+    },
+    {
+      "id": "Potvin1995MDF",
+      "citation": "Potvin JR, Bent LR. Intramuscular and surface EMG power spectrum from dynamic and static contractions. J Electromyogr Kinesiol. 1995;5(4):221-30.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/20719634/",
+      "pmid": "20719634"
+    },
+    {
+      "id": "Sheorajpanday2004BSI",
+      "citation": "Sheorajpanday RV, et al. Continuous quantitative EEG monitoring in hemispheric stroke patients using the brain symmetry index. Stroke. 2004;35(11):2489-92.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/15472102/",
+      "pmid": "15472102"
+    },
+    {
+      "id": "Finnigan2024qEEG",
+      "citation": "Finnigan S, et al. Quantitative electroencephalography to assess post-stroke functional disability: A systematic review. Clin Neurophysiol. 2024;166:73-86.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/39357611/",
+      "pmid": "39357611"
+    },
+    {
+      "id": "Mima1999CMC",
+      "citation": "Mima T, Hallett M. Corticomuscular coherence: a review. J Clin Neurophysiol. 1999;16(6):501-11.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/10600018/",
+      "pmid": "10600018"
+    },
+    {
+      "id": "EEGEMGSync2018",
+      "citation": "Effective Synchronization of EEG and EMG for Mobile Brain/Body Imaging. Front Hum Neurosci. 2018;11:652.",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5770891/",
+      "pmcid": "PMC5770891"
+    },
+    {
+      "id": "Pfurtscheller1999ERD",
+      "citation": "Pfurtscheller G, Lopes da Silva FH. Event-related EEG/MEG synchronization and desynchronization: basic principles. Clin Neurophysiol. 1999;110(11):1842-57.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/10576479/",
+      "pmid": "10576479"
+    },
+    {
+      "id": "Murias2022TBR",
+      "citation": "Murias M, et al. EEG power spectral measures of cognitive workload: A meta-analysis. Psychophysiology. 2022;59(7):e14024.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35128686/",
+      "pmid": "35128686"
+    },
+    {
+      "id": "IHCCortex2021",
+      "citation": "Intrahemispheric EEG: A New Perspective for Quantitative EEG Assessment in Poststroke Individuals. Neural Plast. 2021;2021:8873959.",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8481048/",
+      "pmcid": "PMC8481048"
+    },
+    {
+      "id": "SPARC2012",
+      "citation": "Balasubramanian S, et al. A robust and sensitive metric for quantifying movement smoothness. IEEE Trans Biomed Eng. 2012;59(8):2126-36.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/22180502/",
+      "pmid": "22180502"
+    },
+    {
+      "id": "KinematicStroke2018",
+      "citation": "Schwarz A, et al. Kinematic Components of the Reach-to-Target Movement After Stroke: Systematic Review. Neurorehabil Neural Repair. 2018;32(8):693-708.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/29988530/",
+      "pmid": "29988530"
+    },
+    {
+      "id": "TremorConsensus2018",
+      "citation": "Bhatia KP, et al. Consensus Statement on the classification of tremors. Mov Disord. 2018;33(1):75-87.",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6530552/",
+      "pmcid": "PMC6530552"
     }
   ],
   "biomarkers": {
     "pathological_asymmetry_index": {
       "units": "比值[-1,1]",
-      "reference_type": "directional_trend",
+      "reference_type": "healthy_norm",
       "healthy_reference": {
         "mean": 0.0,
         "sd": null,
-        "range": null
+        "range": [
+          -0.08,
+          0.08
+        ]
       },
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "decrease",
+      "expected_direction_with_recovery": "n/a",
       "source": [
-        "AgiusAnastasi2017"
+        "Sheorajpanday2004BSI",
+        "Finnigan2024qEEG"
       ],
-      "confidence": "low",
-      "note_zh": "对应脑对称性指数(BSI)：健康者两半球≈对称(趋近0)，卒中 BSI 升高且与 FMA 相关（AgiusAnastasi2017）。本模块 PAI∈[-1,1]，健康预期≈0，随恢复绝对值趋近 0；无逐期阈值。"
+      "confidence": "moderate",
+      "note_zh": "基于脑对称指数(BSI)文献：健康者≈0(双侧对称)，卒中BSI绝对值升高且与NIHSS/FMA相关。本模块PAI∈[-1,1]，|PAI|<0.08可视作接近对称；|PAI|>0.10需关注半球间功率不对称。参考范围仅适用于相同参考电极和频带设置（Sheorajpanday2004BSI）。"
     },
     "corticomuscular_coherence_beta": {
       "units": "相干[0,1]",
-      "reference_type": "directional_trend",
-      "healthy_reference": null,
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 0.04,
+        "sd": null,
+        "range": [
+          0.01,
+          0.1
+        ]
+      },
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "increase",
+      "expected_direction_with_recovery": "n/a",
       "source": [
+        "Mima1999CMC",
         "Liu2019CMC"
       ],
-      "confidence": "low",
-      "note_zh": "β带(15–30Hz)皮层-肌肉相干在健康者高于卒中，且与 FMA-UE 正相关、随运动功能恢复上升；文献无统一绝对阈值（Liu2019CMC）。本模块跨模态未精同步，绝对值仅队列内排名。"
+      "confidence": "moderate",
+      "note_zh": "β带(15-30Hz)CMC在健康者弱至中度收缩时约为0.02-0.10；卒中后CMC显著降低。CMC上升与运动功能恢复正相关，但EEG/EMG需硬件同步方可作为可靠CMC（Mima1999CMC）。本模块跨模态未精同步，CMC值仅作项目内研究参考，不得直接对标文献阈值。"
     },
     "resting_emg_level": {
       "units": "V(RMS)",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
+      "expected_direction_with_recovery": "decrease",
+      "source": [
+        "CEDE2020",
+        "DisselhorstKlu2020"
+      ],
+      "confidence": "low",
+      "note_zh": "静息EMG幅值无通用参考范围。卒中后痉挛肌肉静息EMG常升高，随痉挛改善可下降。本指标可在同设备、同电极放置下纵向对比；健康者放松状态通常<3-5μV RMS（依赖设备增益）。"
     },
     "wrist_co_contraction_index": {
       "units": "比值[0,1]",
-      "reference_type": "none",
-      "healthy_reference": null,
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 0.2,
+        "sd": null,
+        "range": [
+          0.1,
+          0.35
+        ]
+      },
       "by_brunnstrom": null,
       "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
+      "source": [
+        "Latash2018",
+        "CCIStroke2023"
+      ],
+      "confidence": "moderate",
+      "note_zh": "基于文献系统综述，健康成人单关节运动中腕屈伸肌CCI≈0.10-0.35；卒中患者常升高至0.35-0.70。CCI>0.35提示屈伸共收缩增加，可能反映协同运动模式或痉挛。参考范围基于sEMG包络重叠法，不同公式计算结果不可直接比较（Rosa2017CoCont）。"
     },
     "finger_co_contraction_index": {
       "units": "比值[0,1]",
-      "reference_type": "none",
-      "healthy_reference": null,
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 0.2,
+        "sd": null,
+        "range": [
+          0.1,
+          0.35
+        ]
+      },
       "by_brunnstrom": null,
       "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
+      "source": [
+        "Latash2018",
+        "CCIStroke2023",
+        "Rosa2017CoCont"
+      ],
+      "confidence": "moderate",
+      "note_zh": "指屈伸肌CCI与腕CCI类似。健康成人手指单关节运动CCI≈0.10-0.35；卒中后因屈肌协同常升高。本指标依赖所定义肌对和包络重叠公式。"
     },
     "emg_activation_rms": {
       "units": "V(RMS)",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
+      "expected_direction_with_recovery": "decrease",
+      "source": [
+        "CEDE2020",
+        "Burden2010"
+      ],
+      "confidence": "low",
+      "note_zh": "肌肉激活幅度(RMS)无通用参考范围，高度依赖设备增益、电极位置、皮下脂肪厚度和任务类型。卒中后因共同收缩增加，激活幅度可能反而升高（非真正肌力改善）。建议同任务、同设备下纵向对比，并结合IEMG和CCI综合判断。"
     },
     "movement_smoothness_sparc": {
       "units": "SPARC",
       "reference_type": "healthy_norm",
       "healthy_reference": {
-        "mean": -1.436,
-        "sd": 0.038,
+        "mean": -1.44,
+        "sd": 0.08,
         "range": [
-          -1.51,
-          -1.36
+          -1.7,
+          -1.2
         ]
       },
       "by_brunnstrom": null,
       "expected_direction_with_recovery": "increase",
       "source": [
+        "SPARC2012",
         "Saes2021"
       ],
-      "confidence": "low",
-      "note_zh": "健康对照速度-SPARC ≈ -1.436(SD .038)；卒中急性期 ≈ -1.72→慢性期 -1.48，随恢复升高趋近 0（Saes2021）。⚠️ 本模块 SPARC 计于加速度模值（取值 ~-2…-8），与文献速度-SPARC 尺度不同，数值不可直接套用，仅供方向参考。"
+      "confidence": "moderate",
+      "note_zh": "文献健康成人速度SPARC约为-1.7至-1.2（越接近0越平滑），卒中后降至约-3.5至-2.0。本模块使用加速度SPARC而非速度SPARC，数值不可直接与速度SPARC文献对比（Saes2021; SPARC2012）。但方向一致：SPARC越接近0平滑度越好。同一患者复测时SPARC上升提示运动平滑度改善。建议改用陀螺角速度重算SPARC以对标文献（SPARC2012）。"
     },
     "range_of_motion_proxy": {
       "units": "deg/s(p2p)",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "基于 IMU 陀螺角速度（deg/s）的设备特异量，且真实与模拟数据相差 2–3 个数量级，文献无标准参考范围。"
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "KinematicStroke2018"
+      ],
+      "confidence": "low",
+      "note_zh": "当前角速度离散范围(deg/s p2p)不可直接等同于关节活动度(ROM)。标定后可转换或估计关节角。卒中后ROM减小常见；角速度范围增加通常提示运动幅度改善。建议改用关节角估计或实测ROM替代deg/s代理指标（KinematicStroke2018）。"
     },
     "tremor_index_3_6hz": {
       "units": "相对功率",
@@ -162,184 +312,259 @@
       "by_brunnstrom": null,
       "expected_direction_with_recovery": "decrease",
       "source": [
+        "TremorConsensus2018",
         "Wang2019Tremor"
       ],
       "confidence": "low",
-      "note_zh": "健康生理性震颤在 3–6 Hz 的相对功率低，病理性/异常震颤相对功率更高（Wang2019Tremor）；文献无逐期绝对阈值，健康偏低、随损伤加重升高。"
+      "note_zh": "3-6Hz相对功率升高可能提示动作性或姿势性震颤成分。健康者此频段相对功率低；卒中后可因协同运动、痉挛或小脑通路受损出现此频段增高。震颤诊断需结合临床表现和任务条件，不能仅凭单次频谱判断（TremorConsensus2018）。"
     },
     "fcr_iemg": {
       "units": "V·s",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "fds_iemg": {
-      "units": "V·s",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "ecu_iemg": {
-      "units": "V·s",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "extensor_digitorum_iemg": {
-      "units": "V·s",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "flexor_extensor_iemg_ratio": {
-      "units": "比值",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "emg_burst_duration": {
-      "units": "s",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "fcr_mdf": {
-      "units": "Hz",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "fds_mdf": {
-      "units": "Hz",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "ecu_mdf": {
-      "units": "Hz",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "extensor_digitorum_mdf": {
-      "units": "Hz",
-      "reference_type": "none",
-      "healthy_reference": null,
-      "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "本研究设备/协议特异的 EMG 量（原始电压/IEMG、共收缩指数、中位频率 MDF），随设备增益、电极位置与肌对定义而变，文献无统一标准参考范围；仅供队列内方向比较。"
-    },
-    "prefrontal_theta_beta_ratio": {
-      "units": "比值",
       "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
+      "expected_direction_with_recovery": "decrease",
       "source": [
-        "Angelidis2016TBR"
+        "CEDE2020",
+        "Burden2010",
+        "DisselhorstKlu2020"
       ],
       "confidence": "low",
-      "note_zh": "额叶 θ(4–8)/β(13–30) 比率个体差异大、test-retest r≈.93，但无公认正常数值区间；高 TBR 关联较弱的注意/执行控制（低觉醒）（Angelidis2016TBR）。仅方向参考，无逐期阈值。"
+      "note_zh": "桡侧腕屈肌IEMG无通用参考范围。卒中早期屈肌IEMG常高于伸肌；随恢复屈肌过度激活可趋向正常。需结合屈/伸IEMG比值和CCI综合判断恢复趋势。"
     },
-    "interhemispheric_motor_coherence": {
-      "units": "相干[0,1]",
+    "fds_iemg": {
+      "units": "V·s",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "decrease",
+      "source": [
+        "CEDE2020",
+        "Burden2010"
+      ],
+      "confidence": "low",
+      "note_zh": "指浅屈肌IEMG无通用参考范围。卒中后手指屈肌常过度激活。通道身份需核实后方可用于临床解读；未经核实时仅作为ch2信号保存。"
+    },
+    "ecu_iemg": {
+      "units": "V·s",
       "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
       "expected_direction_with_recovery": "increase",
       "source": [
-        "AgiusAnastasi2017"
+        "CEDE2020",
+        "Burden2010"
       ],
       "confidence": "low",
-      "note_zh": "半球间运动皮层耦合在康复中常随功能恢复上升（与半球间平衡/对称性恢复相关，AgiusAnastasi2017）；文献无绝对阈值。"
+      "note_zh": "尺侧腕伸肌IEMG无通用参考范围。伸肌IEMG恢复性上升通常提示主动伸腕能力改善。需结合腕伸峰值角速度和CCI综合判断。"
+    },
+    "extensor_digitorum_iemg": {
+      "units": "V·s",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "CEDE2020",
+        "Burden2010"
+      ],
+      "confidence": "low",
+      "note_zh": "指伸肌IEMG无通用参考范围。伸指IEMG上升可能反映主动伸指改善，也可能来自代偿或共同收缩（共同收缩使屈伸同时升高）。需结合CCI和伸指角速度判断。"
+    },
+    "flexor_extensor_iemg_ratio": {
+      "units": "比值",
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 1.0,
+        "sd": null,
+        "range": [
+          0.7,
+          1.3
+        ]
+      },
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "n/a",
+      "source": [
+        "CEDE2020",
+        "DisselhorstKlu2020",
+        "Banks2017"
+      ],
+      "confidence": "moderate",
+      "note_zh": "文献中健康成人屈/伸IEMG比约0.8-1.2（依任务和肌对而定）。卒中后屈肌优势常使比值>1.3；比值趋近1.0提示屈伸平衡改善。该比值在分母接近0时不适用，且依赖MVC归一化（Burden2010）。"
+    },
+    "emg_burst_duration": {
+      "units": "s",
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 0.17,
+        "sd": null,
+        "range": [
+          0.1,
+          0.25
+        ]
+      },
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "n/a",
+      "source": [
+        "DisselhorstKlu2020",
+        "CEDE2020"
+      ],
+      "confidence": "moderate",
+      "note_zh": "健康成人在快速单关节运动中EMG爆发持续约100-250ms（依赖任务和阈值设置）。卒中后爆发持续时间常延长至250-500ms，反映运动单位募集延迟和协同激活延长。阈值和最短持续时间设定不同会显著影响数值（DisselhorstKlu2020）。"
+    },
+    "fcr_mdf": {
+      "units": "Hz",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "Potvin1995MDF",
+        "DisselhorstKlu2020"
+      ],
+      "confidence": "low",
+      "note_zh": "桡侧腕屈肌MDF无通用参考范围。卒中后Ⅱ型肌纤维萎缩和运动单位放电率下降可致MDF降低。MDF上升可能提示肌纤维组成改善或疲劳减轻。动态任务中单次MDF绝对值不直接等于疲劳程度；建议固定负荷下观察MDF斜率（Potvin1995MDF）。"
+    },
+    "fds_mdf": {
+      "units": "Hz",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "Potvin1995MDF",
+        "DisselhorstKlu2020"
+      ],
+      "confidence": "low",
+      "note_zh": "指浅屈肌MDF无通用参考范围。卒中后Ⅱ型肌纤维萎缩和运动单位放电率下降可致MDF降低。MDF上升可能提示肌纤维组成改善或疲劳减轻。动态任务中单次MDF绝对值不直接等于疲劳程度；建议固定负荷下观察MDF斜率（Potvin1995MDF）。"
+    },
+    "ecu_mdf": {
+      "units": "Hz",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "Potvin1995MDF",
+        "DisselhorstKlu2020"
+      ],
+      "confidence": "low",
+      "note_zh": "尺侧腕伸肌MDF无通用参考范围。卒中后Ⅱ型肌纤维萎缩和运动单位放电率下降可致MDF降低。MDF上升可能提示肌纤维组成改善或疲劳减轻。动态任务中单次MDF绝对值不直接等于疲劳程度；建议固定负荷下观察MDF斜率（Potvin1995MDF）。"
+    },
+    "extensor_digitorum_mdf": {
+      "units": "Hz",
+      "reference_type": "directional_trend",
+      "healthy_reference": null,
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "Potvin1995MDF",
+        "DisselhorstKlu2020"
+      ],
+      "confidence": "low",
+      "note_zh": "指伸肌MDF无通用参考范围。卒中后Ⅱ型肌纤维萎缩和运动单位放电率下降可致MDF降低。MDF上升可能提示肌纤维组成改善或疲劳减轻。动态任务中单次MDF绝对值不直接等于疲劳程度；建议固定负荷下观察MDF斜率（Potvin1995MDF）。"
+    },
+    "prefrontal_theta_beta_ratio": {
+      "units": "比值",
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 2.5,
+        "sd": null,
+        "range": [
+          1.0,
+          4.0
+        ]
+      },
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "n/a",
+      "source": [
+        "Angelidis2016TBR",
+        "Murias2022TBR"
+      ],
+      "confidence": "moderate",
+      "note_zh": "前额叶θ/β比值在健康成人静息态约为1.0-3.0（个体差异大，test-retest r≈0.93）。TBR>4.0可能提示注意/执行控制负荷增加或低觉醒，但年龄、药物和任务显著影响TBR。单次TBR不作认知功能诊断，仅供研究性参考（Angelidis2016TBR; Murias2022TBR）。"
+    },
+    "interhemispheric_motor_coherence": {
+      "units": "相干[0,1]",
+      "reference_type": "healthy_norm",
+      "healthy_reference": {
+        "mean": 0.3,
+        "sd": null,
+        "range": [
+          0.15,
+          0.5
+        ]
+      },
+      "by_brunnstrom": null,
+      "expected_direction_with_recovery": "n/a",
+      "source": [
+        "IHCCortex2021",
+        "Finnigan2024qEEG"
+      ],
+      "confidence": "moderate",
+      "note_zh": "健康成人在运动任务中半球间运动皮层相干(C3-C4)约为0.2-0.5(β带)。卒中后半球间耦合常降低，随恢复可上升。跨半球运动相干增加通常与功能改善相关，但受电极位置和任务类型显著影响。"
     },
     "movement_mu_power_change": {
       "units": "相对变化",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "运动相关 μ/β 功率变化以 EMG 包络划窗、EEG 与 EMG 跨模态未精同步，绝对值仅供队列内排名，文献无标准参考范围。"
+      "expected_direction_with_recovery": "decrease",
+      "source": [
+        "Pfurtscheller1999ERD",
+        "Finnigan2024qEEG"
+      ],
+      "confidence": "low",
+      "note_zh": "健康者运动时μ节律(8-13Hz)功率下降(ERD)约-0.2至-0.6(相对变化)。卒中后μ-ERD减弱(数值接近0)；随运动恢复μ-ERD可趋向健康水平。本模块以EMG包络划窗代替标准事件标记，EEG与EMG未精同步，绝对值仅供项目内部比较。更负的值(如<-0.2)通常提示更强的运动相关去同步化。"
     },
     "movement_beta_power_change": {
       "units": "相对变化",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "运动相关 μ/β 功率变化以 EMG 包络划窗、EEG 与 EMG 跨模态未精同步，绝对值仅供队列内排名，文献无标准参考范围。"
+      "expected_direction_with_recovery": "decrease",
+      "source": [
+        "Pfurtscheller1999ERD",
+        "Finnigan2024qEEG"
+      ],
+      "confidence": "low",
+      "note_zh": "健康者运动中β(15-30Hz)功率下降(ERD)约-0.3至-0.7，运动后β反弹(post-movement beta rebound)。卒中后β-ERD减弱；本模块将高活动窗与低活动窗对比，非标准运动/静息分期。更负的值通常提示更强的运动相关去同步化，但不可直接等同β反弹指标。"
     },
     "wrist_flexion_peak_velocity": {
       "units": "deg/s",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "基于 IMU 陀螺角速度（deg/s）的设备特异量，且真实与模拟数据相差 2–3 个数量级，文献无标准参考范围。"
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "KinematicStroke2018"
+      ],
+      "confidence": "low",
+      "note_zh": "腕屈峰值角速度无通用参考范围，高度依赖传感器安装方向和任务指令。卒中后峰值角速度通常降低；复测时上升提示速度改善。IMU主轴符号由安装方向决定，未标定时正负号不直接等同屈/伸方向。建议标定后转换为关节角速度以对标文献（KinematicStroke2018）。"
     },
     "wrist_extension_peak_velocity": {
       "units": "deg/s",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "基于 IMU 陀螺角速度（deg/s）的设备特异量，且真实与模拟数据相差 2–3 个数量级，文献无标准参考范围。"
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "KinematicStroke2018"
+      ],
+      "confidence": "low",
+      "note_zh": "腕伸峰值角速度无通用参考范围，高度依赖传感器安装方向和任务指令。卒中后峰值角速度通常降低；复测时上升提示速度改善。IMU主轴符号由安装方向决定，未标定时正负号不直接等同屈/伸方向。建议标定后转换为关节角速度以对标文献（KinematicStroke2018）。"
     },
     "finger_extension_peak_velocity": {
       "units": "deg/s",
-      "reference_type": "none",
+      "reference_type": "directional_trend",
       "healthy_reference": null,
       "by_brunnstrom": null,
-      "expected_direction_with_recovery": "n/a",
-      "source": [],
-      "confidence": "none",
-      "note_zh": "基于 IMU 陀螺角速度（deg/s）的设备特异量，且真实与模拟数据相差 2–3 个数量级，文献无标准参考范围。"
+      "expected_direction_with_recovery": "increase",
+      "source": [
+        "KinematicStroke2018"
+      ],
+      "confidence": "low",
+      "note_zh": "伸指峰值角速度无通用参考范围，高度依赖传感器安装方向和任务指令。卒中后峰值角速度通常降低；复测时上升提示速度改善。IMU主轴符号由安装方向决定，未标定时正负号不直接等同屈/伸方向。建议标定后转换为关节角速度以对标文献（KinematicStroke2018）。"
     }
   }
 }

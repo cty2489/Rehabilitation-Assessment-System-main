@@ -102,6 +102,14 @@ def _reference_basis(
         source_ids=[str(value) for value in ref.get("source", []) if str(value)],
     )
 
+_DIR_ZH = {"increase": "上升", "decrease": "下降", "n/a": ""}
+_DIR_CLINICAL = {
+    "increase": "康复过程中通常呈上升趋势",
+    "decrease": "康复过程中通常呈下降趋势",
+    "n/a": "",
+}
+
+
 
 def _biomarker_finding(
     marker: CanonicalBiomarker,
@@ -135,6 +143,11 @@ def _biomarker_finding(
 
     ref = reference_lookup(marker.metric_key)
     unit = marker.unit or (str(ref.get("units")) if ref and ref.get("units") else None)
+    ref_note = (ref.get("note") or "").strip() if ref else ""
+    direction = ref.get("expected_direction") if ref else ""
+    dir_word = _DIR_ZH.get(direction, "")
+    dir_clinical = _DIR_CLINICAL.get(direction, "")
+
     if (
         ref
         and ref.get("absolute_comparison_applicable")
@@ -144,33 +157,48 @@ def _biomarker_finding(
         hi = ref.get("hi")
         if lo is not None and marker.value < lo:
             status = FindingStatus.BELOW_REFERENCE
-            description = "本次观测值低于现有参考范围。"
+            desc = f"本次观测值低于文献参考范围（{lo}–{hi}）"
         elif hi is not None and marker.value > hi:
             status = FindingStatus.ABOVE_REFERENCE
-            description = "本次观测值高于现有参考范围。"
+            desc = f"本次观测值高于文献参考范围（{lo}–{hi}）"
         else:
             status = FindingStatus.WITHIN_REFERENCE
-            description = "本次观测值处于现有参考范围内。"
+            desc = f"本次观测值处于文献参考范围内（{lo}–{hi}）"
+        if ref_note:
+            desc += f"。{ref_note}"
+        description = desc
         basis = _reference_basis(
             FindingBasisKind.ABSOLUTE_REFERENCE_RANGE,
-            "现有参考元数据允许进行绝对范围比较。",
+            f"文献参考范围{lo}–{hi}（注意：非设备校准值，仅供方向参考）。",
             ref,
         )
     elif ref and ref.get("reference_type") == "directional_trend":
         status = FindingStatus.DIRECTION_ONLY
-        description = (
-            "该指标仅适用于同设备、同流程、同条件的纵向复测比较；"
-            "当前输入未提供历史测量，本次不作变化方向判断。"
-        )
+        if dir_clinical:
+            desc = (
+                f"该指标无通用绝对参考范围；{dir_clinical}。"
+                f"该指标仅适用于同条件纵向比较；当前无历史测量时仅报告本次观测值，不作变化趋势判断。"
+            )
+        else:
+            desc = (
+                "该指标无通用绝对参考范围，仅适用于同设备、同流程的纵向复测比较；"
+                "无历史测量时仅报告本次值，不作趋势判断。"
+            )
+        if ref_note:
+            desc += f" {ref_note}"
+        description = desc
         basis = _reference_basis(
             FindingBasisKind.DIRECTIONAL_TREND,
-            "现有参考元数据没有可靠绝对范围，且当前没有历史测量可供比较。",
+            "文献仅提供方向性趋势，无可靠绝对阈值。",
             ref,
             include_expected_direction=False,
         )
     else:
         status = FindingStatus.NOT_CLASSIFIABLE
-        description = "该指标没有可用于单次分类的可靠参考范围。"
+        desc = "该指标暂无可用于单次分类的参考信息。"
+        if ref_note:
+            desc += f" {ref_note}"
+        description = desc
         basis = _reference_basis(
             FindingBasisKind.NO_RELIABLE_REFERENCE,
             "现有参考元数据不支持单次正常或异常分类。",

@@ -13,6 +13,7 @@ from numbers import Real
 from typing import Any, Dict, Mapping, Optional
 
 import knowledge_admin
+from biomarker_refs import marker_ref
 from pydantic import ValidationError
 
 from .config import CoreKnowledgeConfig, LlmRoleConfig, PipelineConfig
@@ -284,6 +285,30 @@ def orchestration_metadata(result: OrchestrationResult) -> Dict[str, Any]:
     }
 
 
+def _dedup_recommendations(items: list[str]) -> list[str]:
+    """Remove near-duplicate recommendations by word overlap."""
+    if len(items) <= 1:
+        return items
+    keep = []
+    keep_word_sets = []
+    for item in items:
+        words = {w for w in item if len(w) >= 2}
+        is_dup = False
+        for prev in keep_word_sets:
+            if not words or not prev:
+                continue
+            overlap = len(words & prev)
+            smaller = min(len(words), len(prev))
+            if smaller > 0 and overlap / smaller > 0.5:
+                is_dup = True
+                break
+        if not is_dup:
+            keep.append(item)
+            keep_word_sets.append(words)
+    return keep
+
+
+
 def _one_line(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
 
@@ -291,6 +316,144 @@ def _one_line(value: Any) -> str:
 def _table_cell(value: Any) -> str:
     return _one_line(value).replace("|", "\\|") or "—"
 
+
+
+
+def _result_value_text(finding: Any) -> str:
+    """Keep the result cell factual and separate from the explanation."""
+    if finding is None or getattr(finding, "value", None) is None:
+        return "未获得可用数据"
+    modality = str(getattr(getattr(finding, "modality", None), "value", ""))
+    prefix = "模型预测值" if modality == "clinical_scale" else "本次记录值"
+    unit = _one_line(getattr(finding, "unit", ""))
+    suffix = f" {unit}" if unit else ""
+    return f"{prefix}：{_one_line(finding.value)}{suffix}"
+
+
+def _first_reading_sentence(value: Any) -> str:
+    text = _one_line(value).removeprefix("模型预测结果：")
+    return re.split(r"[。；]", text, maxsplit=1)[0].strip()
+
+
+_METRIC_PURPOSES = {
+    "resting_emg_level": "静息时肌肉是否仍有不必要的紧张",
+    "wrist_co_contraction_index": "腕屈肌和伸肌是否同时用力、动作是否协调",
+    "finger_co_contraction_index": "手指屈肌和伸肌是否同时用力、动作是否协调",
+    "emg_activation_rms": "动作时肌肉募集的总体强弱",
+    "fcr_iemg": "桡侧腕屈肌在整个动作中的总用力量",
+    "fds_iemg": "指浅屈肌在整个动作中的总用力量",
+    "ecu_iemg": "尺侧腕伸肌在整个动作中的总用力量",
+    "extensor_digitorum_iemg": "指伸肌在整个动作中的总用力量",
+    "flexor_extensor_iemg_ratio": "屈肌和伸肌出力是否平衡",
+    "emg_burst_duration": "一次动作中肌肉持续发力的时长",
+    "fcr_mdf": "桡侧腕屈肌的疲劳或募集变化",
+    "fds_mdf": "指浅屈肌的疲劳或募集变化",
+    "ecu_mdf": "尺侧腕伸肌的疲劳或募集变化",
+    "extensor_digitorum_mdf": "指伸肌的疲劳或募集变化",
+    "pathological_asymmetry_index": "两侧大脑静息活动是否平衡",
+    "corticomuscular_coherence_beta": "大脑运动区和肌肉发力是否同步配合",
+    "prefrontal_theta_beta_ratio": "前额叶与注意、任务控制相关的脑电活动比例",
+    "interhemispheric_motor_coherence": "左右运动脑区之间的协同活动",
+    "movement_mu_power_change": "动作时运动脑区的μ节律反应",
+    "movement_beta_power_change": "动作时运动脑区的β节律反应",
+    "movement_smoothness_sparc": "动作是否连续、流畅，是否频繁停顿或抖动",
+    "range_of_motion_proxy": "本次动作活动范围的大小",
+    "tremor_index_3_6hz": "动作中3–6Hz震颤成分的多少",
+    "wrist_flexion_peak_velocity": "腕屈动作达到的最快速度",
+    "wrist_extension_peak_velocity": "腕伸动作达到的最快速度",
+    "finger_extension_peak_velocity": "伸指动作达到的最快速度",
+}
+
+
+def _metric_purpose(finding: Any) -> str:
+    key = str(getattr(finding, "metric_key", ""))
+    return _METRIC_PURPOSES.get(key, _one_line(getattr(finding, "name", "该指标")))
+
+
+def _plain_interpretation_text(finding: Any) -> str:
+    """Explain what the indicator measures before stating comparison limits."""
+    if finding is None:
+        return "本次数据已记录，建议结合同条件复测看变化。"
+    if getattr(finding, "value", None) is None:
+        return f"用于观察{_metric_purpose(finding)}；本次没有可用数据，暂不作判断。"
+
+    metric_key = str(getattr(finding, "metric_key", ""))
+    modality = str(getattr(getattr(finding, "modality", None), "value", ""))
+    if modality == "clinical_scale":
+        if metric_key == "FMA_UE":
+            return "反映手部动作完成情况；需结合现场动作检查确认。"
+        reading = _first_reading_sentence(getattr(finding, "description", ""))
+        if metric_key == "hand_tone":
+            return f"{reading or '反映肌肉放松和阻力情况'}；需由治疗师实际检查确认。"
+        if metric_key == "hand_function":
+            return f"{reading or '反映手部动作恢复阶段'}；以实际抓握和伸指观察为准。"
+        return "这是模型预测结果，需结合现场检查确认。"
+
+    purpose = _metric_purpose(finding)
+    result = _result_value_text(finding)
+    status = str(getattr(getattr(finding, "status", None), "value", ""))
+    if status == "within_reference":
+        return f"用于观察{purpose}；{result}在文献参考范围内，仍需结合动作表现判断。"
+    if status == "above_reference":
+        return f"用于观察{purpose}；{result}高于文献参考范围，需结合动作表现和复测判断。"
+    if status == "below_reference":
+        return f"用于观察{purpose}；{result}低于文献参考范围，需结合动作表现和复测判断。"
+
+    reference = marker_ref(metric_key) or {}
+    direction = {"increase": "升高", "decrease": "下降"}.get(
+        str(reference.get("expected_direction") or "")
+    )
+    if status == "direction_only":
+        trend = f"研究通常看同条件下是否{direction}" if direction else "研究通常看同条件下的变化方向"
+        return f"用于观察{purpose}；{result}是本次记录，{trend}，本次先作为个人基线。"
+    if status in {"not_classifiable", "missing"}:
+        return (
+            f"用于观察{purpose}；{result}是本设备/算法算出的本次记录，"
+            "目前没有统一的好坏范围，后续同条件复测看变化。"
+        )
+    return f"用于观察{purpose}；{result}先作为本次基线，后续同条件复测看变化。"
+
+
+_BRUNNSTROM_ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
+
+
+def _overall_subtype_text(result: OrchestrationResult) -> str:
+    """Create the visible test-only overall subtype from pipeline observations.
+
+    The planner_rag ReportGenerator owns narrative and strategy text, but its
+    v0.1 contract did not carry the legacy overall-subtype field. This concise
+    synthesis is deterministic and stays within the available model-predicted
+    observations; it does not add a diagnosis or a treatment prescription.
+    """
+    findings = result.interpretation.findings if result.interpretation else []
+    by_metric = {finding.metric_key: finding for finding in findings}
+    hand_function = by_metric.get("hand_function")
+    fma_hand = by_metric.get("FMA_UE")
+
+    stage_number: Optional[int] = None
+    if hand_function is not None:
+        try:
+            stage_number = int(hand_function.value)
+        except (TypeError, ValueError):
+            stage_number = None
+    stage_prefix = (
+        f"{_BRUNNSTROM_ROMAN[stage_number]}期"
+        if stage_number in _BRUNNSTROM_ROMAN
+        else "手功能分期待确认"
+    )
+    stage_detail = _one_line(
+        hand_function.description if hand_function is not None else ""
+    ) or "本次未获得可用的手功能模型预测结果"
+
+    fma_detail = ""
+    if fma_hand is not None and fma_hand.value is not None:
+        fma_detail = f"FMA手部子量表模型预测值为{_one_line(fma_hand.value)}分；"
+
+    return (
+        f"{stage_prefix}-手功能综合亚型（测试性归纳）：{stage_detail}；"
+        f"{fma_detail}"
+        "中枢驱动、协同分离和关节活动度仍需结合动作检查确认。"
+    )
 
 def _ordered_citations(report: ReportResult) -> list[str]:
     values: list[str] = []
@@ -328,9 +491,13 @@ def render_compatible_markdown(
         finding.finding_id: finding.name
         for finding in (result.interpretation.findings if result.interpretation else [])
     }
-    finding_modalities = {
-        finding.finding_id: finding.modality.value
+    source_findings = {
+        finding.finding_id: finding
         for finding in (result.interpretation.findings if result.interpretation else [])
+    }
+    finding_modalities = {
+        finding_id: finding.modality.value
+        for finding_id, finding in source_findings.items()
     }
     source_details: Dict[str, Dict[str, str]] = {}
     if result.core_knowledge is not None:
@@ -408,8 +575,8 @@ def render_compatible_markdown(
             "",
             f"### {label}",
             "",
-            "| 指标 | 本次结果与知识解读 | 依据 |",
-            "|---|---|---|",
+            "| 指标 | 本次结果 | 解读 | 依据 |",
+            "|---|---|---|---|",
         ])
         for finding in group:
             rendered_ids.add(finding.finding_id)
@@ -421,7 +588,8 @@ def render_compatible_markdown(
                             finding_names.get(finding.finding_id)
                             or finding.finding_id
                         ),
-                        _table_cell(finding.statement),
+                        _table_cell(_result_value_text(source_findings.get(finding.finding_id))),
+                        _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id))),
                         markers(finding.citations) or "—",
                     ]
                 )
@@ -432,29 +600,39 @@ def render_compatible_markdown(
             continue
         lines.extend([
             "",
-            "| 指标 | 本次结果与知识解读 | 依据 |",
-            "|---|---|---|",
+            "| 指标 | 本次结果 | 解读 | 依据 |",
+            "|---|---|---|---|",
             "| "
             + " | ".join([
                 _table_cell(finding_names.get(finding.finding_id) or finding.finding_id),
-                _table_cell(finding.statement),
+                _table_cell(_result_value_text(source_findings.get(finding.finding_id))),
+                _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id))),
                 markers(finding.citations) or "—",
             ])
             + " |",
         ])
 
-    lines.extend(["", "## 三、康复策略建议", ""])
+    overall_subtype = _overall_subtype_text(result)
+    lines.extend([
+        "",
+        "## 三、综合亚型界定",
+        "",
+        f"**综合亚型：** {_one_line(overall_subtype)}",
+    ])
+
+    deduped_recommendations = _dedup_recommendations([r for r in report.recommendations if r])
+    lines.extend(["", "## 四、康复策略建议", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
-        for index, value in enumerate(report.recommendations, start=1)
+        for index, value in enumerate(deduped_recommendations, start=1)
     )
-    lines.extend(["", "## 四、进一步个体化所需信息", ""])
+    lines.extend(["", "## 五、进一步个体化所需信息", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
         for index, value in enumerate(report.limitations, start=1)
     )
 
-    lines.extend(["", "## 五、依据来源与参考文献", ""])
+    lines.extend(["", "## 六、依据来源与参考文献", ""])
     if not source_ids:
         lines.append("本次报告未引用外部检索来源。")
     else:

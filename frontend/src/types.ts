@@ -513,6 +513,16 @@ export interface GuidelineTestReference {
   page_locator: string
 }
 
+export interface GuidelineTestSourceDetail {
+  source_type: string
+  evidence_tier: string
+  authority_weight: string
+  source_url: string
+  access_status: string
+  rights_status: string
+  local_excerpt: string
+}
+
 export interface GuidelineTestHit {
   rank: number
   score: number
@@ -537,6 +547,7 @@ export interface GuidelineTestHit {
   non_clinical_statement: string
   research_only: boolean
   expert_verified: boolean
+  source_detail: GuidelineTestSourceDetail
 }
 
 export interface GuidelineTestSearchResponse {

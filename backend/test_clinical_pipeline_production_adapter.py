@@ -34,6 +34,7 @@ from clinical_pipeline.production_adapter import (
     build_production_orchestrator,
     orchestration_metadata,
     render_compatible_markdown,
+    _plain_interpretation_text,
 )
 from clinical_pipeline.report_generator import ReportFinding, ReportResult
 from clinical_pipeline.validator import (
@@ -106,6 +107,21 @@ def _interpretation() -> InterpretationResult:
                     description="模型预测结果。",
                 ),
                 source_field="predictions.FMA_UE",
+            ),
+            Finding(
+                finding_id="prediction:hand_function",
+                metric_key="hand_function",
+                name="Brunnstrom手功能分期（模型预测）",
+                value=3,
+                unit="期",
+                status=FindingStatus.OBSERVED,
+                modality=FindingModality.CLINICAL_SCALE,
+                description="模型预测结果：可引出共同运动，能完成钩状抓握但难以主动伸展。",
+                basis=FindingBasis(
+                    kind=FindingBasisKind.SCALE_READING,
+                    description="模型预测结果。",
+                ),
+                source_field="predictions.hand_function",
             )
         ],
     )
@@ -308,9 +324,37 @@ class ProductionAdapterTests(unittest.TestCase):
         self.assertNotIn("Validator：", markdown)
         self.assertIn("检索证据不可用", markdown)
         self.assertIn("本次报告未引用外部检索来源", markdown)
+        self.assertIn("## 三、综合亚型界定", markdown)
+        self.assertIn("**综合亚型：**", markdown)
+        self.assertIn("III期-手功能综合亚型（测试性归纳）", markdown)
+        self.assertIn("| 指标 | 本次结果 | 解读 | 依据 |", markdown)
+        self.assertIn("模型预测值：8 分", markdown)
+        self.assertIn("反映手部动作完成情况；需结合现场动作检查确认。", markdown)
+        self.assertNotIn("本次结果与知识解读", markdown)
         self.assertEqual(
             orchestration_metadata(result)["retrieval_status"], "unavailable"
         )
+
+    def test_plain_biomarker_explanation_names_purpose_before_retest_limit(self) -> None:
+        finding = Finding(
+            finding_id="biomarker:movement_smoothness_sparc",
+            metric_key="movement_smoothness_sparc",
+            name="运动平滑度（SPARC）",
+            value=-1.4,
+            unit="SPARC",
+            status=FindingStatus.NOT_CLASSIFIABLE,
+            modality=FindingModality.IMU,
+            description="该指标暂无可用于单次分类的参考信息。",
+            basis=FindingBasis(
+                kind=FindingBasisKind.NO_RELIABLE_REFERENCE,
+                description="现有参考元数据不支持单次正常或异常分类。",
+            ),
+            source_field="biomarkers.movement_smoothness_sparc.value",
+        )
+        text = _plain_interpretation_text(finding)
+        self.assertIn("动作是否连续、流畅", text)
+        self.assertIn("本设备/算法算出的本次记录", text)
+        self.assertIn("后续同条件复测看变化", text)
 
     def test_core_knowledge_citation_has_reference_details(self) -> None:
         result = _completed_result(
