@@ -48,6 +48,11 @@
     "disease_days": {
       "type": ["integer", "null"],
       "minimum": 0
+    },
+    "hand_brunnstrom_stage": {
+      "type": ["string", "null"],
+      "enum": ["I", "II", "III", "IV", "V", "VI", null],
+      "description": "登记时的Brunnstrom手功能分期，云端映射为初始hand_function"
     }
   }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowLeft, CloudUpload, RadioTower } from 'lucide-react'
 import PatientForm from '../components/PatientForm'
 import MarkdownReport from '../components/MarkdownReport'
@@ -9,6 +10,7 @@ import { useRoute } from '../app/AppContext'
 import {
   EvalPackageParse,
   Institution,
+  PackageUploadProgress,
   type AssessmentExportKind,
   deleteMysqlAssessment,
   downloadAssessmentExport,
@@ -44,6 +46,11 @@ const INITIAL_PATIENT: PatientInfo = {
 
 const shortHash = (value?: string | null) =>
   value ? `${value.slice(0, 12)}...${value.slice(-6)}` : '-'
+
+const formatFileSize = (bytes: number) => {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function toStringList(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item))
@@ -84,13 +91,14 @@ function prefillToPatient(p: EvalPackageParse['patient_prefill']): PatientInfo {
 }
 
 export default function TaskInterfacePage() {
-  const { navigate } = useRoute()
+  const { navigate, route } = useRoute()
   const [mode, setMode] = useState<Mode>('offline')
 
   // Offline-mode local state
   const [institution, setInstitution] = useState<Institution>('hospital')
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [parsing, setParsing] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<PackageUploadProgress | null>(null)
   const [parsed, setParsed] = useState<EvalPackageParse | null>(null)
   const [patient, setPatient] = useState<PatientInfo>(INITIAL_PATIENT)
   const [submitting, setSubmitting] = useState(false)
@@ -112,6 +120,7 @@ export default function TaskInterfacePage() {
     const f = e.target.files?.[0] || null
     setZipFile(f)
     setParsed(null)
+    setUploadProgress(null)
     setLocalError(null)
   }
 
@@ -122,14 +131,21 @@ export default function TaskInterfacePage() {
     }
     setLocalError(null)
     setParsing(true)
+    setUploadProgress({
+      phase: 'uploading',
+      loadedBytes: 0,
+      totalBytes: zipFile.size,
+      percent: 0,
+    })
     try {
-      const res = await parseEvalPackage(institution, zipFile)
+      const res = await parseEvalPackage(institution, zipFile, setUploadProgress)
       setParsed(res)
       setPatient(prefillToPatient(res.patient_prefill))
     } catch (err) {
       setLocalError(`解析失败：${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setParsing(false)
+      setUploadProgress(null)
     }
   }
 
@@ -260,6 +276,7 @@ export default function TaskInterfacePage() {
                     <label>数据来源机构</label>
                     <select
                       value={institution}
+                      disabled={parsing}
                       onChange={(e) => {
                         setInstitution(e.target.value as Institution)
                         setParsed(null)
@@ -271,14 +288,29 @@ export default function TaskInterfacePage() {
                   </div>
                   <div className="field">
                     <label>评估数据包（.zip）</label>
-                    <input type="file" accept=".zip" onChange={onPickZip} />
+                    <input type="file" accept=".zip" onChange={onPickZip} disabled={parsing} />
                   </div>
                 </div>
                 <div className="actions">
                   <button className="button secondary" onClick={handleParse} disabled={parsing || !zipFile}>
-                    {parsing ? '解析中…' : '解析数据包'}
+                    {!parsing
+                      ? '解析数据包'
+                      : uploadProgress?.phase === 'server_processing'
+                        ? '服务器校验中…'
+                        : `上传中 ${uploadProgress?.percent ?? 0}%`}
                   </button>
                 </div>
+
+                {parsing && uploadProgress && (
+                  <div className="package-upload-progress" role="status" aria-live="polite">
+                    <progress max={100} value={uploadProgress.percent} />
+                    <span>
+                      {uploadProgress.phase === 'uploading'
+                        ? `${formatFileSize(uploadProgress.loadedBytes)} / ${formatFileSize(uploadProgress.totalBytes)}`
+                        : '上传完成，正在校验数据包'}
+                    </span>
+                  </div>
+                )}
 
                 {parsed && (
                   <div className="report-display" style={{ marginTop: 12 }}>
@@ -366,6 +398,35 @@ export default function TaskInterfacePage() {
             </>
           )}
         </>
+      )}
+
+      {route !== 'task-interface' && (parsing || (!processing && parsed)) && createPortal(
+        <button
+          type="button"
+          className={`background-upload-status${parsed && !parsing ? ' complete' : ''}`}
+          onClick={() => navigate('task-interface')}
+          aria-label="返回设备接口查看数据包进度"
+        >
+          <CloudUpload aria-hidden="true" />
+          <span className="background-upload-copy">
+            <strong>
+              {parsing
+                ? uploadProgress?.phase === 'server_processing'
+                  ? '数据包校验中'
+                  : `数据包上传中 ${uploadProgress?.percent ?? 0}%`
+                : '数据包解析完成'}
+            </strong>
+            <span>
+              {parsing && uploadProgress?.phase === 'uploading'
+                ? `${formatFileSize(uploadProgress.loadedBytes)} / ${formatFileSize(uploadProgress.totalBytes)}`
+                : '点击返回设备接口查看'}
+            </span>
+          </span>
+          {parsing && uploadProgress && (
+            <progress max={100} value={uploadProgress.percent} />
+          )}
+        </button>,
+        document.body,
       )}
     </div>
   )

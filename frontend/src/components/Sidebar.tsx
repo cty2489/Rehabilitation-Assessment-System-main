@@ -5,6 +5,7 @@ import {
   ChartNoAxesCombined,
   ClipboardPlus,
   Files,
+  Search,
   LayoutDashboard,
   LibraryBig,
   Settings,
@@ -22,6 +23,7 @@ const NAV: { route: Route; label: string; icon: LucideIcon; group?: 'system' }[]
   { route: 'stats', label: '统计分析', icon: ChartNoAxesCombined },
   { route: 'task-interface', label: '设备接口', icon: Cable },
   { route: 'knowledge', label: 'RAG 知识库', icon: LibraryBig },
+  { route: 'rag-guidelines', label: '知识与研究证据', icon: Search },
   { route: 'llm-settings', label: '模型设置', icon: BrainCircuit, group: 'system' },
   { route: 'system', label: '系统管理', icon: Settings },
 ]
