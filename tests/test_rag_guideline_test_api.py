@@ -269,6 +269,7 @@ if str(ROOT / "Deeplearning") not in sys.path:
 os.environ.setdefault("APP_AUTH_TOKEN", "test-token-for-rag-api")
 os.environ.setdefault("APP_ADMIN_USER", "test")
 os.environ.setdefault("APP_ADMIN_PASSWORD", "test")
+os.environ.setdefault("ALLOW_LEGACY_ADMIN_BEARER", "true")
 os.environ.setdefault("MYSQL_HOST", "127.0.0.1")
 os.environ.setdefault("MYSQL_PORT", "3306")
 os.environ.setdefault("RAG_GUIDELINE_TEST_ENABLED", "true")

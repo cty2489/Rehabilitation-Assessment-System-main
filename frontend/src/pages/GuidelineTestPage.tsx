@@ -279,6 +279,8 @@ function GuidelineHitItem({ hit }: { hit: GuidelineTestHit }) {
   const citationIndices = hit.citation_indices?.length
     ? hit.citation_indices
     : [hit.citation_index]
+  const sourceDetail = hit.source_detail
+  const localExcerpt = sourceDetail.local_excerpt || hit.text
   const hasResearchMetadata = Boolean(
     hit.research_only
       || hit.research_type
@@ -306,6 +308,29 @@ function GuidelineHitItem({ hit }: { hit: GuidelineTestHit }) {
       <p className={`rag-hit-text ${expanded ? 'expanded' : ''}`}>
         {renderClickableText(hit.text)}
       </p>
+
+      <div className="rag-source-card">
+        <div className="rag-source-card-head">
+          <strong>证据来源与访问</strong>
+          {sourceDetail.source_type && <span>{sourceDetail.source_type}</span>}
+          {sourceDetail.evidence_tier && <span>证据层级 {sourceDetail.evidence_tier}</span>}
+        </div>
+        <p className="rag-source-access">{sourceDetail.access_status}</p>
+        <details className="rag-source-excerpt">
+          <summary>查看系统内证据摘录</summary>
+          <p>{localExcerpt}</p>
+        </details>
+        <div className="rag-source-links">
+          {sourceDetail.source_url ? (
+            <a href={sourceDetail.source_url} target="_blank" rel="noopener noreferrer">
+              查看原始来源
+            </a>
+          ) : (
+            <span>原始来源链接尚未归档</span>
+          )}
+          <span>{sourceDetail.rights_status}</span>
+        </div>
+      </div>
 
       {hasResearchMetadata && (
         <div className="rag-research-block">

@@ -252,6 +252,14 @@ class ReportModel:
         load_4bit = _env_flag("LLM_LOAD_4BIT", True)
         adapter_arg = adapter_dir if use_adapter else None
         try:
+            import torch
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "本地报告模型必须使用 CUDA GPU；当前 torch 未检测到可用 CUDA。"
+                    "请启动带 CUDA 的 Python 环境，或改用远程报告服务。"
+                )
+
             from llm.generate import _load_model, _resolve_eos_ids
 
             model, tok = _load_model(

@@ -116,6 +116,7 @@ class GuidelineSearchHit:
     non_clinical_statement: str
     research_only: bool
     expert_verified: bool
+    source_detail: Dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,7 @@ class GuidelineSearchResponse:
             "non_clinical_statement": h.non_clinical_statement,
             "research_only": h.research_only,
             "expert_verified": h.expert_verified,
+            "source_detail": h.source_detail,
         }
 
 
@@ -289,6 +291,46 @@ def _optional_bool(value: Any, field: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{field} must be a boolean")
     return value
+
+
+def _source_detail(
+    metadata: Dict[str, Any], reference: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Return a safe, in-system evidence card for a retrieved source.
+
+    The card stores a local evidence extract, not a source full text. Full texts
+    are only appropriate when they are open access or separately licensed.
+    """
+    source_url = _optional_string(metadata.get("reference_url"), "metadata.reference_url")
+    if not source_url:
+        doi = _optional_string(reference.get("doi"), "reference.doi")
+        source_url = doi if doi.startswith("https://") else (
+            f"https://doi.org/{doi}" if doi.startswith("10.") else ""
+        )
+    if source_url and not source_url.startswith("https://"):
+        source_url = ""
+    raw_weight = metadata.get("authority_weight")
+    if raw_weight is None:
+        authority_weight = ""
+    elif isinstance(raw_weight, bool) or not isinstance(raw_weight, (str, int, float)):
+        raise ValueError("metadata.authority_weight must be a string or number")
+    else:
+        authority_weight = str(raw_weight)
+    return {
+        "source_type": _optional_string(metadata.get("source_type"), "metadata.source_type"),
+        "evidence_tier": _optional_string(metadata.get("evidence_tier"), "metadata.evidence_tier"),
+        "authority_weight": authority_weight,
+        "source_url": source_url,
+        "access_status": _optional_string(
+            metadata.get("access_status"), "metadata.access_status"
+        ) or "系统保存证据摘录；原始来源可用性需以访问时状态为准。",
+        "rights_status": _optional_string(
+            metadata.get("rights_status"), "metadata.rights_status"
+        ) or "未保存受版权保护全文。",
+        "local_excerpt": _optional_string(
+            metadata.get("local_evidence_excerpt"), "metadata.local_evidence_excerpt"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +511,7 @@ def _assign_hit_citations(
             non_clinical_statement=hit.non_clinical_statement,
             research_only=hit.research_only,
             expert_verified=hit.expert_verified,
+            source_detail=hit.source_detail,
         ))
     return updated
 
@@ -640,6 +683,7 @@ async def search_guidelines(
         if not hit_title:
             hit_title = first_ref.get("title", "")
 
+        source_detail = _source_detail(metadata or {}, first_ref)
         result_hits.append(GuidelineSearchHit(
             rank=i,
             score=validated_score,
@@ -653,7 +697,7 @@ async def search_guidelines(
             citation_indices=[],
             chunk_id=chunk_id,
             references=refs,
-            source_type=source_type,
+            source_type=source_type or source_detail["source_type"],
             knowledge_type=knowledge_type,
             evidence_scope=evidence_scope,
             research_type=research_type,
@@ -664,6 +708,7 @@ async def search_guidelines(
             non_clinical_statement=non_clinical_statement,
             research_only=research_only,
             expert_verified=expert_verified,
+            source_detail=source_detail,
         ))
 
     citations = _build_citations(result_hits)
