@@ -11,9 +11,12 @@ const ROUTE_LABEL: Record<Route, string> = {
   stats: '统计分析',
   'task-interface': '设备接口',
   knowledge: 'RAG 知识库',
-  'rag-guidelines': '知识与研究证据',
-  'rag-guidelines-test': '知识与研究证据',
+  'knowledge-graph': '知识结构（管理员）',
+  'rag-guidelines': 'RAG 知识库',
+  'rag-guidelines-test': 'RAG 知识库',
   'llm-settings': '模型设置',
+  'llm-control-test': 'LLM 对照测试',
+  'llm-benchmark': 'LLM 评测准备',
   system: '系统管理',
 }
 

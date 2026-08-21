@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional, Protocol, Sequence
+from typing import Any, Dict, List, Literal, Mapping, Optional, Protocol, Sequence
 
 from pydantic import Field
 
@@ -157,6 +157,7 @@ def _planner_messages(
     core_knowledge: CoreKnowledgeBundle,
     *,
     retry: bool,
+    graph_context: Optional[Mapping[str, Any]] = None,
 ) -> list[PlannerMessage]:
     schema_example = {
         "topics": [
@@ -190,11 +191,19 @@ def _planner_messages(
     )
     if retry:
         system += "上一次输出未通过结构或边界校验；请严格按本次JSON形状重新生成。"
+    if graph_context:
+        system += (
+            "输入中的knowledge_graph_context来自本地测试原型，所有关系均为"
+            "pending/unverified。你应保留其已有finding_ids与检索边界，并只补充或整理"
+            "主题；不得把图谱关系升级为诊断、确定因果或治疗结论。"
+        )
 
     planner_input = {
         "interpretation": interpretation.model_dump(mode="json"),
         "core_knowledge": core_knowledge.model_dump(mode="json"),
     }
+    if graph_context:
+        planner_input["knowledge_graph_context"] = dict(graph_context)
     user = (
         "【输入】\n"
         + json.dumps(planner_input, ensure_ascii=False, separators=(",", ":"))
@@ -214,7 +223,7 @@ class ExistingLlmClient:
         self,
         *,
         model_id: Optional[str] = None,
-        max_new_tokens: int = 768,
+        max_new_tokens: int = 512,
     ) -> None:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens必须大于0")
@@ -248,7 +257,10 @@ class ExistingLlmClient:
             model,
             list(messages),
             sample=attempt > 1,
+            generation_prefill="</think>\n{",
             max_new_tokens=self._max_new_tokens,
+            stop_on_json=True,
+            required_top_keys=["topics", "queries", "reason", "generation_mode"],
         )
 
 
@@ -265,6 +277,8 @@ class KnowledgePlanner:
         self,
         interpretation: InterpretationResult,
         core_knowledge: CoreKnowledgeBundle,
+        *,
+        graph_context: Optional[Mapping[str, Any]] = None,
     ) -> KnowledgePlan:
         if not isinstance(interpretation, InterpretationResult):
             raise TypeError("interpretation必须是InterpretationResult")
@@ -278,6 +292,7 @@ class KnowledgePlanner:
                         interpretation,
                         core_knowledge,
                         retry=attempt > 1,
+                        graph_context=graph_context,
                     ),
                     attempt=attempt,
                 )

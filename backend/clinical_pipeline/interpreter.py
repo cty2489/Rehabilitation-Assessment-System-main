@@ -47,13 +47,31 @@ def _prediction_finding(
     description: str,
     basis_kind: FindingBasisKind,
     source_field: str,
+    clinical_score_source: str = "dl_prediction",
 ) -> Finding:
     missing = value is None
-    finding_description = (
-        "本次未获得该项模型预测结果；不得据此推断医生实测结果。"
-        if missing
-        else f"模型预测结果：{description}。该结果不是医生实测结论。"
-    )
+    if clinical_score_source == "clinician_provided":
+        finding_description = (
+            "本次未获得该项临床评定结果。"
+            if missing
+            else f"临床评定结果：{description}。仍需结合现场动作检查。"
+        )
+        basis_description = (
+            "CanonicalAssessmentContext中该临床评定字段缺失。"
+            if missing
+            else "该观察项来自医生提供的临床评定结果。"
+        )
+    else:
+        finding_description = (
+            "本次未获得该项模型预测结果；不得据此推断医生实测结果。"
+            if missing
+            else f"模型预测结果：{description}。该结果不是医生实测结论。"
+        )
+        basis_description = (
+            "CanonicalAssessmentContext中该模型预测字段缺失。"
+            if missing
+            else "该观察项来自深度模型预测字段，不是医生实测记录。"
+        )
     return Finding(
         finding_id=f"prediction:{metric_key}",
         metric_key=metric_key,
@@ -67,9 +85,7 @@ def _prediction_finding(
         basis=FindingBasis(
             kind=FindingBasisKind.MISSING_INPUT if missing else basis_kind,
             description=(
-                "CanonicalAssessmentContext中该模型预测字段缺失。"
-                if missing
-                else "该观察项来自深度模型预测字段，不是医生实测记录。"
+                basis_description
             ),
         ),
         source_field=source_field,
@@ -231,33 +247,42 @@ class Interpreter:
             raise TypeError("Interpreter input must be CanonicalAssessmentContext")
 
         predictions = context.predictions
+        clinical_score_source = str(
+            context.quality_metadata.get("clinical_score_source", "dl_prediction")
+        )
+        source_label = (
+            "临床评定结果" if clinical_score_source == "clinician_provided" else "模型预测"
+        )
         findings = [
             _prediction_finding(
                 metric_key="FMA_UE",
                 name="FMA手部子量表，范围0–20",
                 value=predictions.FMA_UE,
                 unit="分",
-                description="FMA手部子量表预测值，量表范围为0–20分",
+                description="FMA手部子量表数值，量表范围为0–20分",
                 basis_kind=FindingBasisKind.SCALE_DEFINITION,
                 source_field="predictions.FMA_UE",
+                clinical_score_source=clinical_score_source,
             ),
             _prediction_finding(
                 metric_key="hand_tone",
-                name="手部肌张力（Hand MAS，模型预测）",
+                name=f"手部肌张力（Hand MAS，{source_label}）",
                 value=predictions.hand_tone,
                 unit="级",
                 description=hand_tone_reading(predictions.hand_tone),
                 basis_kind=FindingBasisKind.SCALE_READING,
                 source_field="predictions.hand_tone",
+                clinical_score_source=clinical_score_source,
             ),
             _prediction_finding(
                 metric_key="hand_function",
-                name="Brunnstrom手功能分期（模型预测）",
+                name=f"Brunnstrom手功能分期（{source_label}）",
                 value=predictions.hand_function,
                 unit="期",
                 description=brunnstrom_reading(predictions.hand_function),
                 basis_kind=FindingBasisKind.SCALE_READING,
                 source_field="predictions.hand_function",
+                clinical_score_source=clinical_score_source,
             ),
         ]
         findings.extend(

@@ -30,6 +30,9 @@ from clinical_pipeline.report_generator import (
     ReportGenerator,
     ReportMessage,
     ReportResult,
+    _json_payload,
+    build_conservative_report,
+    build_llm_strategy_recovery_report,
 )
 
 
@@ -211,8 +214,116 @@ class ReportGeneratorTests(unittest.TestCase):
             model,
             messages,
             sample=False,
-            max_new_tokens=1024,
+            generation_prefill="</think>\n{",
+            max_new_tokens=768,
+            stop_on_json=True,
+            required_top_keys=[
+                "summary",
+                "evidence_summary",
+                "limitations",
+                "recommendations",
+            ],
         )
+
+    def test_json_payload_accepts_fenced_or_prefixed_object(self) -> None:
+        payload = _valid_payload(RetrievalStatus.COMPLETE)
+        raw = "已生成如下内容：\n```json\n" + json.dumps(
+            payload, ensure_ascii=False
+        ) + "\n```"
+
+        self.assertEqual(_json_payload(raw), payload)
+
+    def test_conservative_report_keeps_input_findings_and_marks_fallback(self) -> None:
+        report_input = _report_input(RetrievalStatus.COMPLETE)
+
+        report = build_conservative_report(report_input, model_id=MODEL_ID)
+
+        self.assertEqual(report.generation_mode, "fallback")
+        self.assertEqual(
+            [finding.finding_id for finding in report.findings],
+            ["prediction:FMA_UE"],
+        )
+        self.assertIn("模型预测", report.summary)
+        self.assertEqual(len(report.recommendations), 5)
+        self.assertTrue(any("动作质量" in item for item in report.recommendations))
+        self.assertTrue(any("既往相同设备" in item for item in report.recommendations))
+
+    def test_llm_strategy_recovery_uses_rag_grounded_recommendations(self) -> None:
+        report_input = _report_input(RetrievalStatus.COMPLETE)
+        response = json.dumps(
+            {
+                "summary": "模型预测提示本次手部动作完成情况需要结合任务表现进一步观察。",
+                "recommendations": [
+                    "基于本次FMA_UE=8分及“结构化观察结果相关知识”检索主题：锚点：策略名称：抓握—放开衔接；对应本次观察：FMA手部模型预测；动作：完成抓握后主动放开；反馈：观察手指是否能分开；调整：代偿增加时降低物品难度。",
+                    "策略名称：手指分离控制；对应本次观察：手部动作完成情况；动作：逐指打开与合拢；反馈：观察腕部是否代偿；调整：动作变形时暂停并回到较简单动作。",
+                    "策略名称：任务转化；对应本次观察：本次手功能模型预测；动作：拿取、放置与松开轻量物品；反馈：观察抓握后能否主动放开；调整：需要较多辅助时减少任务步骤。",
+                    "策略名称：动作质量反馈；对应本次观察：本次记录；动作：握拳、张指与捏取；反馈：记录完成质量和不适；调整：疼痛或张力增加时暂停当前动作。",
+                    "策略名称：连续任务练习；对应本次观察：FMA手部模型预测；动作：将抓握和松开串联；反馈：观察动作连续性；调整：质量持续下降时降低任务复杂度。",
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        with patch(
+            "clinical_pipeline.report_generator._generate_strategy_recovery_text",
+            return_value=response,
+        ) as generate:
+            report = build_llm_strategy_recovery_report(
+                report_input,
+                model_id=MODEL_ID,
+            )
+
+        self.assertEqual(report.generation_mode, "llm")
+        self.assertEqual(len(report.recommendations), 5)
+        self.assertIn("模型预测", report.summary)
+        self.assertNotIn("基于本次", report.recommendations[0])
+        self.assertNotIn("FMA_UE", report.recommendations[0])
+        self.assertNotIn("检索主题", report.recommendations[0])
+        self.assertIn("抓握—放开衔接", report.recommendations[0])
+        generate.assert_called_once()
+        self.assertEqual(generate.call_args.kwargs["attempt"], 1)
+
+    def test_llm_strategy_recovery_accepts_numbered_strategy_string(self) -> None:
+        report_input = _report_input(RetrievalStatus.COMPLETE)
+        response = json.dumps(
+            {
+                "summary": "本次模型预测用于观察手部任务表现。",
+                "recommendations": "\n".join(
+                    f"{index}. 策略{index}：依据本次模型预测完成相应手部任务；观察动作质量，质量下降时降低难度。"
+                    for index in range(1, 6)
+                ),
+            },
+            ensure_ascii=False,
+        )
+        with patch(
+            "clinical_pipeline.report_generator._generate_strategy_recovery_text",
+            return_value=response,
+        ):
+            report = build_llm_strategy_recovery_report(
+                report_input,
+                model_id=MODEL_ID,
+        )
+
+        self.assertEqual(len(report.recommendations), 5)
+        self.assertIn("策略1", report.recommendations[0])
+
+    def test_compact_contract_is_the_selected_production_report_path(self) -> None:
+        report_input = _report_input(RetrievalStatus.COMPLETE)
+        compact_result = build_conservative_report(report_input, model_id=MODEL_ID)
+        compact_result = compact_result.model_copy(
+            update={"generation_mode": "llm"}
+        )
+        with patch(
+            "clinical_pipeline.report_generator.build_llm_strategy_recovery_report",
+            return_value=compact_result,
+        ) as compact:
+            result = ReportGenerator(
+                ExistingReportLlmClient(model_id=MODEL_ID),
+                prefer_compact_contract=True,
+            ).generate(report_input)
+
+        self.assertIs(result, compact_result)
+        compact.assert_called_once_with(report_input, model_id=MODEL_ID)
 
     def test_complete_generates_report_with_one_llm_call(self) -> None:
         llm = FakeReportLlmClient(

@@ -231,6 +231,7 @@ class KnowledgePlan(ContractModel):
     planner_model_id: str = Field(min_length=1, max_length=255)
     topics: List[KnowledgeTopic] = Field(min_length=1)
     queries: List[RetrievalQuery] = Field(min_length=1)
+    topic_origins: Dict[str, List[str]] = Field(default_factory=dict)
     reason: str = Field(min_length=1, max_length=1000)
     generation_mode: Literal["llm", "fallback"] = "llm"
 
@@ -279,6 +280,12 @@ class ReportGenerationInput(ContractModel):
     knowledge_plan: KnowledgePlan
     retrieval: RetrievalResult
     retrieval_barrier_call_id: str = Field(min_length=1, max_length=128)
+    # The legacy pipeline defaults to DL provenance.  The administrator-only
+    # manual-score route passes the explicit clinician source through the same
+    # report contract so it cannot be rendered as a model prediction.
+    clinical_score_source: Literal["dl_prediction", "clinician_provided"] = (
+        "dl_prediction"
+    )
     assembled_at: datetime = Field(default_factory=utc_now)
 
 

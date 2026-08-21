@@ -1,0 +1,3 @@
+# Offline-only LLM benchmark evaluation dependencies.
+rouge-score==0.1.2
+sacrebleu==2.6.0

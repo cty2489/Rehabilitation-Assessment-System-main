@@ -1,6 +1,7 @@
 import {
   AssessmentOverview,
   AuthLoginResponse,
+  ClinicalKnowledgeGraphAdmin,
   DeviceCredentialList,
   DeviceCredentialRecord,
   DeviceCredentialSecret,
@@ -16,11 +17,18 @@ import {
   KnowledgeStatusResponse,
   LlmModelSettingsPatch,
   LlmSettings,
+  LlmControlTestSession,
+  BenchmarkBatchPrepareResponse,
+  BenchmarkPresetsResponse,
+  BenchmarkSinglePrepareResponse,
   MysqlAssessmentDetail,
   MysqlAssessmentList,
+  PatientAssessmentList,
   PatientDetail,
   PatientSummary,
   PatientUpdate,
+  RagTestSearchResponse,
+  RagVersionsResponse,
   StatsSummary,
 } from './types'
 
@@ -73,7 +81,15 @@ export function fetchPatients(): Promise<PatientSummary[]> {
 }
 
 export function fetchPatient(id: number): Promise<PatientDetail> {
-  return getJSON(`/api/patients/${id}`)
+  return getJSON(`/api/patients/${id}?include_assessments=false`)
+}
+
+export function fetchPatientAssessments(
+  id: number,
+  limit = 20,
+  offset = 0,
+): Promise<PatientAssessmentList> {
+  return getJSON(`/api/patients/${id}/assessments?limit=${limit}&offset=${offset}`)
 }
 
 export async function updatePatient(
@@ -107,6 +123,34 @@ export function fetchKnowledgeStatus(): Promise<KnowledgeStatusResponse> {
   return getJSON('/api/admin/knowledge/status')
 }
 
+export function fetchRagVersions(): Promise<RagVersionsResponse> {
+  return getJSON('/api/admin/rag-versions')
+}
+
+export async function selectRagVersion(ragVersion: string): Promise<RagVersionsResponse> {
+  const res = await fetch('/api/admin/rag-versions/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ rag_version: ragVersion }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
+}
+
+export async function searchSelectedRag(query: string, topK = 5): Promise<RagTestSearchResponse> {
+  const res = await fetch('/api/rag/v1-candidate/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ query, top_k: topK }),
+  })
+  if (!res.ok) {
+    throw await parseError(res)
+  }
+  return res.json()
+}
+
 export function fetchKnowledgeEntries(): Promise<KnowledgeEntriesResponse> {
   return getJSON('/api/admin/knowledge/entries')
 }
@@ -127,8 +171,40 @@ export function fetchLlmSettings(): Promise<LlmSettings> {
   return getJSON('/api/settings/llm')
 }
 
+export async function createLlmControlTest(
+  form: FormData,
+): Promise<LlmControlTestSession> {
+  return postForm<LlmControlTestSession>('/api/llm-control-test/sessions', form)
+}
+
+export function fetchBenchmarkPresets(): Promise<BenchmarkPresetsResponse> {
+  return getJSON('/api/llm-benchmark/presets')
+}
+
+export async function prepareLlmBenchmarkBatch(
+  institution: 'hospital' | 'device',
+  file: File,
+  preset = 'benchmark_stage1',
+): Promise<BenchmarkBatchPrepareResponse> {
+  const form = new FormData()
+  form.append('institution', institution)
+  form.append('preset', preset)
+  form.append('package', file)
+  return postForm('/api/llm-benchmark/batch/prepare', form)
+}
+
+export async function prepareLlmBenchmarkSingle(
+  form: FormData,
+): Promise<BenchmarkSinglePrepareResponse> {
+  return postForm('/api/llm-benchmark/single/prepare', form)
+}
+
 export function fetchDeviceCredentials(): Promise<DeviceCredentialList> {
   return getJSON('/api/admin/device-credentials')
+}
+
+export function fetchClinicalKnowledgeGraph(): Promise<ClinicalKnowledgeGraphAdmin> {
+  return getJSON('/api/admin/knowledge-graph')
 }
 
 export async function createDeviceCredential(
@@ -246,6 +322,8 @@ export interface EvalPackagePrefill {
   diagnosis: string
   disease_days: number | null
   paralysis_side: string
+  hospital_patient_id?: string | number | null
+  clinical_age?: number | null
 }
 
 export interface EvalPackageParse {

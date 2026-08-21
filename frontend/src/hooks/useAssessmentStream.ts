@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { cancelAssessment } from '../api'
 import {
   BiomarkerCoverage,
+  KnowledgeGraphDisplay,
   PredictionEntry,
   SSEEvent,
   StepKey,
@@ -39,6 +40,7 @@ export function useAssessmentStream() {
   const [reportStreaming, setReportStreaming] = useState(false)
   const [queueAhead, setQueueAhead] = useState(0)
   const [coverage, setCoverage] = useState<BiomarkerCoverage | null>(null)
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraphDisplay | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const esRef = useRef<EventSource | null>(null)
@@ -79,6 +81,9 @@ export function useAssessmentStream() {
         case 'biomarker_coverage':
           setCoverage({ available: event.available, total: event.total, missing_keys: event.missing_keys })
           break
+        case 'knowledge_graph':
+          setKnowledgeGraph(event.graph)
+          break
         case 'report_chunk':
           setReportText((prev) => prev + event.chunk)
           break
@@ -110,6 +115,7 @@ export function useAssessmentStream() {
       setReportStreaming(false)
       setQueueAhead(0)
       setCoverage(null)
+      setKnowledgeGraph(null)
       setError(null)
       setSessionId(newSessionId)
       setPhase('processing')
@@ -141,6 +147,7 @@ export function useAssessmentStream() {
     setReportStreaming(false)
     setQueueAhead(0)
     setCoverage(null)
+    setKnowledgeGraph(null)
     setError(null)
     setSessionId(null)
   }, [phase, sessionId])
@@ -153,6 +160,7 @@ export function useAssessmentStream() {
     reportStreaming,
     queueAhead,
     coverage,
+    knowledgeGraph,
     error,
     sessionId,
     setError,

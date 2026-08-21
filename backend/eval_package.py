@@ -106,13 +106,23 @@ def _load_manifest(root: Path) -> Dict[str, Any]:
 
 
 def _patient_prefill(manifest: Dict[str, Any]) -> Dict[str, Any]:
-    """Pull whatever patient fields the manifest carries (hospital has more).
+    """Build the patient prefill from the manifest and optional clinical profile.
 
-    Always returns the full PatientInfo-shaped dict; fields the manifest lacks
-    (e.g. device has only patient_id) are left as sensible blanks for the user to
-    complete in the UI. ``diagnosis`` / ``paralysis_side`` are never in either
-    manifest and must be supplied by the clinician.
+    Legacy bundles only carry sensor-side demographics, so missing clinical
+    fields remain blank. Enriched bundles may carry ``clinical_profile``;
+    those values are still shown as editable form values and are never used to
+    overwrite raw signal data.
     """
+    profile = manifest.get("clinical_profile") or {}
+    if not isinstance(profile, dict):
+        profile = {}
+
+    def first_value(key: str, default: Any = None) -> Any:
+        value = profile.get(key)
+        if value in (None, ""):
+            value = manifest.get(key)
+        return default if value in (None, "") else value
+
     gender_raw = str(manifest.get("patient_gender") or "").strip()
     sex = "男" if gender_raw.startswith("男") else "女" if gender_raw.startswith("女") else ""
 
@@ -126,9 +136,13 @@ def _patient_prefill(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "name": str(manifest.get("patient_name") or "").strip(),
         "sex": sex,
         "age": age,
-        "diagnosis": "",
-        "disease_days": None,
-        "paralysis_side": "",
+        "hospital_patient_id": manifest.get("hospital_patient_id")
+        or profile.get("hospital_patient_id"),
+        "diagnosis": first_value("diagnosis", ""),
+        "disease_days": first_value("disease_days"),
+        "paralysis_side": first_value("paralysis_side", ""),
+        "clinical_age": profile.get("age_from_clinical_sheet"),
+        "clinical_mapping": manifest.get("clinical_mapping") or {},
     }
 
 
@@ -147,6 +161,8 @@ def _manifest_summary(manifest: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "eeg_sampling_rate_hz": dd.get("eeg_sampling_rate_hz"),
         "eeg_channel_count": dd.get("eeg_channel_count"),
+        "hospital_patient_id": manifest.get("hospital_patient_id"),
+        "clinical_mapping": manifest.get("clinical_mapping") or {},
     }
 
 

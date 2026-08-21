@@ -217,25 +217,34 @@ class Validator:
         report_input: ReportGenerationInput,
         issues: list[ValidationIssue],
     ) -> None:
+        disclosure_label = (
+            "临床评定"
+            if report_input.clinical_score_source == "clinician_provided"
+            else "模型预测"
+        )
         scale_ids = {
             finding.finding_id
             for finding in report_input.findings.findings
             if finding.modality == FindingModality.CLINICAL_SCALE
         }
         missing: list[str] = []
-        if scale_ids and "模型预测" not in report.summary:
+        if scale_ids and disclosure_label not in report.summary:
             missing.append("summary")
         missing.extend(
             finding.finding_id
             for finding in report.findings
-            if finding.finding_id in scale_ids and "模型预测" not in finding.statement
+            if finding.finding_id in scale_ids and disclosure_label not in finding.statement
         )
         if missing:
             issues.append(
                 ValidationIssue(
                     code="scale_prediction_not_disclosed",
                     level="manual_review",
-                    message="报告中的量表内容未明确标记为模型预测结果。",
+                    message=(
+                        "报告中的量表内容未明确标记为医生临床评定结果。"
+                        if report_input.clinical_score_source == "clinician_provided"
+                        else "报告中的量表内容未明确标记为模型预测结果。"
+                    ),
                     details={"locations": missing},
                 )
             )

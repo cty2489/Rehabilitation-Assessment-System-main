@@ -1,12 +1,26 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, Pencil, Plus, Save, X } from 'lucide-react'
-import { fetchPatient, fetchPatients, updatePatient } from '../api'
+import {
+  fetchMysqlAssessment,
+  fetchPatient,
+  fetchPatientAssessments,
+  fetchPatients,
+  updatePatient,
+} from '../api'
 import { useRoute } from '../app/AppContext'
 import RecordDetail from '../components/RecordDetail'
-import { DIAGNOSIS_OPTIONS, PatientDetail, PatientSummary, PatientUpdate } from '../types'
+import {
+  AssessmentRecord,
+  DIAGNOSIS_OPTIONS,
+  PatientAssessmentSummary,
+  PatientDetail,
+  PatientSummary,
+  PatientUpdate,
+} from '../types'
 import { fmtDate, fmtDateTime } from '../util'
 
 const BRUNNSTROM_STAGES = ['I', 'II', 'III', 'IV', 'V', 'VI'] as const
+const HISTORY_PAGE_SIZE = 20
 
 function formatInitialHandFunction(value: number | null) {
   return value != null && value >= 1 && value <= 6
@@ -91,13 +105,20 @@ function PatientListView({ onOpen }: { onOpen: (id: number) => void }) {
 function PatientDetailView({ id }: { id: number }) {
   const { navigate } = useRoute()
   const [patient, setPatient] = useState<PatientDetail | null>(null)
+  const [assessments, setAssessments] = useState<PatientAssessmentSummary[] | null>(null)
+  const [assessmentTotal, setAssessmentTotal] = useState(0)
+  const [assessmentPage, setAssessmentPage] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [assessmentError, setAssessmentError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<PatientUpdate>({})
   const [saving, setSaving] = useState(false)
   const [openRecords, setOpenRecords] = useState<Record<number, boolean>>({})
+  const [loadedRecords, setLoadedRecords] = useState<Record<number, AssessmentRecord>>({})
+  const [loadingRecordId, setLoadingRecordId] = useState<number | null>(null)
+  const [recordErrors, setRecordErrors] = useState<Record<number, string>>({})
 
-  const load = () =>
+  const loadPatient = () =>
     fetchPatient(id)
       .then((p) => {
         setPatient(p)
@@ -118,9 +139,61 @@ function PatientDetailView({ id }: { id: number }) {
       .catch((e) => setError(String(e.message || e)))
 
   useEffect(() => {
-    load()
+    loadPatient()
+    setAssessments(null)
+    setAssessmentTotal(0)
+    setAssessmentPage(0)
+    setOpenRecords({})
+    setLoadedRecords({})
+    setRecordErrors({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  useEffect(() => {
+    let active = true
+    setAssessments(null)
+    setAssessmentError(null)
+    fetchPatientAssessments(id, HISTORY_PAGE_SIZE, assessmentPage * HISTORY_PAGE_SIZE)
+      .then((result) => {
+        if (!active) return
+        setAssessments(result.items)
+        setAssessmentTotal(result.total)
+      })
+      .catch((e) => {
+        if (!active) return
+        setAssessmentError(String(e.message || e))
+      })
+    return () => {
+      active = false
+    }
+  }, [id, assessmentPage])
+
+  const toggleRecord = async (recordId: number) => {
+    const open = !!openRecords[recordId]
+    setOpenRecords((current) => ({ ...current, [recordId]: !open }))
+    if (open || loadedRecords[recordId]) return
+
+    setLoadingRecordId(recordId)
+    setRecordErrors((current) => {
+      const next = { ...current }
+      delete next[recordId]
+      return next
+    })
+    try {
+      const detail = await fetchMysqlAssessment(recordId)
+      setLoadedRecords((current) => ({
+        ...current,
+        [recordId]: detail as unknown as AssessmentRecord,
+      }))
+    } catch (e) {
+      setRecordErrors((current) => ({
+        ...current,
+        [recordId]: String((e as Error).message || e),
+      }))
+    } finally {
+      setLoadingRecordId((current) => (current === recordId ? null : current))
+    }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -188,7 +261,7 @@ function PatientDetailView({ id }: { id: number }) {
             </button>
           ) : (
             <span className="inline-btn-group">
-              <button className="button secondary inline-btn" onClick={() => { setEditing(false); load() }}>
+              <button className="button secondary inline-btn" onClick={() => { setEditing(false); loadPatient() }}>
                 <X aria-hidden="true" />
                 取消
               </button>
@@ -290,36 +363,69 @@ function PatientDetailView({ id }: { id: number }) {
       <div className="card">
         <h2>
           评估记录
-          <span className="h2-suffix">History · {patient.assessments.length}</span>
+          <span className="h2-suffix">History · {patient.assessment_count}</span>
         </h2>
-        {patient.assessments.length === 0 ? (
+        {assessmentError && <div className="error-banner">{assessmentError}</div>}
+        {assessments === null ? (
+          <p className="muted">加载评估记录中…</p>
+        ) : assessments.length === 0 ? (
           <p className="muted">暂无评估记录。</p>
         ) : (
-          <div className="record-list">
-            {patient.assessments.map((rec) => {
-              const open = !!openRecords[rec.id]
-              return (
-                <div key={rec.id} className="record-item">
-                  <button
-                    className="record-head"
-                    onClick={() => setOpenRecords((o) => ({ ...o, [rec.id]: !open }))}
-                  >
-                    <span className="record-time">{fmtDateTime(rec.created_at)}</span>
-                    <span className="record-summary">
-                      FMA手部 {Math.round(rec.fma_ue)}/20分 · 手部MAS {rec.hand_tone}级 · Brunnstrom手部 {rec.hand_function}期
-                    </span>
-                    {rec.report_status === 'failed' && (
-                      <span className="badge badge-warn">报告未生成</span>
+          <>
+            <div className="record-list">
+              {assessments.map((rec) => {
+                const open = !!openRecords[rec.id]
+                const detail = loadedRecords[rec.id]
+                return (
+                  <div key={rec.id} className="record-item">
+                    <button
+                      className="record-head"
+                      onClick={() => { void toggleRecord(rec.id) }}
+                    >
+                      <span className="record-time">{fmtDateTime(rec.created_at)}</span>
+                      <span className="record-summary">
+                        FMA手部 {Math.round(rec.fma_ue)}/20分 · 手部MAS {rec.hand_tone}级 · Brunnstrom手部 {rec.hand_function}期
+                      </span>
+                      {rec.report_status === 'failed' && (
+                        <span className="badge badge-warn">报告未生成</span>
+                      )}
+                      <span className="record-caret" aria-hidden="true">
+                        {open ? <ChevronDown /> : <ChevronRight />}
+                      </span>
+                    </button>
+                    {open && detail && <RecordDetail record={detail} />}
+                    {open && !detail && loadingRecordId === rec.id && (
+                      <p className="muted record-detail-loading">加载该次评估详情中…</p>
                     )}
-                    <span className="record-caret" aria-hidden="true">
-                      {open ? <ChevronDown /> : <ChevronRight />}
-                    </span>
-                  </button>
-                  {open && <RecordDetail record={rec} />}
-                </div>
-              )
-            })}
-          </div>
+                    {open && recordErrors[rec.id] && (
+                      <div className="error-banner">详情加载失败：{recordErrors[rec.id]}</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {Math.ceil(assessmentTotal / HISTORY_PAGE_SIZE) > 1 && (
+              <div className="record-pagination">
+                <button
+                  className="button secondary"
+                  disabled={assessmentPage === 0}
+                  onClick={() => setAssessmentPage((page) => page - 1)}
+                >
+                  上一页
+                </button>
+                <span className="muted">
+                  第 {assessmentPage + 1} / {Math.ceil(assessmentTotal / HISTORY_PAGE_SIZE)} 页
+                </span>
+                <button
+                  className="button secondary"
+                  disabled={assessmentPage + 1 >= Math.ceil(assessmentTotal / HISTORY_PAGE_SIZE)}
+                  onClick={() => setAssessmentPage((page) => page + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

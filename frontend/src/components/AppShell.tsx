@@ -11,7 +11,9 @@ import SystemManagementPage from '../pages/SystemManagementPage'
 import ModelSettingsPage from '../pages/ModelSettingsPage'
 import TaskInterfacePage from '../pages/TaskInterfacePage'
 import KnowledgeGovernancePage from '../pages/KnowledgeGovernancePage'
-import GuidelineTestPage from '../pages/GuidelineTestPage'
+import KnowledgeGraphPage from '../pages/KnowledgeGraphPage'
+import LlmControlTestPage from '../pages/LlmControlTestPage'
+import LlmBenchmarkPage from '../pages/LlmBenchmarkPage'
 
 export default function AppShell() {
   const { route } = useRoute()
@@ -42,9 +44,12 @@ export default function AppShell() {
             </div>
           )}
           {route === 'knowledge' && <KnowledgeGovernancePage />}
-          {(route === 'rag-guidelines' || route === 'rag-guidelines-test') && <GuidelineTestPage />}
+          {route === 'knowledge-graph' && <KnowledgeGraphPage />}
+          {(route === 'rag-guidelines' || route === 'rag-guidelines-test') && <KnowledgeGovernancePage initialTab="search" />}
           {route === 'system' && <SystemManagementPage />}
           {route === 'llm-settings' && <ModelSettingsPage />}
+          {route === 'llm-control-test' && <LlmControlTestPage />}
+          {route === 'llm-benchmark' && <LlmBenchmarkPage />}
         </main>
       </div>
     </div>

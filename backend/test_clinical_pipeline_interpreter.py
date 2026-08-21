@@ -185,6 +185,23 @@ class InterpreterTests(unittest.TestCase):
             self.assertIn("不是医生实测结论", finding.description)
             self.assertIn("深度模型预测字段", finding.basis.description)
 
+    def test_manual_scale_findings_use_clinician_provenance(self) -> None:
+        context = _context().model_copy(
+            update={
+                "quality_metadata": {
+                    "clinical_score_source": "clinician_provided"
+                }
+            }
+        )
+        result = Interpreter().interpret(context)
+        for metric_key in ("FMA_UE", "hand_tone", "hand_function"):
+            finding = _finding(result, metric_key)
+            self.assertIn("临床评定结果", finding.description + finding.name)
+            self.assertNotIn(
+                "模型预测",
+                finding.description + finding.name + finding.basis.description,
+            )
+
     def test_all_26_biomarkers_have_one_consistent_classification_count(self) -> None:
         self.assertEqual(len(REF_META), 26)
         self.assertEqual(

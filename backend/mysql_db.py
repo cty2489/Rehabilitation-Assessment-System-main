@@ -801,8 +801,12 @@ def register_device_patient(patient: Any) -> tuple[Dict[str, Any], bool]:
     return normalized, created
 
 
-def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
-    """Patient row + assessment count + full assessment list."""
+def get_patient(
+    patient_db_id: int,
+    *,
+    include_assessments: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Patient row + assessment count, optionally including full assessments."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -821,23 +825,26 @@ def get_patient(patient_db_id: int) -> Optional[Dict[str, Any]]:
             summary = cur.fetchone()
             patient["assessment_count"] = int(summary["c"])
             patient["last_assessed_at"] = _norm({"v": summary["last_assessed_at"]})["v"]
-            cur.execute(
-                """
-                SELECT id, source, assessment_id, session_id, package_name,
-                       institution, n_trials, package_hash, created_at,
-                       assessment_time, fma_ue, hand_tone, hand_function,
-                       report, report_status, biomarkers, parse_warnings,
-                       prediction_json, model_version, llm_provider, llm_model,
-                       patient_snapshot, quality_json, validation_status,
-                       report_generation
-                FROM assessments WHERE patient_db_id=%s
-                ORDER BY created_at DESC, id DESC
-                """,
-                (patient_db_id,),
-            )
-            patient["assessments"] = [
-                _attach_assessment_children(cur, r) for r in cur.fetchall()
-            ]
+            if include_assessments:
+                cur.execute(
+                    """
+                    SELECT id, source, assessment_id, session_id, package_name,
+                           institution, n_trials, package_hash, created_at,
+                           assessment_time, fma_ue, hand_tone, hand_function,
+                           report, report_status, biomarkers, parse_warnings,
+                           prediction_json, model_version, llm_provider, llm_model,
+                           patient_snapshot, quality_json, validation_status,
+                           report_generation
+                    FROM assessments WHERE patient_db_id=%s
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    (patient_db_id,),
+                )
+                patient["assessments"] = [
+                    _attach_assessment_children(cur, r) for r in cur.fetchall()
+                ]
+            else:
+                patient["assessments"] = []
     finally:
         conn.close()
     return patient
@@ -847,7 +854,7 @@ def update_patient(patient_db_id: int, fields: Dict[str, Any]) -> Optional[Dict[
     """Update editable patient profile fields and return the full patient row."""
     updates = {k: v for k, v in fields.items() if k in _PATIENT_EDITABLE}
     if not updates:
-        return get_patient(patient_db_id)
+        return get_patient(patient_db_id, include_assessments=False)
 
     updates["updated_at"] = now_dt()
     cols = ", ".join(f"{k}=%s" for k in updates)
@@ -862,7 +869,7 @@ def update_patient(patient_db_id: int, fields: Dict[str, Any]) -> Optional[Dict[
                 return None
     finally:
         conn.close()
-    return get_patient(patient_db_id)
+    return get_patient(patient_db_id, include_assessments=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -1347,6 +1354,37 @@ def list_patients() -> List[Dict[str, Any]]:
     finally:
         conn.close()
     return [_norm_patient(r) for r in rows]
+
+
+def list_patient_assessments(
+    patient_db_id: int,
+    limit: int = 20,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Return a lightweight, paginated assessment history for one patient."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM assessments WHERE patient_db_id=%s",
+                (patient_db_id,),
+            )
+            total = int(cur.fetchone()["c"])
+            cur.execute(
+                """
+                SELECT id, created_at, assessment_time,
+                       fma_ue, hand_tone, hand_function, report_status
+                FROM assessments
+                WHERE patient_db_id=%s
+                ORDER BY created_at DESC, id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (patient_db_id, limit, offset),
+            )
+            items = [_norm(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+    return {"total": total, "items": items}
 
 
 def delete_patient(patient_db_id: int) -> int:

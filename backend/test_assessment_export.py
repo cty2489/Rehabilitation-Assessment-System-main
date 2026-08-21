@@ -65,6 +65,42 @@ _REPORT = """# 智能康复评估报告
 """
 
 
+_CURRENT_REPORT = """# 智能康复评估报告
+
+## 二、综合评估结果
+
+### 肌电指标
+
+| 指标 | 本次结果 | 解读 | 依据 |
+| --- | --- | --- | --- |
+| 指浅屈肌积分肌电 | 1.2 uV.s | 屈肌激活偏高。 | SRC-001 |
+
+## 三、综合亚型界定
+
+**综合亚型：** VI期-手功能综合亚型
+
+## 四、康复策略建议
+
+### 一、总体训练方向
+
+1. 训练方向：分离控制；具体方法：腕伸与伸指；训练剂量：每日2组。
+
+### 二、按 Brunnstrom 分期的训练动作
+
+手功能模型预测为6期。
+- 精细操作：练习抓取
+- 双手协调：练习传递
+
+## 五、进一步个体化所需信息
+
+1. 需要补充患者家庭环境。
+
+## 六、依据来源与参考文献
+
+【1】[指南标题](https://example.test/guideline.pdf)
+"""
+
+
 def _assessment() -> dict:
     return {
         "id": 42,
@@ -136,6 +172,35 @@ def _assessment() -> dict:
 
 
 class AssessmentExportPayloadTests(unittest.TestCase):
+    def test_current_planner_report_is_not_lost_in_export(self) -> None:
+        assessment = _assessment()
+        assessment["report"] = _CURRENT_REPORT
+        payload = assessment_export.build_result_payload(assessment)
+
+        self.assertEqual(
+            payload["subtype_classification_and_treatment_strategy"]["subtype_classification"]["overall_subtype"],
+            "VI期-手功能综合亚型",
+        )
+        strategy = payload["subtype_classification_and_treatment_strategy"]
+        self.assertEqual(strategy["treatment_strategy"]["overall_strategies"], [
+            "训练方向：分离控制；训练剂量：每日2组。",
+        ])
+        self.assertEqual(len(strategy["brunnstrom_training_actions"]), 3)
+        self.assertEqual(
+            payload["warnings_and_recommendations"]["individualization_items"][0]["text"],
+            "需要补充患者家庭环境。",
+        )
+        self.assertTrue(payload["knowledge_evidence"]["used_in_report"])
+        self.assertEqual(payload["knowledge_evidence"]["references"][0]["number"], 1)
+        marker = payload["biomarker_sections"][0]["indicators"][0]
+        self.assertEqual(marker["interpretation"], "屈肌激活偏高。")
+        self.assertEqual(marker["evidence_basis"], "SRC-001")
+
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "current-report.pdf"
+            assessment_export.write_report_pdf(out, payload)
+            self.assertGreater(out.stat().st_size, 1000)
+
     def test_pdf_markup_marks_latin_runs(self) -> None:
         markup = assessment_export._pdf_markup("患者 CLOUD_E2E_2026 V·s & <ok>")
 

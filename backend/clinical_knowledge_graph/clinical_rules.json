@@ -1,0 +1,45 @@
+{
+  "schema_version": "rehab.clinical-knowledge-graph-rules.v1",
+  "scope": "研究原型规则；只组合数据可用性和质量状态，不包含医学异常阈值、诊断或处方。",
+  "rules": [
+    {
+      "rule_id": "rule:quality-needs-review",
+      "when": {"field": "quality.status", "operator": "equals", "value": "needs_review"},
+      "result": {"status": "caution", "evidence_strength": "insufficient", "message": "本次质量状态需要复核；data_quality_warnings会列出可能受影响的指标解释，仅保留非诊断性的测量条件与同条件复测边界。"},
+      "evidence_level": "unverified",
+      "expert_review_status": "pending"
+    },
+    {
+      "rule_id": "rule:missing-non-imu-marker",
+      "when": {"field": "summary.missing_non_imu_marker_count", "operator": "greater_than", "value": 0},
+      "result": {"status": "caution", "evidence_strength": "insufficient", "message": "存在缺失或无有效试次的EEG/EMG指标；不对缺失指标形成结论。"},
+      "evidence_level": "unverified",
+      "expert_review_status": "pending"
+    },
+    {
+      "rule_id": "rule:multiple-emg-features-available",
+      "when": {"field": "summary.available_by_modality.emg", "operator": "greater_than_or_equal", "value": 2},
+      "result": {"status": "informational", "evidence_strength": "prototype_structural", "message": "至少两项EMG特征可用；可形成肌肉激活与协调的联合检索主题，但不输出异常判断。"},
+      "evidence_level": "unverified",
+      "expert_review_status": "pending"
+    },
+    {
+      "rule_id": "rule:multiple-eeg-features-available",
+      "when": {"field": "summary.available_by_modality.eeg", "operator": "greater_than_or_equal", "value": 2},
+      "result": {"status": "informational", "evidence_strength": "prototype_structural", "message": "至少两项EEG特征可用；可形成脑电运动网络检索主题，但不输出异常判断。"},
+      "evidence_level": "unverified",
+      "expert_review_status": "pending"
+    },
+    {
+      "rule_id": "rule:multimodal-topic-eligible",
+      "when_all": [
+        {"field": "summary.available_by_modality.eeg", "operator": "greater_than_or_equal", "value": 1},
+        {"field": "summary.available_by_modality.emg", "operator": "greater_than_or_equal", "value": 1},
+        {"field": "quality.sync_fallback_count", "operator": "equals", "value": 0}
+      ],
+      "result": {"status": "informational", "evidence_strength": "prototype_structural", "message": "EEG与EMG均有可用数据且未记录同步回退；可保留脑肌协同相关检索主题，绝对值解释仍受现有流程边界约束。"},
+      "evidence_level": "unverified",
+      "expert_review_status": "pending"
+    }
+  ]
+}

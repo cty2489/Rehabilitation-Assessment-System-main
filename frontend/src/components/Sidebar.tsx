@@ -4,10 +4,12 @@ import {
   Cable,
   ChartNoAxesCombined,
   ClipboardPlus,
+  ClipboardCheck,
   Files,
-  Search,
+  FlaskConical,
   LayoutDashboard,
   LibraryBig,
+  Network,
   Settings,
   UsersRound,
   type LucideIcon,
@@ -23,8 +25,10 @@ const NAV: { route: Route; label: string; icon: LucideIcon; group?: 'system' }[]
   { route: 'stats', label: '统计分析', icon: ChartNoAxesCombined },
   { route: 'task-interface', label: '设备接口', icon: Cable },
   { route: 'knowledge', label: 'RAG 知识库', icon: LibraryBig },
-  { route: 'rag-guidelines', label: '知识与研究证据', icon: Search },
+  { route: 'knowledge-graph', label: '知识结构（管理员）', icon: Network, group: 'system' },
   { route: 'llm-settings', label: '模型设置', icon: BrainCircuit, group: 'system' },
+  { route: 'llm-control-test', label: 'LLM 对照测试', icon: FlaskConical, group: 'system' },
+  { route: 'llm-benchmark', label: 'LLM 评测准备', icon: ClipboardCheck, group: 'system' },
   { route: 'system', label: '系统管理', icon: Settings },
 ]
 
@@ -47,7 +51,7 @@ export default function Sidebar() {
           const Icon = item.icon
           return (
             <div key={item.route} className={item.group && index > 0 ? 'sidebar-system-group' : undefined}>
-              {item.group && <span className="sidebar-group-label">平台配置</span>}
+              {item.group && NAV[index - 1]?.group !== item.group && <span className="sidebar-group-label">平台配置</span>}
               <button
                 className={`sidebar-item ${route === item.route ? 'active' : ''}`}
                 onClick={() => navigate(item.route)}

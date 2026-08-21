@@ -19,13 +19,11 @@ frontend/node_modules/
 dist/
 build/
 .next/
-*.tsbuildinfo
 *.log
 npm-debug.log*
 
 # ---- Caches ----
 .cache/
-exports/
 .pytest_cache/
 .mypy_cache/
 .DS_Store
@@ -44,27 +42,32 @@ optimizer.pt
 checkpoints_llm/
 DL_model/*.pth
 
-# Runtime LLM selection written by the System Management page
-backend/config/llm_settings.json
-
-# Site-specific clinical gesture library. Commit only the reviewed example
-# schema, not the active runtime file.
-backend/config/gestures_26.json
-
 # ---- Databases ----
 *.db
 *.sqlite
 *.sqlite3
 
+# ---- Docs (not published to GitHub) ----
+docs/
+
 # ---- Device gateway (not published to GitHub) ----
 device_gateway/
 
-# ---- RAG knowledge runtime data (private / generated) ----
-# Raw clinical documents, extracted media and generated indexes may contain
-# copyrighted or site-specific material. Keep only schemas, manifests and
-# reviewed examples in Git.
-knowledge_base/raw/
-knowledge_base/runtime/
-knowledge_base/vector_store/
-rag_models/
-rag_traces/
+# ---- Local/runtime knowledge-base material (deploy separately) ----
+knowledge_base/*/source_files/
+knowledge_base/*/chunks.jsonl
+knowledge_base/*/entries.jsonl
+knowledge_base/*/sources.jsonl
+knowledge_base/*/embedding_cache/
+knowledge_base/*/qdrant_storage/
+rag_v1_admin_selection.json
+
+# ---- Local benchmark data and generated reports (never publish patient data) ----
+benchmark_runs/
+benchmark_evaluations/
+outputs/
+output/
+review_artifacts/
+tmp/
+.codex_tmp/
+.codex_work/

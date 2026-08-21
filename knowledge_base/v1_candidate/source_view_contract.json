@@ -1,0 +1,17 @@
+{
+  "schema_version": "rehab.knowledge.source-view.v2",
+  "chain": "chunk_id -> uid -> source_file_id -> source_file -> page_number -> original_pdf",
+  "routes": {
+    "pdf": "/api/rag/source-files/{source_file_id}/pdf",
+    "page": "/api/rag/source-files/{source_file_id}/pages/{page_number}",
+    "ocr_scan_page": "/api/rag/ocr-scan-pages/{source_id}/{page_number}"
+  },
+  "page_number_base": 1,
+  "click_behavior": "page route redirects/opens PDF with #page={page_number}; OCR textbook page also exposes the exact scanned page image",
+  "supported_source_types": [
+    "paper",
+    "guideline",
+    "textbook"
+  ],
+  "immutable_file_check": "source_file_manifest.sha256 must match the staged bytes before serving"
+}

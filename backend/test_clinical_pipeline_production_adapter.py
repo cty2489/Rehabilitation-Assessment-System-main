@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from clinical_pipeline.contracts import (
+    CanonicalAssessmentContext,
+    CanonicalPatientInfo,
     CanonicalPredictions,
     CoreKnowledgeBundle,
     CoreKnowledgeEntry,
@@ -89,7 +92,7 @@ def _biomarkers() -> dict:
     }
 
 
-def _interpretation() -> InterpretationResult:
+def _interpretation(hand_function_stage: int = 3) -> InterpretationResult:
     return InterpretationResult(
         interpretation_id="interpretation-production",
         findings=[
@@ -112,11 +115,15 @@ def _interpretation() -> InterpretationResult:
                 finding_id="prediction:hand_function",
                 metric_key="hand_function",
                 name="Brunnstrom手功能分期（模型预测）",
-                value=3,
+                value=hand_function_stage,
                 unit="期",
                 status=FindingStatus.OBSERVED,
                 modality=FindingModality.CLINICAL_SCALE,
-                description="模型预测结果：可引出共同运动，能完成钩状抓握但难以主动伸展。",
+                description=(
+                    "模型预测结果：可引出共同运动，能完成钩状抓握但难以主动伸展。"
+                    if hand_function_stage == 3
+                    else f"模型预测结果：测试性记录为第{hand_function_stage}期。"
+                ),
                 basis=FindingBasis(
                     kind=FindingBasisKind.SCALE_READING,
                     description="模型预测结果。",
@@ -132,6 +139,7 @@ def _completed_result(
     retrieval_status: RetrievalStatus = RetrievalStatus.COMPLETE,
     validation_status: ValidationStatus = ValidationStatus.PASSED,
     core_only_citation: bool = False,
+    hand_function_stage: int = 3,
 ) -> OrchestrationResult:
     query = RetrievalQuery(
         query_id="query-1",
@@ -216,7 +224,7 @@ def _completed_result(
         status=PipelineRunStatus.COMPLETED,
         trace=PipelineRunTrace(run_id="pipeline-production"),
         quality_gate=QualityGateResult(decision=QualityDecision.PASS),
-        interpretation=_interpretation(),
+        interpretation=_interpretation(hand_function_stage),
         core_knowledge=CoreKnowledgeBundle(
             bundle_id="core-production",
             version="core-v1",
@@ -263,6 +271,47 @@ class ProductionAdapterTests(unittest.TestCase):
                 self.assertIsNone(value.biomarkers[1].value)
                 self.assertFalse(value.biomarkers[1].available)
                 self.assertEqual(request.report_model_id, "qwen3_8b_hf")
+
+    def test_brunnstrom_scale_and_model_range_are_distinguished(self) -> None:
+        """Brunnstrom 量表理论 1-6 期 ≠ 当前模型分类 2-6 期；契约允许 1 不失败。"""
+        # 1. 契约允许 hand_function=1（兼容旧数据），序列化/读取不失败
+        preds = CanonicalPredictions(FMA_UE=8.0, hand_tone="2", hand_function=1)
+        serialized = preds.model_dump(mode="json")
+        self.assertEqual(serialized["hand_function"], 1)
+        # 2. 运行时 1 能进入 display 且不崩溃
+        result = _completed_result()
+        result.trace.artifact_refs.update(
+            {
+                "knowledge_graph_mode": "graph_enhanced",
+                "knowledge_graph_status": "matched",
+                "knowledge_graph_non_imu_scope": "applied",
+            }
+        )
+        result.canonical_context = CanonicalAssessmentContext(
+            schema_version="rehab.canonical-assessment-context.v1",
+            context_id="ctx-brunnstrom-1",
+            quality_decision=QualityDecision.PASS,
+            patient=CanonicalPatientInfo(patient_id="P001"),
+            predictions=CanonicalPredictions(FMA_UE=8.0, hand_tone="2", hand_function=1),
+            biomarkers=[],
+            quality_metadata={"status": "pass"},
+        )
+        result.knowledge_graph_evidence = {
+            "expert_review_status": "pending",
+            "patient_summary": {"quality": {"status": "pass"}},
+            "analysis_dimensions": [],
+            "matched_indicator_states": [],
+            "matched_graph_paths": [],
+            "rule_results": [],
+        }
+        display = orchestration_metadata(result)["knowledge_graph_display"]
+        br = next(p for p in display["prediction_results"] if p["target_id"] == "target:Brunnstrom_hand")
+        self.assertEqual(br["value"], 1)
+        # 3. 展示区分量表理论范围与模型分类范围
+        self.assertEqual(br["range"], "2-6")
+        self.assertIn("量表理论分期", br["range_note"])
+        self.assertIn("当前模型分类范围", br["range_note"])
+        self.assertTrue(br["is_model_prediction"])
 
     def test_missing_critical_fields_raise_clear_errors(self) -> None:
         with self.assertRaisesRegex(ProductionAdapterError, "hand_function"):
@@ -327,6 +376,12 @@ class ProductionAdapterTests(unittest.TestCase):
         self.assertIn("## 三、综合亚型界定", markdown)
         self.assertIn("**综合亚型：**", markdown)
         self.assertIn("III期-手功能综合亚型（测试性归纳）", markdown)
+        self.assertIn("### 一、总体训练方向", markdown)
+        self.assertIn("### 二、按 Brunnstrom 分期的训练动作", markdown)
+        self.assertIn("当前模型预测为 Brunnstrom III期", markdown)
+        self.assertIn("- SS-15：五指伸展", markdown)
+        self.assertIn("- SS-22：球体抓握", markdown)
+        self.assertNotIn("建议由康复专业人员进行人工复核", markdown)
         self.assertIn("| 指标 | 本次结果 | 解读 | 依据 |", markdown)
         self.assertIn("模型预测值：8 分", markdown)
         self.assertIn("反映手部动作完成情况；需结合现场动作检查确认。", markdown)
@@ -335,7 +390,262 @@ class ProductionAdapterTests(unittest.TestCase):
             orchestration_metadata(result)["retrieval_status"], "unavailable"
         )
 
-    def test_plain_biomarker_explanation_names_purpose_before_retest_limit(self) -> None:
+    def test_stage_six_uses_human_training_tasks_without_duplicate_heading(self) -> None:
+        result = _completed_result(hand_function_stage=6)
+
+        markdown = render_compatible_markdown(
+            patient=_patient(),
+            result=result,
+            assessment_validation_status="research_assessment",
+            quality={"status": "pass"},
+        )
+
+        self.assertEqual(markdown.count("### 二、按 Brunnstrom 分期的训练动作"), 1)
+        self.assertIn("手功能模型预测为 Brunnstrom VI期", markdown)
+        self.assertIn("扣钮扣、捏取小物体、书写或使用工具", markdown)
+        self.assertNotIn("可让用户自由选择", markdown)
+
+    def test_fallback_report_stays_structured_without_imu_text(self) -> None:
+        result = _completed_result()
+        result.report = result.report.model_copy(
+            update={"generation_mode": "fallback"}
+        )
+
+        markdown = render_compatible_markdown(
+            patient=_patient(),
+            result=result,
+            assessment_validation_status="research_assessment",
+            quality={"status": "pass"},
+        )
+
+        self.assertNotIn("IMU", markdown)
+        self.assertNotIn("运动学指标", markdown)
+
+    def test_orchestration_metadata_contains_bounded_graph_display_paths(self) -> None:
+        result = _completed_result()
+        result.trace.artifact_refs.update(
+            {
+                "knowledge_graph_mode": "graph_enhanced",
+                "knowledge_graph_status": "matched",
+                "knowledge_graph_non_imu_scope": "applied",
+            }
+        )
+        # 构造运行时 canonical_context，提供 PredictionResult（不写入静态图谱）
+        result.canonical_context = CanonicalAssessmentContext(
+            schema_version="rehab.canonical-assessment-context.v1",
+            context_id="ctx-mvp",
+            quality_decision=QualityDecision.PASS,
+            patient=CanonicalPatientInfo(
+                patient_id="P001", age=62, sex="男", diagnosis="脑梗死",
+                disease_days=120, paralysis_side="左",
+            ),
+            predictions=CanonicalPredictions(FMA_UE=12.0, hand_tone="2", hand_function=4),
+            biomarkers=[],
+            quality_metadata={"status": "pass"},
+        )
+        # 生物标志物链：真实 EMG 指标路径
+        result.knowledge_graph_evidence = {
+            "expert_review_status": "pending",
+            "patient_summary": {
+                "quality": {
+                    "status": "pass",
+                    "trial_count": 6,
+                    "short_trial_count": 0,
+                    "sync_fallback_count": 0,
+                    "sampling_rate_mismatch_count": 0,
+                }
+            },
+            "analysis_dimensions": [
+                {"dimension_id": "dimension:emg_activation_coordination", "label": "肌电活动与共同激活特征"}
+            ],
+            "matched_indicator_states": [
+                {
+                    "state_id": "state:biomarker:resting_emg_level",
+                    "label": "静息肌电水平",
+                    "source_field": "biomarkers.resting_emg_level.value",
+                    "source_modality": "emg",
+                    "value": 0.0012,
+                    "unit": "V(RMS)",
+                    "state": "not_classifiable",
+                }
+            ],
+            "matched_graph_paths": [
+                {
+                    "path_id": "path:resting_emg_level:emg-resting:emg-activation:emg-activation",
+                    "source_field": "biomarkers.resting_emg_level.value",
+                    "node_path": [
+                        {"node_type": "PatientContext", "source_field": "biomarkers.resting_emg_level.value"},
+                        {"node_id": "state:biomarker:resting_emg_level", "node_type": "IndicatorState", "state": "not_classifiable"},
+                        {"node_id": "emg:resting_emg_level", "node_type": "EMGBiomarker", "label": "静息肌电水平"},
+                        {"node_id": "functional:emg_resting_activity", "node_type": "FunctionalFinding", "label": "静息肌电活动特征"},
+                        {"node_id": "dimension:emg_activation_coordination", "node_type": "ClinicalDimension", "label": "肌电活动与共同激活特征"},
+                        {"node_id": "topic:emg_activation", "node_type": "EvidenceTopic", "label": "肌电活动与共同激活"},
+                    ],
+                    "relation_path": [
+                        {"type": "ASSOCIATED_WITH"},
+                        {"type": "MEASURES"},
+                        {"type": "BELONGS_TO"},
+                        {"type": "SUGGESTS_TOPIC"},
+                    ],
+                }
+            ],
+            "rule_results": [
+                {
+                    "rule_id": "rule:test",
+                    "matched": True,
+                    "result": {
+                        "status": "informational",
+                        "message": "形成本次检索主题。",
+                    },
+                    "evidence_level": "unverified",
+                    "expert_review_status": "pending",
+                }
+            ],
+        }
+
+        display = orchestration_metadata(result)["knowledge_graph_display"]
+
+        self.assertTrue(display["applied"])
+        self.assertEqual(display["summary"]["path_count"], 1)
+        self.assertEqual(display["summary"]["matched_rule_count"], 1)
+        # 生物标志物路径：真实 EMG 指标，非模型预测
+        self.assertEqual(display["paths"][0]["source"]["label"], "静息肌电水平")
+        self.assertEqual(
+            display["paths"][0]["clinical_dimension"]["label"],
+            "肌电活动与共同激活特征",
+        )
+        self.assertEqual(
+            display["paths"][0]["rag_topic"]["label"],
+            "肌电活动与共同激活",
+        )
+        # 预测结果区：来自 CanonicalPredictions 运行时值，含范围标注
+        self.assertEqual(len(display["prediction_results"]), 3)
+        fma = display["prediction_results"][0]
+        self.assertEqual(fma["target_id"], "target:FMA_hand")
+        self.assertEqual(fma["value"], 12.0)
+        self.assertEqual(fma["range"], "0-20")
+        self.assertTrue(fma["is_model_prediction"])
+        brunnstrom = display["prediction_results"][2]
+        self.assertEqual(brunnstrom["value"], 4)
+        # range = 模型分类范围；range_note 区分量表理论范围与模型分类范围
+        self.assertEqual(brunnstrom["range"], "2-6")
+        self.assertIn("量表理论分期", brunnstrom["range_note"])
+        self.assertIn("当前模型分类范围", brunnstrom["range_note"])
+        # 数据质量区：独立于临床维度
+        self.assertEqual(display["data_quality"]["status"], "pass")
+        self.assertFalse(display["data_quality"]["is_clinical_dimension"])
+        self.assertFalse(display["data_quality"]["blocked_support"])
+        self.assertNotIn("patient_id", display)
+
+    def test_data_quality_needs_review_renders_independent_of_clinical_dimension(self) -> None:
+        """数据质量 needs_review 状态独立展示，不伪装为临床维度；blocked 未实现不显示。"""
+        result = _completed_result()
+        result.trace.artifact_refs.update(
+            {
+                "knowledge_graph_mode": "graph_enhanced",
+                "knowledge_graph_status": "matched",
+                "knowledge_graph_non_imu_scope": "applied",
+            }
+        )
+        result.canonical_context = CanonicalAssessmentContext(
+            schema_version="rehab.canonical-assessment-context.v1",
+            context_id="ctx-quality-needs-review",
+            quality_decision=QualityDecision.REVIEW,
+            patient=CanonicalPatientInfo(patient_id="P001"),
+            predictions=CanonicalPredictions(FMA_UE=8.0, hand_tone="2", hand_function=3),
+            biomarkers=[],
+            quality_metadata={"status": "needs_review"},
+        )
+        result.knowledge_graph_evidence = {
+            "expert_review_status": "pending",
+            "patient_summary": {
+                "quality": {
+                    "status": "needs_review",
+                    "trial_count": 6,
+                    "short_trial_count": 2,
+                    "sync_fallback_count": 1,
+                    "sampling_rate_mismatch_count": 0,
+                }
+            },
+            "analysis_dimensions": [],
+            "matched_indicator_states": [],
+            "matched_graph_paths": [],
+            "rule_results": [],
+            "data_quality_warnings": [{"code": "quality_status_not_pass", "message": "本次质量状态不是pass。"}],
+        }
+        display = orchestration_metadata(result)["knowledge_graph_display"]
+        dq = display["data_quality"]
+        self.assertEqual(dq["status"], "needs_review")
+        self.assertFalse(dq["is_clinical_dimension"])
+        self.assertFalse(dq["blocked_support"])
+        self.assertEqual(dq["short_trial_count"], 2)
+        self.assertEqual(dq["sync_fallback_count"], 1)
+        self.assertTrue(dq["warnings"])
+        # 质量字段来源真实（来自 patient_summary.quality，非伪造）
+        self.assertEqual(dq["trial_count"], 6)
+
+    def test_stage_six_uses_human_tasks_without_inventing_stage_five_actions(self) -> None:
+        result = _completed_result(hand_function_stage=6)
+
+        markdown = render_compatible_markdown(
+            patient=_patient(),
+            result=result,
+            assessment_validation_status="research_assessment",
+            quality={"status": "pass"},
+        )
+
+        self.assertIn("手功能模型预测为 Brunnstrom VI期", markdown)
+        self.assertIn("扣钮扣、捏取小物体、书写或使用工具", markdown)
+        self.assertNotIn("可让用户自由选择", markdown)
+        self.assertNotIn("- SS-24：拇指指尖捏取", markdown)
+
+    def test_each_brunnstrom_stage_uses_the_document_action_list(self) -> None:
+        expected_actions = {
+            1: [("SS-15", "五指伸展"), ("SS-16", "五指屈曲")],
+            2: [
+                ("SS-15", "五指伸展"),
+                ("SS-16", "五指屈曲"),
+                ("SS-10", "拇指屈曲"),
+                ("SS-18", "柱状抓握"),
+            ],
+            3: [
+                ("SS-15", "五指伸展"),
+                ("SS-16", "五指屈曲"),
+                ("SS-11", "拇指竖起"),
+                ("SS-12", "食中指伸展"),
+                ("SS-14", "四指伸展"),
+                ("SS-22", "球体抓握"),
+            ],
+            4: [
+                ("SS-1", "食指屈曲"),
+                ("SS-3", "中指屈曲"),
+                ("SS-11", "拇指竖起"),
+                ("SS-12", "食中指伸展"),
+                ("SS-14", "四指伸展"),
+                ("SS-19", "棍状物抓握"),
+            ],
+            5: [
+                ("SS-19", "棍状物抓握"),
+                ("SS-20", "食指伸展抓握"),
+                ("SS-21", "环形抓握"),
+                ("SS-22", "球体抓握"),
+                ("SS-24", "拇指指尖捏取"),
+            ],
+        }
+        for stage, expected in expected_actions.items():
+            with self.subTest(stage=stage):
+                markdown = render_compatible_markdown(
+                    patient=_patient(),
+                    result=_completed_result(hand_function_stage=stage),
+                    assessment_validation_status="research_assessment",
+                    quality={"status": "pass"},
+                )
+                section = markdown.split("### 二、按 Brunnstrom 分期的训练动作", 1)[1]
+                section = section.split("## 五、进一步个体化所需信息", 1)[0]
+                actual = re.findall(r"^- (SS-\d+)：(.+)$", section, flags=re.MULTILINE)
+                self.assertEqual(actual, expected)
+
+    def test_plain_biomarker_explanation_uses_existing_record_comparison(self) -> None:
         finding = Finding(
             finding_id="biomarker:movement_smoothness_sparc",
             metric_key="movement_smoothness_sparc",
@@ -353,8 +663,9 @@ class ProductionAdapterTests(unittest.TestCase):
         )
         text = _plain_interpretation_text(finding)
         self.assertIn("动作是否连续、流畅", text)
-        self.assertIn("本设备/算法算出的本次记录", text)
-        self.assertIn("后续同条件复测看变化", text)
+        self.assertIn("记录值为-1.4 SPARC", text)
+        self.assertIn("既往同条件记录比较变化", text)
+        self.assertNotIn("后续同条件复测", text)
 
     def test_core_knowledge_citation_has_reference_details(self) -> None:
         result = _completed_result(

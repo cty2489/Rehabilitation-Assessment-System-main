@@ -1,0 +1,16 @@
+{
+  "schema_version": "rehab.embedding.manifest.v1",
+  "model": "BAAI/bge-m3",
+  "dimensions": 1024,
+  "distance": "Cosine",
+  "status": "complete",
+  "count": 15355,
+  "collection": "rehab_knowledge_v1_candidate_next",
+  "source_chunks": 15355,
+  "source_release": "v1_candidate_next",
+  "governance_ready_counts": {
+    "core_direct": 932,
+    "guideline": 2785,
+    "textbook_reference": 2430
+  }
+}

@@ -40,6 +40,12 @@ class RetrieverConfig(ContractModel):
     batch_request_count: Literal[1] = 1
 
 
+class KnowledgeGraphConfig(ContractModel):
+    """Select whether graph evidence seeds the existing Planner/RAG workflow."""
+
+    mode: Literal["llm_only", "graph_enhanced"] = "llm_only"
+
+
 class PipelineConfig(ContractModel):
     schema_version: Literal["rehab.pipeline-config.v1"] = "rehab.pipeline-config.v1"
     config_version: str = Field(min_length=1, max_length=128)
@@ -48,11 +54,13 @@ class PipelineConfig(ContractModel):
     core_knowledge: CoreKnowledgeConfig
     planner: LlmRoleConfig
     retriever: RetrieverConfig = Field(default_factory=RetrieverConfig)
+    knowledge_graph: KnowledgeGraphConfig = Field(default_factory=KnowledgeGraphConfig)
     report_generator: LlmRoleConfig
 
 
 __all__ = [
     "CoreKnowledgeConfig",
+    "KnowledgeGraphConfig",
     "LlmRoleConfig",
     "PipelineConfig",
     "QualityGateConfig",

@@ -26,6 +26,7 @@ from biomarker_refs import marker_ref
 from report_citations import citation_markers, extract_numeric_citations
 
 SCHEMA_VERSION = "rehab.assessment_result.v2"
+EXPORT_RENDERER_VERSION = "2026-08-15-report-export-v2"
 
 _GROUP_LABELS = {
     "emg": "肌电标志物",
@@ -141,6 +142,22 @@ def _strip_specific_method(value: Any) -> str:
     return re.sub(r"[；;]\s*[；;]", "；", text).strip()
 
 
+def _strip_internal_strategy_metadata(value: Any) -> str:
+    """Hide planner retrieval scaffolding from clinician-facing exports.
+
+    The web report already removes these internal anchors before rendering.
+    Applying the same narrow rule here keeps PDF/JSON-derived text and DOCX
+    exports aligned without changing the stored raw report.
+    """
+    text = str(value or "")
+    if not any(token in text for token in ("检索主题", "相关主题", "锚点")):
+        return text
+    if re.match(r"^\s*(?:基于本次|锚点|检索主题)", text):
+        return ""
+    text = re.sub(r"^\s*基于本次.+?(?:检索主题|相关主题)\s*[：:]\s*", "", text, flags=re.S)
+    return re.sub(r"^\s*(?:锚点|检索主题)\s*[：:]\s*", "", text)
+
+
 def _group_key_from_heading(text: str) -> Optional[str]:
     if "肌电" in text:
         return "emg"
@@ -185,6 +202,8 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
         "biomarker_text": {},
         "overall_subtype": None,
         "treatment_strategy": [],
+        "brunnstrom_training_actions": [],
+        "individualization_items": [],
         "gesture_plan": [],
         "weekly_plan": [],
         "warnings": [],
@@ -196,17 +215,23 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
     current_group: Optional[str] = None
     section: Optional[str] = None
     collect_strategy = False
+    collect_training_actions = False
 
     i = 0
     while i < len(lines):
         raw = lines[i]
         line = raw.strip()
-        clean = _md_text(line)
+        clean = _strip_internal_strategy_metadata(_md_text(line)).strip()
 
         if line.startswith("## "):
             collect_strategy = False
+            collect_training_actions = False
             if "综合亚型" in clean:
                 section = "strategy"
+            elif "康复策略" in clean:
+                section = "strategy"
+            elif "进一步个体化" in clean:
+                section = "individualization"
             elif "预警" in clean:
                 section = "warnings"
             elif "下次评估" in clean:
@@ -214,8 +239,27 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
             else:
                 section = None
 
-        if line.startswith("####"):
+        if line.startswith("###"):
+            heading_group = _group_key_from_heading(clean)
+            current_group = heading_group
+            if "总体训练方向" in clean:
+                section = "strategy"
+                collect_strategy = True
+                collect_training_actions = False
+            elif "Brunnstrom" in clean and "训练" in clean:
+                section = "training_actions"
+                collect_strategy = False
+                collect_training_actions = True
+            elif heading_group:
+                collect_strategy = False
+                collect_training_actions = False
+        elif line.startswith("####"):
             current_group = _group_key_from_heading(clean)
+
+        # Headings only change parser state; they are not report content.
+        if line.startswith("#"):
+            i += 1
+            continue
 
         if line.startswith("|"):
             table, i = _read_md_table(lines, i)
@@ -246,6 +290,19 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
                                 "current_value_text": row[1],
                                 "interpretation": row[2],
                                 "treatment_advice": row[3],
+                            }
+                elif (
+                    headers[:4] == ["指标", "本次结果", "解读", "依据"]
+                    and current_group
+                ):
+                    group_map = parsed["biomarker_text"].setdefault(current_group, {})
+                    for row in rows:
+                        if len(row) >= 4:
+                            group_map[row[0]] = {
+                                "current_value_text": row[1],
+                                "interpretation": row[2],
+                                "treatment_advice": None,
+                                "evidence_basis": row[3],
                             }
                 elif "手势名称" in headers:
                     name_idx = headers.index("手势名称")
@@ -308,20 +365,41 @@ def _parse_report_markdown(report_text: str) -> Dict[str, Any]:
             i += 1
             continue
 
-        if line.startswith("**临床解读"):
-            parsed["overall_interpretation"] = _md_text(line.split("：", 1)[-1])
+        if line.startswith("**临床解读") or clean.startswith("临床解读"):
+            parsed["overall_interpretation"] = re.split(r"[：:]", clean, maxsplit=1)[-1].strip()
+        elif re.search(r"综合亚型\s*[：:]", clean):
+            m = re.search(r"综合亚型\s*[：:]\s*(.+)$", clean)
+            if m:
+                parsed["overall_subtype"] = m.group(1).strip(" 。")
         elif "患者可归类为" in clean or "综合状态界定为" in clean:
-            m = re.search(r"(?:患者可归类为|综合状态界定为)：(.+)$", clean)
+            m = re.search(r"(?:患者可归类为|综合状态界定为)\s*[：:]\s*(.+)$", clean)
             if m:
                 parsed["overall_subtype"] = m.group(1).strip(" 。")
         elif clean.startswith("治疗策略要点"):
             collect_strategy = True
+            collect_training_actions = False
         elif collect_strategy:
             item = _numbered_text(clean)
             if item:
                 item = _strip_specific_method(item)
                 if item:
                     parsed["treatment_strategy"].append(item)
+        elif collect_training_actions:
+            item = _numbered_text(clean)
+            if item is None:
+                bullet = re.match(r"^[-*]\s+(.+)$", clean)
+                item = bullet.group(1).strip() if bullet else None
+            if item:
+                parsed["brunnstrom_training_actions"].append(item)
+            elif clean and not clean.startswith("###"):
+                parsed["brunnstrom_training_actions"].append(clean)
+        elif section == "individualization":
+            item = _numbered_text(clean)
+            if item is None:
+                bullet = re.match(r"^[-*]\s+(.+)$", clean)
+                item = bullet.group(1).strip() if bullet else None
+            if item:
+                parsed["individualization_items"].append(item)
         elif section == "warnings":
             item = _numbered_text(clean)
             if item:
@@ -418,11 +496,12 @@ def _knowledge_evidence_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
             entry["citation_markers"] = citation_markers(entry["citation_numbers"])
 
     unreviewed = any("未完成正式专家审核" in str(entry.get("review_status") or "") for entry in entries)
+    has_evidence = bool(entries or references)
     return {
-        "used_in_report": bool(entries),
+        "used_in_report": has_evidence,
         "citation_style": "numeric_square_brackets_zh",
         "clinical_review_status": (
-            "not_used" if not entries else "demo_unreviewed" if unreviewed else "reviewed"
+            "not_used" if not has_evidence else "demo_unreviewed" if unreviewed else "reviewed"
         ),
         "notice": (
             "当前包含未完成正式专家审核的试运行知识，仅供内部技术验证。"
@@ -526,10 +605,12 @@ def _biomarker_sections(assessment: Dict[str, Any], parsed: Dict[str, Any]) -> L
                 "legacy_hidden"
                 if row_text.get("legacy_reference_rule")
                 else "available"
-                if row_text.get("interpretation") and row_text.get("treatment_advice")
+                if row_text.get("interpretation") or row_text.get("treatment_advice")
                 else "not_available"
             ),
         }
+        if row_text.get("evidence_basis"):
+            indicator["evidence_basis"] = row_text["evidence_basis"]
         if marker.get("note"):
             indicator["note"] = marker.get("note")
         grouped.setdefault(group_key, []).append(indicator)
@@ -658,6 +739,13 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
                     for value in (parsed.get("treatment_strategy") or [])
                 ],
             },
+            "brunnstrom_training_actions": [
+                {
+                    "text": value,
+                    "citation_numbers": extract_numeric_citations(value),
+                }
+                for value in (parsed.get("brunnstrom_training_actions") or [])
+            ],
         },
         "next_week_training_plan": {
             "recommended_gestures": parsed.get("gesture_plan") or [],
@@ -673,6 +761,13 @@ def build_result_payload(assessment: Dict[str, Any]) -> Dict[str, Any]:
             "next_assessment": {
                 "recommendation": parsed.get("next_assessment"),
             },
+            "individualization_items": [
+                {
+                    "text": value,
+                    "citation_numbers": extract_numeric_citations(value),
+                }
+                for value in (parsed.get("individualization_items") or [])
+            ],
         },
         "natural_language_summary": {
             "for_doctor": " ".join(
@@ -696,6 +791,8 @@ def _pdf_markup(value: Any, latin_font: str = "Helvetica") -> str:
     """Render Latin runs with a font whose metrics are reliable."""
     lines: List[str] = []
     for line in _pdf_text(value).split("\n"):
+        line = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1（\2）", line)
+        line = line.replace("**", "")
         chunks: List[str] = []
         for chunk in re.findall(r"[\u0000-\u024f]+|[^\u0000-\u024f]+", line):
             escaped = html.escape(chunk, quote=False)
@@ -884,56 +981,91 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
         legacy_only = bool(indicators) and all(
             marker.get("interpretation_status") == "legacy_hidden" for marker in indicators
         )
-        rows = [["指标", "当前值"]] if legacy_only else [["指标", "当前值", "解读", "训练/随访建议"]]
+        has_advice = any(marker.get("treatment_advice") for marker in indicators)
+        has_basis = any(marker.get("evidence_basis") for marker in indicators)
+        if legacy_only:
+            rows = [["指标", "当前值"]]
+        elif has_advice:
+            rows = [["指标", "当前值", "解读", "训练/随访建议"]]
+        elif has_basis:
+            rows = [["指标", "当前值", "解读", "依据"]]
+        else:
+            rows = [["指标", "当前值", "解读"]]
         for marker in indicators:
             current = marker.get("current_value") or {}
             if legacy_only:
                 rows.append([marker.get("indicator_name"), current.get("text")])
-            else:
+            elif has_advice:
                 rows.append([
                     marker.get("indicator_name"),
                     current.get("text"),
                     marker.get("interpretation"),
                     marker.get("treatment_advice"),
                 ])
-        widths = [92 * mm, 90 * mm] if legacy_only else [42 * mm, 30 * mm, 54 * mm, 56 * mm]
-        story.append(kv_table(rows, widths, font_size=8))
+            elif has_basis:
+                rows.append([
+                    marker.get("indicator_name"),
+                    current.get("text"),
+                    marker.get("interpretation"),
+                    marker.get("evidence_basis"),
+                ])
+            else:
+                rows.append([
+                    marker.get("indicator_name"),
+                    current.get("text"),
+                    marker.get("interpretation"),
+                ])
+        if legacy_only:
+            widths = [92 * mm, 90 * mm]
+        elif has_advice or has_basis:
+            widths = [42 * mm, 30 * mm, 56 * mm, 54 * mm]
+        else:
+            widths = [48 * mm, 32 * mm, 102 * mm]
+        story.append(kv_table(rows, widths, font_size=8 if (has_advice or has_basis) else 8.5))
         if legacy_only:
             story.append(p("该历史报告采用旧版参考规则，单次高低判断已隐藏。", note))
 
     strategy = payload.get("subtype_classification_and_treatment_strategy") or {}
     subtype = (strategy.get("subtype_classification") or {}).get("overall_subtype")
     strategies = (strategy.get("treatment_strategy") or {}).get("overall_strategies") or []
-    story.extend([p("综合亚型界定与治疗策略", h2)])
-    if subtype:
-        story.append(p(f"综合亚型：{subtype}"))
-    for i, item in enumerate(strategies, 1):
-        story.append(p(f"{i}. {item}"))
+    brunnstrom_actions = strategy.get("brunnstrom_training_actions") or []
+    if subtype or strategies or brunnstrom_actions:
+        story.append(p("综合亚型界定与治疗策略", h2))
+        if subtype:
+            story.append(p(f"综合亚型：{subtype}"))
+        for i, item in enumerate(strategies, 1):
+            story.append(p(f"{i}. {item}"))
+        if brunnstrom_actions:
+            story.append(p("按 Brunnstrom 分期的训练动作", h3))
+            for i, item in enumerate(brunnstrom_actions, 1):
+                text = item.get("text") if isinstance(item, dict) else item
+                story.append(p(f"{i}. {text}"))
 
     evidence = payload.get("knowledge_evidence") or {}
     evidence_entries = evidence.get("entries") or []
-    if evidence_entries:
+    references = evidence.get("references") or []
+    if evidence_entries or references:
         story.append(p("依据来源与参考文献", h2))
         if evidence.get("notice"):
             story.append(p(evidence.get("notice"), note))
-        evidence_rows = [["引用", "知识ID", "知识条目", "知识状态", "来源ID"]]
-        for entry in evidence_entries:
-            evidence_rows.append([
-                entry.get("citation_markers")
-                or citation_markers(entry.get("citation_numbers") or []),
-                entry.get("knowledge_id"),
-                entry.get("title"),
-                entry.get("knowledge_status"),
-                "、".join(entry.get("source_ids") or []) or "—",
-            ])
-        story.append(
-            kv_table(
-                evidence_rows,
-                [22 * mm, 30 * mm, 54 * mm, 42 * mm, 34 * mm],
-                font_size=7.5,
+        if evidence_entries:
+            evidence_rows = [["引用", "知识ID", "知识条目", "知识状态", "来源ID"]]
+            for entry in evidence_entries:
+                evidence_rows.append([
+                    entry.get("citation_markers")
+                    or citation_markers(entry.get("citation_numbers") or []),
+                    entry.get("knowledge_id"),
+                    entry.get("title"),
+                    entry.get("knowledge_status"),
+                    "、".join(entry.get("source_ids") or []) or "—",
+                ])
+            story.append(
+                kv_table(
+                    evidence_rows,
+                    [22 * mm, 30 * mm, 54 * mm, 42 * mm, 34 * mm],
+                    font_size=7.5,
+                )
             )
-        )
-        references = evidence.get("references") or []
         if references:
             story.append(p("参考文献", h3))
             for item in references:
@@ -943,30 +1075,39 @@ def write_report_pdf(path: Path, payload: Dict[str, Any]) -> None:
     plan = payload.get("next_week_training_plan") or {}
     gestures = plan.get("recommended_gestures") or []
     weekly = plan.get("weekly_schedule") or []
-    story.extend([p("下周训练计划", h2)])
     if gestures:
+        story.append(p("下周训练计划", h2))
         story.append(p("推荐手势组合", h3))
         rows = [["手势名称", "训练目的", "辅助力度", "重复次数"]]
         for item in gestures:
             rows.append([item.get("name"), item.get("purpose"), item.get("assistance"), item.get("repetitions")])
         story.append(kv_table(rows, [34 * mm, 62 * mm, 44 * mm, 42 * mm], font_size=8.5))
     if weekly:
+        if not gestures:
+            story.append(p("下周训练计划", h2))
         story.append(p("每周安排", h3))
         rows = [["训练日", "训练内容", "预计时长"]]
         for item in weekly:
             rows.append([item.get("day"), item.get("content"), item.get("duration")])
         story.append(kv_table(rows, [32 * mm, 110 * mm, 40 * mm], font_size=8.5))
-    if not gestures and not weekly:
-        story.append(p("本次未生成结构化手势计划；请结合康复师建议安排训练。", note))
+    individualization = (payload.get("warnings_and_recommendations") or {}).get(
+        "individualization_items"
+    ) or []
+    if individualization:
+        story.append(p("进一步个体化所需信息", h2))
+        for i, item in enumerate(individualization, 1):
+            text = item.get("text") if isinstance(item, dict) else item
+            story.append(p(f"{i}. {text}"))
 
     warn = payload.get("warnings_and_recommendations") or {}
     warnings = warn.get("warnings") or []
     next_assessment = (warn.get("next_assessment") or {}).get("recommendation")
-    story.extend([p("预警与下次评估", h2)])
-    for i, item in enumerate(warnings, 1):
-        story.append(p(f"{i}. {item}"))
-    if next_assessment:
-        story.append(p(f"下次评估建议：{next_assessment}"))
+    if warnings or next_assessment:
+        story.append(p("预警与下次评估", h2))
+        for i, item in enumerate(warnings, 1):
+            story.append(p(f"{i}. {item}"))
+        if next_assessment:
+            story.append(p(f"下次评估建议：{next_assessment}"))
 
     story.extend(
         [
@@ -1014,7 +1155,8 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
     manifest_json = root / "manifest.json"
     export_zip = root / "export.zip"
 
-    source_payload = {
+    source_payload = {"renderer_version": EXPORT_RENDERER_VERSION}
+    source_payload.update({
         key: assessment.get(key)
         for key in (
             "id", "patient_id", "name", "sex", "age", "diagnosis", "paralysis_side",
@@ -1023,7 +1165,7 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
             "prediction_json", "model_version", "llm_provider", "llm_model", "quality_json",
             "validation_status",
         )
-    }
+    })
     source_sha256 = hashlib.sha256(
         json.dumps(source_payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
@@ -1046,6 +1188,7 @@ def ensure_assessment_export(assessment: Dict[str, Any], force: bool = False) ->
     manifest = {
         "schema_version": "rehab.export_manifest.v1",
         "result_schema_version": SCHEMA_VERSION,
+        "renderer_version": EXPORT_RENDERER_VERSION,
         "exported_at": _now_iso(),
         "assessment_db_id": assessment_db_id,
         "patient_id": assessment.get("patient_id"),

@@ -159,6 +159,21 @@ class PatientDetail(PatientSummary):
     assessments: List[AssessmentRecord] = Field(default_factory=list)
 
 
+class PatientAssessmentSummary(BaseModel):
+    id: int
+    created_at: str
+    assessment_time: Optional[str] = None
+    fma_ue: float
+    hand_tone: str
+    hand_function: int
+    report_status: str
+
+
+class PatientAssessmentList(BaseModel):
+    total: int
+    items: List[PatientAssessmentSummary]
+
+
 class AssessmentOverviewItem(BaseModel):
     id: int
     created_at: str

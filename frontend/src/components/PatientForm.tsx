@@ -100,6 +100,9 @@ export default function PatientForm({ value, onChange, disabled }: Props) {
               update('paralysis_side', e.target.value as PatientInfo['paralysis_side'])
             }
           >
+            <option value="" disabled>
+              请选择
+            </option>
             <option value="左">左</option>
             <option value="右">右</option>
           </select>
