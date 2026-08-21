@@ -1,0 +1,324 @@
+{
+  "schema_version": "rehab.knowledge.retrieval-test.v2",
+  "status": "pass",
+  "collection": "rehab_knowledge_v1_candidate_next",
+  "include_demo": false,
+  "retrieval_ms": 3194.3,
+  "queries": [
+    {
+      "category": "教材",
+      "query": "Brunnstrom 手功能分期 康复评定",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U186",
+          "title": "Medicine ® Observational Study OPEN Improving the utility of the Brunnstrom recovery stages in patients with stroke Validation and quantification Chien-Yu Huang, PhDa, Gong-Hong Lin, BSb, Yi-Jing Huan",
+          "page": 1,
+          "score": 0.662777,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-a683d56ad4ca0ee7",
+          "source_page_url": "/api/rag/source-files/FILE-a683d56ad4ca0ee7/pages/1"
+        },
+        {
+          "rank": 2,
+          "uid": "U204",
+          "title": "中医中药·中西医结合 2022 年 1 月 第 1 期 推拿结合康复训练在偏瘫 Brunnstrom III期至IV期的治疗研究 胡晓勇 1,袁丽梅 2 1",
+          "page": 3,
+          "score": 0.656203,
+          "source_type": "paper",
+          "evidence_level": "research",
+          "knowledge_role": "core_direct",
+          "clinical_ready": true,
+          "source_file_id": "FILE-413237cdfa3c3c2f",
+          "source_page_url": "/api/rag/source-files/FILE-413237cdfa3c3c2f/pages/3"
+        },
+        {
+          "rank": 3,
+          "uid": "U194",
+          "title": "·1025 中国医刊 2025 年 第 6 0 卷 第 9 期 Chin J Med, 2025, Vol 60, No.9 ·指南与共识· 社区脑卒中患者上肢躯体感觉功能障碍康复中国专家共识 (2025 版) 中国康复医学会社区康复工作委员会,中国康复医学会手功能康复专业委员会 【关键词】脑卒中;躯体感觉功能障碍;上肢功能;社区康复;专家共识 中图分类号:R743.3 文献标识码:A 文章编号:",
+          "page": 4,
+          "score": 0.652911,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-21910088e2acc2da",
+          "source_page_url": "/api/rag/source-files/FILE-21910088e2acc2da/pages/4"
+        }
+      ]
+    },
+    {
+      "category": "教材",
+      "query": "改良 Ashworth 量表 MAS 定义 评分",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U178",
+          "title": "康复功能评定学（第3版）",
+          "page": 253,
+          "score": 0.595155,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-01e3d377f792e216",
+          "source_page_url": "/api/rag/source-files/FILE-01e3d377f792e216/pages/253"
+        },
+        {
+          "rank": 2,
+          "uid": "U038",
+          "title": "Cochrane Library Cochrane Database of Systematic Reviews Constraint-induced movement therapy for upper extremities in people with stroke (Review) Corbetta D, Sirtori V, Castellini G, Moja L, Gatti R C",
+          "page": 81,
+          "score": 0.581039,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-0867a451a86e5188",
+          "source_page_url": "/api/rag/source-files/FILE-0867a451a86e5188/pages/81"
+        },
+        {
+          "rank": 3,
+          "uid": "U106",
+          "title": "Article Automated EMG-Based Classification of Upper Extremity Motor Impairment Levels in Subacute Stroke Alexey Anastasiev 1 , Hideki Kadone 2, * , Aiki Marushima 3 , Hiroki Watanabe 3 , Alexander Zab",
+          "page": 2,
+          "score": 0.574964,
+          "source_type": "paper",
+          "evidence_level": "research",
+          "knowledge_role": "core_direct",
+          "clinical_ready": true,
+          "source_file_id": "FILE-6ea015305b87dd31",
+          "source_page_url": "/api/rag/source-files/FILE-6ea015305b87dd31/pages/2"
+        }
+      ]
+    },
+    {
+      "category": "教材",
+      "query": "FMA 上肢评定 手部项目",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U192",
+          "title": "UC Irvine UC Irvine Previously Published Works Title A Standardized Approach to the Fugl-Meyer Assessment and Its Implications for Clinical Trials Permalink https://escholarship.org/uc/item/59x8z7kn J",
+          "page": 3,
+          "score": 0.632519,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-13ab5da47dcc2ac5",
+          "source_page_url": "/api/rag/source-files/FILE-13ab5da47dcc2ac5/pages/3"
+        },
+        {
+          "rank": 2,
+          "uid": "U179",
+          "title": "康复评定学",
+          "page": 48,
+          "score": 0.630587,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-b55a1bbb3c5ae7d6",
+          "source_page_url": "/api/rag/source-files/FILE-b55a1bbb3c5ae7d6/pages/48"
+        },
+        {
+          "rank": 3,
+          "uid": "U038",
+          "title": "Cochrane Library Cochrane Database of Systematic Reviews Constraint-induced movement therapy for upper extremities in people with stroke (Review) Corbetta D, Sirtori V, Castellini G, Moja L, Gatti R C",
+          "page": 59,
+          "score": 0.621883,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-0867a451a86e5188",
+          "source_page_url": "/api/rag/source-files/FILE-0867a451a86e5188/pages/59"
+        }
+      ]
+    },
+    {
+      "category": "论文",
+      "query": "脑卒中 半球间相干 interhemispheric coherence 运动恢复",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U189",
+          "title": "2025 年, 第 40 卷, 第9期 ·特约稿· 脑卒中智能康复技术应用专家共识* 执笔: 潘 钰 张 皓 谢 青 江 山 刘沙鑫 顾问: 谢欲晓 何成奇 喻洪流 季林红 专家组成员(按姓氏拼音顺序): 白定群 窦维蓓 高 硕 何 竟 李 翀 李建华 吕泽平 孟巧玲 乔鸿飞 邵珠峰 宋海新 隋晓红 万春晓 王 波 王继先 王卫群 王佳星 魏 全 闫 铮 杨 斌 杨国法 杨梦璇 尹梓名 袁 华 翟",
+          "page": 6,
+          "score": 0.6852,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-3062c7beb6219a4b",
+          "source_page_url": "/api/rag/source-files/FILE-3062c7beb6219a4b/pages/6"
+        },
+        {
+          "rank": 2,
+          "uid": "U179",
+          "title": "康复评定学",
+          "page": 273,
+          "score": 0.6676,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-b55a1bbb3c5ae7d6",
+          "source_page_url": "/api/rag/source-files/FILE-b55a1bbb3c5ae7d6/pages/273"
+        },
+        {
+          "rank": 3,
+          "uid": "U181",
+          "title": "作业疗法学",
+          "page": 246,
+          "score": 0.662841,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-d44c4738d0cd49a3",
+          "source_page_url": "/api/rag/source-files/FILE-d44c4738d0cd49a3/pages/246"
+        }
+      ]
+    },
+    {
+      "category": "论文",
+      "query": "sEMG MDF median frequency 中位频率",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U090",
+          "title": "2023 45th Annual International Conference of the IEEE Engineering in Medicine & Biology Society (EMBC) | 979-8-3503-2447-1/23/$31.00 ©2023 IEEE | DOI: 10.1109/EMBC40787.2023.10340707 Using sEMG Signal",
+          "page": 2,
+          "score": 0.581763,
+          "source_type": "paper",
+          "evidence_level": "research",
+          "knowledge_role": "core_direct",
+          "clinical_ready": true,
+          "source_file_id": "FILE-c004c4b1b6853ce7",
+          "source_page_url": "/api/rag/source-files/FILE-c004c4b1b6853ce7/pages/2"
+        },
+        {
+          "rank": 2,
+          "uid": "U005",
+          "title": "Supervised Myoelectrical Hand Gesture Recognition in Post-Acute Stroke Patients with Upper Limb Paresis on Affected and Non-Affected Sides",
+          "page": 6,
+          "score": 0.579993,
+          "source_type": "paper",
+          "evidence_level": "research",
+          "knowledge_role": "core_direct",
+          "clinical_ready": true,
+          "source_file_id": "FILE-c18a53a69161a055",
+          "source_page_url": "/api/rag/source-files/FILE-c18a53a69161a055/pages/6"
+        },
+        {
+          "rank": 3,
+          "uid": "U252",
+          "title": "Song et al",
+          "page": 6,
+          "score": 0.579024,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-fdd5a9b96a953cd5",
+          "source_page_url": "/api/rag/source-files/FILE-fdd5a9b96a953cd5/pages/6"
+        }
+      ]
+    },
+    {
+      "category": "论文",
+      "query": "表面肌电 电极放置规范 SENIAM",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U179",
+          "title": "康复评定学",
+          "page": 325,
+          "score": 0.647512,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-b55a1bbb3c5ae7d6",
+          "source_page_url": "/api/rag/source-files/FILE-b55a1bbb3c5ae7d6/pages/325"
+        },
+        {
+          "rank": 2,
+          "uid": "U180",
+          "title": "康复疗法评定学（第2版）",
+          "page": 333,
+          "score": 0.636923,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-79fd9e74616425ec",
+          "source_page_url": "/api/rag/source-files/FILE-79fd9e74616425ec/pages/333"
+        },
+        {
+          "rank": 3,
+          "uid": "U179",
+          "title": "康复评定学",
+          "page": 323,
+          "score": 0.614668,
+          "source_type": "textbook",
+          "evidence_level": "textbook_reference",
+          "knowledge_role": "textbook_reference",
+          "clinical_ready": true,
+          "source_file_id": "FILE-b55a1bbb3c5ae7d6",
+          "source_page_url": "/api/rag/source-files/FILE-b55a1bbb3c5ae7d6/pages/323"
+        }
+      ]
+    },
+    {
+      "category": "指南",
+      "query": "EEG 采集 最小记录标准 10-20 电极",
+      "top3": [
+        {
+          "rank": 1,
+          "uid": "U182",
+          "title": "Clinical Neurophysiology 147 (2023) 108–120 Contents lists available at ScienceDirect Clinical Neurophysiology journal homepage: www.elsevier.com/locate/clinph Routine and sleep EEG: Minimum recording",
+          "page": 5,
+          "score": 0.731242,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-e558f02b165bef90",
+          "source_page_url": "/api/rag/source-files/FILE-e558f02b165bef90/pages/5"
+        },
+        {
+          "rank": 2,
+          "uid": "U016",
+          "title": "Electrode Size and Placement for Surface EMG Bipolar Detection from the Brachioradialis Muscle: A Scoping Review",
+          "page": 5,
+          "score": 0.676915,
+          "source_type": "paper",
+          "evidence_level": "research",
+          "knowledge_role": "core_direct",
+          "clinical_ready": true,
+          "source_file_id": "FILE-538398a6eb9364d8",
+          "source_page_url": "/api/rag/source-files/FILE-538398a6eb9364d8/pages/5"
+        },
+        {
+          "rank": 3,
+          "uid": "U182",
+          "title": "Clinical Neurophysiology 147 (2023) 108–120 Contents lists available at ScienceDirect Clinical Neurophysiology journal homepage: www.elsevier.com/locate/clinph Routine and sleep EEG: Minimum recording",
+          "page": 6,
+          "score": 0.665371,
+          "source_type": "guideline",
+          "evidence_level": "research",
+          "knowledge_role": "guideline",
+          "clinical_ready": true,
+          "source_file_id": "FILE-e558f02b165bef90",
+          "source_page_url": "/api/rag/source-files/FILE-e558f02b165bef90/pages/6"
+        }
+      ]
+    }
+  ]
+}

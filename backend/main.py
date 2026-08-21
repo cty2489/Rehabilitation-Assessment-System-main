@@ -34,8 +34,16 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field as PydanticField, field_validator
 
 import knowledge_admin
+import rag_v1_candidate_admin
 import llm_settings
 import mysql_db
+import inference as inference_module
+from llm_control_test import (
+    LlmControlTestSessionResponse,
+    ManualPredictionValues,
+    input_fingerprint as llm_control_input_fingerprint,
+    quality_metadata as manual_quality_metadata,
+)
 from admin_auth import browser_origin_allowed, issue_session_token, verify_session_token
 from assessment_queue import AssessmentQueue
 from assessment_export import (
@@ -56,6 +64,23 @@ from device_auth import (
 )
 from device_patient_policy import DevicePatientPolicyError, resolve_device_patient
 from eval_package import INSTITUTIONS, locate_manifest_root, read_eval_package, safe_extract_zip
+from llm_benchmark import (
+    BenchmarkBatchValidationError,
+    BenchmarkClinicalScores,
+    BenchmarkPatientInfo,
+    BenchmarkRunConfig,
+    benchmark_preset,
+    existing_biomarker_extractor,
+    materialize_batch_manifest,
+    materialize_benchmark_input,
+    prepare_batch_inputs,
+    prepare_single_input,
+    read_benchmark_batch,
+)
+from clinical_knowledge_graph.admin_view import (
+    KnowledgeGraphAdminError,
+    knowledge_graph_admin_payload,
+)
 from inference import (
     CHECKPOINTS,
     SENTINEL,
@@ -81,6 +106,7 @@ from schemas import (
     MysqlAssessmentDetail,
     MysqlAssessmentList,
     PatientDetail,
+    PatientAssessmentList,
     PatientInfo,
     PatientSummary,
     PatientUpdate,
@@ -148,6 +174,15 @@ SESSION_TTL_HOURS = _env_int("SESSION_TTL_HOURS", 168)
 DEVICE_INPUT_TTL_HOURS = _env_int("DEVICE_INPUT_TTL_HOURS", 168)
 _LAST_SESSION_CLEANUP = 0.0
 _LAST_DEVICE_INPUT_CLEANUP = 0.0
+BENCHMARK_BATCH_ROOT = SESSION_ROOT / "benchmark_batches"
+BENCHMARK_BATCH_ROOT.mkdir(parents=True, exist_ok=True)
+BENCHMARK_RUN_ROOT = Path(
+    os.environ.get(
+        "BENCHMARK_RUN_ROOT",
+        str(Path(__file__).resolve().parents[1] / "benchmark_runs"),
+    )
+)
+BENCHMARK_BATCHES: Dict[str, Dict[str, Any]] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +197,9 @@ class SessionState:
                  parse_warnings: Optional[List[str]] = None,
                  trial_details: Optional[List[Dict[str, Any]]] = None,
                  device_job_id: Optional[str] = None,
-                 temporary_work_dir: Optional[Path] = None):
+                 temporary_work_dir: Optional[Path] = None,
+                 manual_predictions: Optional[Dict[str, Any]] = None,
+                 manual_input_fingerprint: Optional[str] = None):
         self.session_id = session_id
         self.patient = patient
         self.eeg_paths = eeg_paths
@@ -179,6 +216,8 @@ class SessionState:
         self.trial_details = trial_details or _trial_details_from_paths(eeg_paths, emg_paths)
         self.device_job_id = device_job_id
         self.temporary_work_dir = temporary_work_dir
+        self.manual_predictions = manual_predictions
+        self.manual_input_fingerprint = manual_input_fingerprint
         self.assessment_db_id: Optional[int] = None
         self.report_provider: Optional[str] = None
         self.report_model_id: Optional[str] = None
@@ -281,7 +320,19 @@ async def lifespan(app: FastAPI):
 
     registry = ModelRegistry()
     print(f"[startup] loading CMK-AGN models onto {registry.device}...")
-    registry.load_all()
+    # Keep the Web/API surface available only when checkpoints are genuinely
+    # absent in a local showcase. A deployment with all checkpoints present
+    # must fail fast on a load error instead of silently serving a 503 state.
+    missing_checkpoints = [
+        str(path) for path in CHECKPOINTS.values() if not path.exists()
+    ]
+    if missing_checkpoints:
+        try:
+            registry.load_all()
+        except Exception as exc:  # noqa: BLE001 - health endpoint exposes readiness
+            print(f"[startup][warn] scoring models not loaded: {exc}")
+    else:
+        registry.load_all()
     app.state.dl_ready = len(registry.models) == len(CHECKPOINTS)
     app.state.dl_model_version = _dl_model_version()
     print(f"[startup] loaded {len(registry.models)} models: {list(registry.models.keys())}")
@@ -680,6 +731,7 @@ def _generate_planner_rag_report(
     biomarkers: Optional[Dict[str, Any]],
     quality: Dict[str, Any],
     assessment_validation_status: str,
+    report_prefix: str = "",
 ):
     """Run the only production report path and preserve the legacy SSE surface."""
     production_adapter = _load_production_adapter()
@@ -703,7 +755,33 @@ def _generate_planner_rag_report(
         request.report_model_id
     )
     pipeline_result = orchestrator.run(request.assessment_input)
-    _report, validation = production_adapter.require_completed_report(pipeline_result)
+    try:
+        _report, validation = production_adapter.require_completed_report(
+            pipeline_result
+        )
+    except production_adapter.ProductionPipelineExecutionError:
+        # A failed ReportGenerator has already completed the graph/planner/RAG
+        # stages. Recover from that exact scoped input instead of failing the
+        # entire assessment or invoking the legacy report flow.
+        pipeline_result, validation = (
+            production_adapter.recover_report_generator_failure(
+                pipeline_result,
+                report_model_id=request.report_model_id,
+            )
+        )
+        recovery_mode = pipeline_result.trace.artifact_refs.get(
+            "report_generator_recovery"
+        )
+        state.queue.put({
+            "type": "step_detail",
+            "step": "report",
+            "detail": (
+                "报告生成器已改用紧凑 LLM 合同，"
+                "并根据本次分析链路完成结构化结论与策略生成。"
+                if recovery_mode == "llm_strategy_recovery"
+                else "报告生成器输出未通过结构化校验，已基于本次已完成的分析链路生成保守结构化内容。"
+            ),
+        })
 
     if pipeline_result.retrieval is not None:
         state.queue.put({
@@ -724,17 +802,24 @@ def _generate_planner_rag_report(
             "detail": "报告触发人工复核，已在报告中明确标记。",
         })
 
+    pipeline_metadata = production_adapter.orchestration_metadata(pipeline_result)
+    graph_display = pipeline_metadata.get("knowledge_graph_display")
+    if isinstance(graph_display, dict):
+        state.queue.put({"type": "knowledge_graph", "graph": graph_display})
+
     markdown = production_adapter.render_compatible_markdown(
         patient=state.patient,
         result=pipeline_result,
         assessment_validation_status=assessment_validation_status,
         quality=quality,
     )
+    if report_prefix:
+        markdown = report_prefix + markdown
     for offset in range(0, len(markdown), 80):
         state.queue.put({"type": "report_chunk", "chunk": markdown[offset:offset + 80]})
     state.queue.put({"type": "step_done", "step": "report"})
     state.queue.put({"type": "report_generation", "mode": "planner_rag"})
-    return markdown, production_adapter.orchestration_metadata(pipeline_result)
+    return markdown, pipeline_metadata
 
 
 def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
@@ -953,7 +1038,141 @@ def _worker(state: SessionState, registry: ModelRegistry, report_model) -> None:
                 print(f"[cleanup][warn] failed to remove session upload: {exc}")
 
 
+def _llm_control_test_worker(state: SessionState) -> None:
+    """Compute signal biomarkers, then run the report chain with manual DL scores."""
+    try:
+        manual_scores = ManualPredictionValues.model_validate(state.manual_predictions)
+        fingerprint = state.manual_input_fingerprint or llm_control_input_fingerprint(
+            state.patient,
+            manual_scores,
+            state.eeg_paths,
+            state.emg_paths,
+        )
+        state.queue.put({
+            "type": "step_start",
+            "step": "feature_extract",
+            "label": "从原始信号计算生物标志物",
+        })
+        biomarker_module = inference_module._load_backend_biomarkers()
+        biomarkers = biomarker_module.extract(
+            state.eeg_paths,
+            state.emg_paths,
+            hand_function_stage=manual_scores.hand_function,
+            affected_side=state.patient.paralysis_side,
+            institution=state.institution,
+        )
+        coverage = biomarkers["coverage"]
+        quality = manual_quality_metadata(fingerprint, coverage, state.n_trials)
+        predictions_raw = {
+            "FMA_UE": manual_scores.FMA_UE,
+            "BI": 0.0,
+            "hand_tone": manual_scores.hand_tone,
+            "hand_function": manual_scores.hand_function,
+            "_biomarkers": biomarkers,
+            "_quality": quality,
+            "_validation_status": "llm_control_test_manual_predictions",
+        }
+        predictions = PredictionResult(
+            FMA_UE=manual_scores.FMA_UE,
+            BI=0.0,
+            hand_tone=manual_scores.hand_tone,
+            hand_function=manual_scores.hand_function,
+        )
+
+        state.queue.put({
+            "type": "step_start",
+            "step": "inference",
+            "label": "人工评分真值（已跳过DL评分模型）",
+        })
+        state.queue.put({
+            "type": "step_detail",
+            "step": "inference",
+            "detail": (
+                "FMA、Hand MAS、Brunnstrom 使用人工真值；"
+                f"生物标志物由上传信号计算，{coverage['available']}/"
+                f"{coverage['total']} 项可用。"
+            ),
+        })
+        for task, label, value, value_range in (
+            ("FMA_UE", "FMA手部分数（人工真值）", predictions.FMA_UE, "0–20"),
+            ("hand_tone", "手部肌张力 (Hand MAS)", predictions.hand_tone, None),
+            ("hand_function", "Brunnstrom 分期 (手，人工真值)", predictions.hand_function, "1–6"),
+        ):
+            event = {"type": "prediction", "task": task, "label": label, "value": value}
+            if value_range:
+                event["range"] = value_range
+            state.queue.put(event)
+        state.queue.put({
+            "type": "biomarker_coverage",
+            "available": coverage["available"],
+            "total": coverage["total"],
+            "missing_keys": coverage["missing_keys"],
+        })
+        state.queue.put({"type": "step_done", "step": "feature_extract"})
+        state.queue.put({"type": "step_done", "step": "inference"})
+
+        if state.cancel_event.is_set():
+            raise AssessmentCancelled("LLM 对照测试已取消")
+        notice = (
+            "> **LLM 对照测试（非正式评估）**：26 项生物标志物由上传的原始信号正常计算；"
+            "FMA、Hand MAS、Brunnstrom 使用人工真值，未运行三个 DL 评分模型，"
+            "且未写入患者评估数据库。\n\n"
+            f"> 输入指纹：`{fingerprint}`\n\n"
+        )
+        report_text, pipeline_metadata = _generate_planner_rag_report(
+            state,
+            predictions_raw,
+            biomarkers=biomarkers,
+            quality=quality,
+            assessment_validation_status="llm_control_test_manual_predictions",
+            report_prefix=notice,
+        )
+        if state.cancel_event.is_set():
+            raise AssessmentCancelled("LLM 对照测试已取消")
+
+        pipeline_metadata = dict(pipeline_metadata)
+        pipeline_metadata.update({
+            "input_source": "manual_predictions_with_signal_biomarkers",
+            "prediction_source": "manual_ground_truth",
+            "biomarker_source": "computed_from_uploaded_signals",
+            "input_fingerprint": fingerprint,
+            "dl_inference_skipped": True,
+            "biomarkers_computed_from_signal": True,
+            "test_only": True,
+            "persisted": False,
+        })
+        quality = dict(quality)
+        quality["clinical_pipeline"] = pipeline_metadata
+        state.result = AssessmentResult(
+            session_id=state.session_id,
+            patient_info=state.patient,
+            predictions=predictions,
+            report=report_text,
+            quality=quality,
+            validation_status="llm_control_test_manual_predictions",
+        )
+        state.queue.put({"type": "done"})
+    except AssessmentCancelled as exc:
+        state.queue.put({"type": "cancelled", "message": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        state.queue.put(error_event(f"LLM 对照测试失败：{exc}"))
+    finally:
+        state.finished_monotonic = time.monotonic()
+        state.queue.put(SENTINEL)
+        if state.temporary_work_dir is not None:
+            try:
+                work = state.temporary_work_dir.resolve()
+                if SESSION_ROOT.resolve() in work.parents:
+                    shutil.rmtree(work, ignore_errors=True)
+            except OSError as exc:
+                print(f"[cleanup][warn] failed to remove session upload: {exc}")
+
+
 def _run_scheduled_state(state: SessionState) -> None:
+    if state.manual_predictions is not None:
+        _llm_control_test_worker(state)
+        return
     registry: ModelRegistry = app.state.registry
     report_model = app.state.report_model
     _worker(state, registry, report_model)
@@ -963,8 +1182,8 @@ def _start_session_worker(state: SessionState) -> None:
     with state.lock:
         if not state.started:
             state.started = True
-            state.report_provider = llm_provider()
-            state.report_model_id = _llm_model_name()
+            state.report_provider = state.report_provider or llm_provider()
+            state.report_model_id = state.report_model_id or _llm_model_name()
             snapshot = SESSION_SCHEDULER.enqueue(state.session_id, state)
             if snapshot.queue_ahead > 0:
                 state.queue.put({
@@ -976,6 +1195,384 @@ def _start_session_worker(state: SessionState) -> None:
 # --------------------------------------------------------------------------- #
 # Endpoints                                                                   #
 # --------------------------------------------------------------------------- #
+@app.post(
+    "/api/llm-control-test/sessions",
+    response_model=LlmControlTestSessionResponse,
+)
+async def create_llm_control_test_session(
+    patient_id: str = Form(...),
+    name: str = Form(...),
+    sex: str = Form(...),
+    age: Optional[int] = Form(None),
+    diagnosis: str = Form(...),
+    disease_days: Optional[int] = Form(None),
+    paralysis_side: str = Form(...),
+    FMA_UE: float = Form(...),
+    hand_tone: str = Form(...),
+    hand_function: int = Form(...),
+    institution: str = Form("hospital"),
+    upload_id: Optional[str] = Form(None),
+    eeg_files: Optional[List[UploadFile]] = File(None),
+    emg_files: Optional[List[UploadFile]] = File(None),
+    _admin: None = Depends(_require_admin),
+):
+    """Create a non-persistent report session from a parsed ZIP or legacy files."""
+    _cleanup_old_sessions()
+    if institution not in INSTITUTIONS:
+        raise HTTPException(status_code=422, detail=f"未知机构类型：{institution}")
+    legacy_eeg_files = list(eeg_files or [])
+    legacy_emg_files = list(emg_files or [])
+    if upload_id and (legacy_eeg_files or legacy_emg_files):
+        raise HTTPException(status_code=422, detail="upload_id 与逐文件上传只能选择一种")
+    if not upload_id:
+        if not legacy_eeg_files or not legacy_emg_files:
+            raise HTTPException(status_code=422, detail="请先上传并解析一个评估数据包（.zip）")
+        if len(legacy_eeg_files) != len(legacy_emg_files):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "EEG 与 EMG 文件数量不匹配："
+                    f"{len(legacy_eeg_files)} vs {len(legacy_emg_files)}"
+                ),
+            )
+
+    try:
+        patient = PatientInfo(
+            patient_id=patient_id,
+            name=name,
+            sex=sex,  # type: ignore[arg-type]
+            age=age,
+            diagnosis=diagnosis,
+            disease_days=disease_days,
+            paralysis_side=paralysis_side,  # type: ignore[arg-type]
+        )
+        manual_scores = ManualPredictionValues(
+            FMA_UE=FMA_UE,
+            hand_tone=hand_tone,
+            hand_function=hand_function,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"输入无效：{exc}") from exc
+
+    session_id = uuid.uuid4().hex
+    package_name: Optional[str] = None
+    package_hash: Optional[str] = None
+    assessment_id: Optional[str] = None
+    assessment_time: Optional[str] = None
+    parse_warnings: List[str] = []
+    trial_details: List[Dict[str, Any]] = []
+    if upload_id:
+        destdir, pkg, package_hash, package_name = _cached_upload(upload_id, institution)
+        if pkg.n_trials == 0:
+            detail = "数据包中没有可用的 trial。" + (
+                "；".join(pkg.warnings) if pkg.warnings else ""
+            )
+            shutil.rmtree(destdir, ignore_errors=True)
+            raise HTTPException(status_code=422, detail=detail)
+        eeg_paths = list(pkg.eeg_paths)
+        emg_paths = list(pkg.emg_paths)
+        institution = pkg.institution
+        assessment_id = pkg.manifest_summary.get("assessment_id")
+        assessment_time = pkg.manifest_summary.get("assessment_time")
+        parse_warnings = list(pkg.warnings)
+        trial_details = list(pkg.trial_details)
+    else:
+        destdir = SESSION_ROOT / session_id
+        try:
+            eeg_paths = _save_uploads(
+                legacy_eeg_files,
+                destdir / "eeg",
+                "eeg",
+                byte_budget=MAX_SESSION_UPLOAD_BYTES,
+            )
+            eeg_bytes = sum(path.stat().st_size for path in eeg_paths)
+            emg_paths = _save_uploads(
+                legacy_emg_files,
+                destdir / "emg",
+                "emg",
+                byte_budget=max(0, MAX_SESSION_UPLOAD_BYTES - eeg_bytes),
+            )
+        except Exception:
+            shutil.rmtree(destdir, ignore_errors=True)
+            raise
+
+    fingerprint = llm_control_input_fingerprint(
+        patient,
+        manual_scores,
+        eeg_paths,
+        emg_paths,
+    )
+    report_model_id = _llm_model_name()
+    if not report_model_id:
+        shutil.rmtree(destdir, ignore_errors=True)
+        raise HTTPException(status_code=503, detail="当前未选择可用的报告生成模型")
+    state = SessionState(
+        session_id,
+        patient,
+        eeg_paths,
+        emg_paths,
+        institution=institution,
+        persist_target="none",
+        package_name=package_name,
+        assessment_id=assessment_id,
+        assessment_time=assessment_time,
+        n_trials=len(eeg_paths),
+        package_hash=package_hash,
+        parse_warnings=parse_warnings,
+        trial_details=trial_details or None,
+        temporary_work_dir=destdir,
+        manual_predictions=manual_scores.model_dump(mode="json"),
+        manual_input_fingerprint=fingerprint,
+    )
+    state.report_provider = llm_provider()
+    state.report_model_id = report_model_id
+    SESSIONS[session_id] = state
+    return LlmControlTestSessionResponse(
+        session_id=session_id,
+        input_fingerprint=fingerprint,
+        n_trials=len(eeg_paths),
+        report_model_id=report_model_id,
+    )
+
+
+@app.get("/api/llm-benchmark/presets")
+async def llm_benchmark_presets(_admin: None = Depends(_require_admin)):
+    """Expose benchmark presets without changing the production defaults."""
+    return {
+        "prompt_version": "rehab_llm_benchmark_v1",
+        "score_schema": [
+            "patient_id",
+            "fma_wrist",
+            "fma_hand",
+            "hand_mas",
+            "brunnstrom_hand",
+        ],
+        "presets": {
+            name: benchmark_preset(name).model_dump(mode="json")
+            for name in (
+                "benchmark_stage1",
+                "benchmark_stage2_baseline",
+                "benchmark_stage2_rag",
+                "benchmark_stage2_kg",
+                "benchmark_stage2_rag_kg",
+            )
+        },
+    }
+
+
+def _save_benchmark_zip(upload: UploadFile, batch_id: str) -> tuple[Path, Path]:
+    """Save and safely extract one benchmark ZIP without touching old sessions."""
+    work = BENCHMARK_BATCH_ROOT / batch_id
+    work.mkdir(parents=True, exist_ok=False)
+    zip_path = work / "input.zip"
+    written = 0
+    with zip_path.open("wb") as handle:
+        while True:
+            chunk = upload.file.read(UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_ZIP_BYTES:
+                shutil.rmtree(work, ignore_errors=True)
+                raise HTTPException(status_code=413, detail="Benchmark ZIP超过大小限制")
+            handle.write(chunk)
+    if written == 0:
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=422, detail="Benchmark ZIP为空")
+    try:
+        root = safe_extract_zip(zip_path, work / "extracted")
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"Benchmark ZIP无法解析：{exc}") from exc
+    return work, root
+
+
+@app.post("/api/llm-benchmark/batch/prepare")
+async def llm_benchmark_batch_prepare(
+    institution: str = Form(...),
+    package: UploadFile = File(...),
+    preset: str = Form("benchmark_stage1"),
+    _admin: None = Depends(_require_admin),
+):
+    """Validate a multi-patient ZIP and retain only a preparation handle.
+
+    This endpoint does not call an LLM. Later generation uses
+    ``prepare_batch_inputs`` and the shared ``generate_benchmark_report`` core.
+    """
+    try:
+        config = benchmark_preset(preset)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    batch_id = f"batch_{uuid.uuid4().hex[:16]}"
+    work, root = _save_benchmark_zip(package, batch_id)
+    run_root: Optional[Path] = None
+    try:
+        batch = read_benchmark_batch(root, institution)
+        inputs = prepare_batch_inputs(
+            batch,
+            biomarker_extractor=existing_biomarker_extractor(),
+            config=config,
+        )
+        run_root = materialize_batch_manifest(
+            BENCHMARK_RUN_ROOT,
+            batch_id=batch_id,
+            manifest={
+                "schema_version": "rehab.llm-benchmark-batch-manifest.v1",
+                "batch_id": batch_id,
+                "assessment_input_mode": config.assessment_input_mode.value,
+                "clinical_score_source": config.clinical_score_source.value,
+                "preset": preset,
+                "config": config.model_dump(mode="json"),
+                "patient_count": len(inputs),
+                "clinical_scores_file": batch.score_file.name,
+            },
+            validation_report={
+                "status": "passed",
+                "patient_count": len(inputs),
+                "biomarker_counts": {
+                    item.patient.patient_id: len(item.biomarkers) for item in inputs
+                },
+            },
+        )
+        for item in inputs:
+            materialize_benchmark_input(run_root, item)
+    except (BenchmarkBatchValidationError, ValueError) as exc:
+        if run_root is not None:
+            shutil.rmtree(run_root, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - preparation must fail closed
+        if run_root is not None:
+            shutil.rmtree(run_root, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"Benchmark生物标志物准备失败：{exc}") from exc
+    BENCHMARK_BATCHES[batch_id] = {
+        "work": work,
+        "batch": batch,
+        "inputs": inputs,
+        "config": config,
+        "run_root": run_root,
+    }
+    return {
+        "schema_version": "rehab.llm-benchmark-batch.v1",
+        "batch_id": batch_id,
+        "preset": preset,
+        "config": config.model_dump(mode="json"),
+        "patient_count": len(batch.patients),
+        "patients": [
+            {
+                "patient_id": item.patient.patient_id,
+                "n_trials": item.package.n_trials,
+                "clinical_scores": item.clinical_scores.model_dump(mode="json"),
+                "warnings": item.package.warnings,
+            }
+            for item in batch.patients
+        ],
+        "clinical_scores_file": batch.score_file.name,
+        "output_directory": str(run_root.relative_to(BENCHMARK_RUN_ROOT)) if run_root else batch_id,
+        "biomarker_counts": {
+            item.patient.patient_id: len(item.biomarkers) for item in inputs
+        },
+        "model_execution": "not_started",
+    }
+
+
+@app.post("/api/llm-benchmark/single/prepare")
+async def llm_benchmark_single_prepare(
+    patient_id: str = Form(...),
+    name: str = Form(...),
+    sex: str = Form(...),
+    age: Optional[int] = Form(None),
+    diagnosis: str = Form(...),
+    disease_days: Optional[int] = Form(None),
+    paralysis_side: str = Form(...),
+    fma_wrist: float = Form(...),
+    fma_hand: float = Form(...),
+    hand_mas: str = Form(...),
+    brunnstrom_hand: int = Form(...),
+    institution: str = Form("hospital"),
+    preset: str = Form("benchmark_stage1"),
+    upload_id: Optional[str] = Form(None),
+    eeg_files: Optional[List[UploadFile]] = File(None),
+    emg_files: Optional[List[UploadFile]] = File(None),
+    _admin: None = Depends(_require_admin),
+):
+    """Prepare one benchmark case from a parsed ZIP or legacy signal files."""
+    if institution not in INSTITUTIONS:
+        raise HTTPException(status_code=422, detail=f"未知机构类型：{institution}")
+    legacy_eeg_files = list(eeg_files or [])
+    legacy_emg_files = list(emg_files or [])
+    if upload_id and (legacy_eeg_files or legacy_emg_files):
+        raise HTTPException(status_code=422, detail="upload_id 与逐文件上传只能选择一种")
+    if not upload_id and (
+        not legacy_eeg_files
+        or len(legacy_eeg_files) != len(legacy_emg_files)
+    ):
+        raise HTTPException(status_code=422, detail="请先上传并解析一个评估数据包（.zip）")
+    try:
+        config = benchmark_preset(preset)
+        patient = BenchmarkPatientInfo(
+            patient_id=patient_id,
+            name=name,
+            sex=sex,
+            age=age,
+            diagnosis=diagnosis,
+            disease_days=disease_days,
+            paralysis_side=paralysis_side,
+        )
+        scores = BenchmarkClinicalScores(
+            fma_wrist=fma_wrist,
+            fma_hand=fma_hand,
+            hand_mas=hand_mas,
+            brunnstrom_hand=brunnstrom_hand,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Benchmark输入无效：{exc}") from exc
+
+    work: Optional[Path] = None
+    try:
+        if upload_id:
+            work, pkg, _package_hash, _package_name = _cached_upload(upload_id, institution)
+            if pkg.n_trials == 0:
+                raise ValueError("数据包中没有可用的 trial")
+            eeg_paths = list(pkg.eeg_paths)
+            emg_paths = list(pkg.emg_paths)
+            institution = pkg.institution
+        else:
+            work = SESSION_ROOT / f"benchmark_single_{uuid.uuid4().hex}"
+            eeg_paths = _save_uploads(
+                legacy_eeg_files,
+                work / "eeg",
+                "eeg",
+                byte_budget=MAX_SESSION_UPLOAD_BYTES,
+            )
+            eeg_bytes = sum(path.stat().st_size for path in eeg_paths)
+            emg_paths = _save_uploads(
+                legacy_emg_files,
+                work / "emg",
+                "emg",
+                byte_budget=max(0, MAX_SESSION_UPLOAD_BYTES - eeg_bytes),
+            )
+        benchmark_input = prepare_single_input(
+            patient=patient,
+            clinical_scores=scores,
+            eeg_paths=eeg_paths,
+            emg_paths=emg_paths,
+            institution=institution,
+            config=config,
+        )
+        return {
+            "schema_version": "rehab.llm-benchmark-input.v1",
+            "input": benchmark_input.model_dump(mode="json"),
+            "model_execution": "not_started",
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Benchmark信号输入准备失败：{exc}") from exc
+    finally:
+        if work is not None:
+            shutil.rmtree(work, ignore_errors=True)
+
+
 @app.post("/api/assess", response_model=AssessSessionResponse)
 async def create_assessment(
     patient_id: str = Form(...),
@@ -1184,7 +1781,13 @@ async def task_interface_parse(
     )
     prefill = dict(pkg.patient_prefill)
     enrolled = False
-    pid = (prefill.get("patient_id") or "").strip()
+    # Enriched hospital bundles carry a stable hospital number separately from
+    # the source sensor identifier (for example S3). Prefer the hospital
+    # number for enrollment lookup, while keeping the source identifier in the
+    # form so signal provenance is preserved.
+    pid = str(
+        prefill.get("hospital_patient_id") or prefill.get("patient_id") or ""
+    ).strip()
     if pid:
         try:
             record = mysql_db.get_patient_by_business_id(pid)
@@ -2153,6 +2756,17 @@ def get_knowledge_sources(_admin: None = Depends(_require_admin)):
 
 
 # --------------------------------------------------------------------------- #
+# Read-only clinical knowledge graph management                               #
+# --------------------------------------------------------------------------- #
+@app.get("/api/admin/knowledge-graph")
+def get_clinical_knowledge_graph(_admin: None = Depends(_require_admin)):
+    try:
+        return knowledge_graph_admin_payload()
+    except KnowledgeGraphAdminError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------- #
 # Admin device credential management                                          #
 # --------------------------------------------------------------------------- #
 def _device_credentials_payload() -> Dict[str, Any]:
@@ -2326,10 +2940,36 @@ async def list_patients(_admin: None = Depends(_require_admin)):
         raise _mysql_guard(exc) from exc
 
 
-@app.get("/api/patients/{patient_db_id}", response_model=PatientDetail)
-async def get_patient(patient_db_id: int, _admin: None = Depends(_require_admin)):
+@app.get("/api/patients/{patient_db_id}/assessments", response_model=PatientAssessmentList)
+async def list_patient_assessments(
+    patient_db_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    _admin: None = Depends(_require_admin),
+):
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     try:
-        patient = mysql_db.get_patient(patient_db_id)
+        return mysql_db.list_patient_assessments(
+            patient_db_id,
+            limit=limit,
+            offset=offset,
+        )
+    except mysql_db.MySQLUnavailable as exc:
+        raise _mysql_guard(exc) from exc
+
+
+@app.get("/api/patients/{patient_db_id}", response_model=PatientDetail)
+async def get_patient(
+    patient_db_id: int,
+    include_assessments: bool = Query(True),
+    _admin: None = Depends(_require_admin),
+):
+    try:
+        patient = mysql_db.get_patient(
+            patient_db_id,
+            include_assessments=include_assessments,
+        )
     except mysql_db.MySQLUnavailable as exc:
         raise _mysql_guard(exc) from exc
     if patient is None:
@@ -2666,6 +3306,8 @@ async def rag_guideline_search(
 
     return result.to_dict()
 
+
+app.include_router(rag_v1_candidate_admin.router)
 
 # --------------------------------------------------------------------------- #
 # CLI entry: `python -m backend.main` or `uvicorn backend.main:app --reload`.  #

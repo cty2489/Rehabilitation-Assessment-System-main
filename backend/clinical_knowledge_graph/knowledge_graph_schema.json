@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rehab.clinical-knowledge-graph.schema.v1",
+  "title": "Non-IMU clinical knowledge graph prototype",
+  "description": "Static relations inherit relation_attribute_defaults. GraphEngine materializes every static and runtime relation with the complete provenance fields before returning a graph path. IMPLEMENTED_FROM is project-code/configuration provenance; SUPPORTED_BY is reserved exclusively for verified medical literature, guidelines, or expert-confirmed sources.",
+  "type": "object",
+  "$defs": {
+    "relationProvenance": {
+      "type": "object",
+      "required": [
+        "source_type",
+        "source_reference",
+        "evidence_level",
+        "applicable_population",
+        "applicable_task",
+        "causal_status",
+        "expert_review_status",
+        "notes"
+      ],
+      "properties": {
+        "source_type": {"type": "string"},
+        "source_reference": {"type": "string"},
+        "evidence_level": {"type": "string"},
+        "applicable_population": {"type": "string"},
+        "applicable_task": {"type": "string"},
+        "causal_status": {"type": "string"},
+        "expert_review_status": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "staticRelation": {
+      "type": "object",
+      "required": ["relation_id", "from", "type", "to"],
+      "properties": {
+        "relation_id": {"type": "string", "minLength": 1},
+        "from": {"type": "string", "minLength": 1},
+        "type": {"type": "string"},
+        "to": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtimeEvidenceBundle": {
+      "type": "object",
+      "description": "Runtime evidence separates actual acquisition-quality problems from neutral measurement/interpretation context. A pass status must not be represented as a data_quality_warning.",
+      "required": ["rag_topics", "measurement_context_topics", "data_quality_warnings"],
+      "properties": {
+        "rag_topics": {"type": "array"},
+        "measurement_context_topics": {
+          "type": "array",
+          "description": "Neutral topics for measurement conditions, interpretation boundaries, or same-condition retesting; they do not imply current poor signal quality."
+        },
+        "data_quality_warnings": {
+          "type": "array",
+          "description": "Only current quality problems. Each warning should identify potentially affected indicator states and must not itself create a diagnostic conclusion."
+        }
+      }
+    }
+  },
+  "required": ["schema_version", "node_types", "relation_types", "relation_attribute_defaults"],
+  "properties": {
+    "schema_version": {"const": "rehab.clinical-knowledge-graph.v1"},
+    "node_types": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "PatientContext",
+          "EEGBiomarker",
+          "EMGBiomarker",
+          "ModelPrediction",
+          "PredictionTarget",
+          "IndicatorState",
+          "FunctionalFinding",
+          "ClinicalDimension",
+          "EvidenceTopic",
+          "Confounder",
+          "EvidenceSource"
+        ]
+      }
+    },
+    "relation_types": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "MEASURES",
+          "SUPPORTS",
+          "ASSOCIATED_WITH",
+          "MAY_CONTRIBUTE_TO",
+          "BELONGS_TO",
+          "DESCRIBES",
+          "ASSESSED_BY",
+          "SUGGESTS_TOPIC",
+          "MAY_CONFOUND",
+          "IMPLEMENTED_FROM",
+          "SUPPORTED_BY",
+          "PREDICTS_TARGET",
+          "HAS_INTERPRETATION_TOPIC"
+        ]
+      }
+    },
+    "relation_attribute_defaults": {
+      "$ref": "#/$defs/relationProvenance"
+    },
+    "nodes": {"type": "array"},
+    "relations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/staticRelation"},
+      "description": "Each item is merged with relation_attribute_defaults by GraphEngine; the materialized relation must satisfy relationProvenance."
+    }
+  }
+}

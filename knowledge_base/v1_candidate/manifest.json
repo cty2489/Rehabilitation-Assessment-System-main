@@ -1,0 +1,177 @@
+{
+  "schema_version": "rehab.knowledge.manifest.v2",
+  "knowledge_base": "rehab_knowledge_v1",
+  "release": "v1_candidate_next",
+  "created_at_utc": "2026-08-07T15:05:19.916515+00:00",
+  "mode": "candidate_test_only",
+  "architecture": {
+    "embedding_model": "bge-m3",
+    "embedding_dimensions": 1024,
+    "distance": "Cosine",
+    "reranker": "none",
+    "retrieval": "dense_retrieval_plus_governance_filter"
+  },
+  "version_policy": {
+    "v0.3_old": "existing production snapshot; immutable",
+    "v1_candidate": "this complete additive release; selected by configuration",
+    "default": "v0.3_old"
+  },
+  "ingestion_policy": {
+    "reclassified": false,
+    "evidence_levels_changed": false,
+    "method_reference_included": true,
+    "method_reference_retrieval_role": "low_priority_reference",
+    "raw_ocr_overwritten": false,
+    "textbook_u177": "reuse U178 text layer; no OCR",
+    "ocr_textbooks_excluded": false,
+    "textbook_alias_paper_chunks_excluded": true,
+    "failed_page_policy": {
+      "U179": [
+        510
+      ],
+      "action": "excluded_from_index",
+      "formal_chunk_count_excludes_failed_page": true
+    }
+  },
+  "counts": {
+    "sources": 269,
+    "entries": 276,
+    "chunks": 15355,
+    "embeddings": 15355,
+    "paper_or_guideline_sources": 264,
+    "textbook_source_records": 5,
+    "paper_by_classification": {
+      "method_reference_only": 97,
+      "training_recommendation_candidate": 82,
+      "core_background_candidate": 41,
+      "core_direct_candidate": 34
+    },
+    "sources_by_type": {
+      "paper": 201,
+      "guideline": 60,
+      "research": 3,
+      "textbook": 5
+    },
+    "chunks_by_type": {
+      "paper": 10137,
+      "guideline": 2785,
+      "research": 3,
+      "textbook": 2430
+    },
+    "source_files": 264,
+    "chunks_by_governance_role": {
+      "method_reference": 3872,
+      "training": 3143,
+      "core_background": 2190,
+      "core_direct": 932,
+      "guideline": 2785,
+      "research_reference": 3,
+      "textbook_reference": 2430
+    },
+    "qdrant_points": 15355,
+    "collection": "rehab_knowledge_v1_candidate_next"
+  },
+  "paper_counts": {
+    "core": 75,
+    "core_direct": 34,
+    "core_background": 41,
+    "training": 82,
+    "method": 97
+  },
+  "textbook_ocr": {
+    "U177": {
+      "status": "reused_from_U178",
+      "pages": 656,
+      "success_pages": 658,
+      "failed_pages": [],
+      "chunk_count": 0,
+      "ocr_performed": false,
+      "rag_indexed": false,
+      "ocr_pending": false
+    },
+    "U178": {
+      "pages": 658,
+      "success_pages": 655,
+      "failed_pages": [
+        5,
+        9,
+        21
+      ],
+      "chunk_count": 792,
+      "status": "partial",
+      "ocr_performed": false,
+      "rag_indexed": true,
+      "ocr_pending": false
+    },
+    "U179": {
+      "pages": 510,
+      "success_pages": 509,
+      "failed_pages": [
+        510
+      ],
+      "chunk_count": 517,
+      "status": "partial",
+      "ocr_performed": true,
+      "rag_indexed": true,
+      "ocr_pending": false
+    },
+    "U180": {
+      "pages": 611,
+      "success_pages": 611,
+      "failed_pages": [],
+      "chunk_count": 629,
+      "status": "complete",
+      "ocr_performed": true,
+      "rag_indexed": true,
+      "ocr_pending": false
+    },
+    "U181": {
+      "pages": 432,
+      "success_pages": 432,
+      "failed_pages": [],
+      "chunk_count": 492,
+      "status": "complete",
+      "ocr_performed": true,
+      "rag_indexed": true,
+      "ocr_pending": false
+    }
+  },
+  "artifacts": {
+    "sources": "sources.jsonl",
+    "entries": "entries.jsonl",
+    "chunks": "chunks.jsonl",
+    "embedding_manifest": "embedding_manifest.json",
+    "source_view_contract": "source_view_contract.json",
+    "retrieval_tests": "retrieval_tests.json"
+  },
+  "source_file_library": {
+    "directory": "source_files",
+    "manifest": "source_file_manifest.jsonl",
+    "files": 264,
+    "immutable": true,
+    "storage_mode": "hardlink_or_relative_symlink",
+    "supports": [
+      "paper_pdf",
+      "guideline_pdf",
+      "textbook_pdf",
+      "ocr_textbook_scan_page"
+    ]
+  },
+  "created_from_release": "v1_candidate",
+  "governance_policy": {
+    "formal_clinical_roles": [
+      "core_direct",
+      "guideline",
+      "textbook_reference"
+    ],
+    "task_restricted_roles": [
+      "core_background",
+      "method_reference",
+      "research_reference",
+      "training"
+    ],
+    "all_knowledge_retained": true,
+    "clinical_ready_not_global": true,
+    "training_not_biomarker_mechanism_evidence": true
+  }
+}

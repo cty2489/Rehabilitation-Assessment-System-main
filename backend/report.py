@@ -166,6 +166,35 @@ def _parse_clinical_json(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _parse_json_object_with_required_keys(
+    text: str,
+    required_keys: list[str],
+) -> Optional[Dict[str, Any]]:
+    """Extract one complete JSON object for a role-specific response schema.
+
+    ``_parse_clinical_json`` intentionally recognises only the legacy report
+    schema.  Planner/RAG role calls use different schemas, but still need the
+    same generation-stop behaviour once every required top-level key exists.
+    """
+    if not text:
+        return None
+    normalized = re.sub(
+        r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL
+    )
+    normalized = re.sub(r"```(?:json|JSON)?", "", normalized).replace("```", "")
+    decoder = json.JSONDecoder()
+    start = normalized.find("{")
+    while start != -1:
+        try:
+            value, _ = decoder.raw_decode(normalized[start:])
+            if isinstance(value, dict) and all(key in value for key in required_keys):
+                return value
+        except (ValueError, TypeError):
+            pass
+        start = normalized.find("{", start + 1)
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Lazy-loaded singleton model holder.                                         #
 # --------------------------------------------------------------------------- #
@@ -1171,6 +1200,11 @@ def _generate_local_text(
                     return False
                 text = generation_prefill + tok.decode(gen_ids, skip_special_tokens=True)
                 obj = _parse_clinical_json(_strip_trailing_chat_tags(text))
+                if obj is None and required_top_keys:
+                    obj = _parse_json_object_with_required_keys(
+                        _strip_trailing_chat_tags(text),
+                        required_top_keys,
+                    )
                 if not isinstance(obj, dict):
                     return False
                 if required_top_keys and not all(key in obj for key in required_top_keys):

@@ -6,6 +6,7 @@ import MarkdownReport from '../components/MarkdownReport'
 import ProgressSteps from '../components/ProgressSteps'
 import ResultsPanel from '../components/ResultsPanel'
 import ReportDisplay from '../components/ReportDisplay'
+import KnowledgeGraphPanel, { knowledgeGraphFromQuality } from '../components/KnowledgeGraphPanel'
 import { useRoute } from '../app/AppContext'
 import {
   EvalPackageParse,
@@ -41,7 +42,7 @@ const INITIAL_PATIENT: PatientInfo = {
   age: '',
   diagnosis: '',
   disease_days: '',
-  paralysis_side: '左',
+  paralysis_side: '',
 }
 
 const shortHash = (value?: string | null) =>
@@ -86,7 +87,11 @@ function prefillToPatient(p: EvalPackageParse['patient_prefill']): PatientInfo {
     age: typeof p.age === 'number' ? p.age : '',
     diagnosis: p.diagnosis || '',
     disease_days: typeof p.disease_days === 'number' ? p.disease_days : '',
-    paralysis_side: (p.paralysis_side === '右' ? '右' : '左') as ParalysisSide,
+    paralysis_side: (p.paralysis_side === '右'
+      ? '右'
+      : p.paralysis_side === '左'
+        ? '左'
+        : '') as ParalysisSide,
   }
 }
 
@@ -161,6 +166,10 @@ export default function TaskInterfacePage() {
     }
     if (!patient.diagnosis) {
       setLocalError('请选择诊断类型')
+      return
+    }
+    if (!patient.paralysis_side) {
+      setLocalError('请选择偏瘫侧')
       return
     }
 
@@ -386,6 +395,7 @@ export default function TaskInterfacePage() {
                 </div>
               )}
               <ResultsPanel results={stream.results} />
+              <KnowledgeGraphPanel graph={stream.knowledgeGraph} />
               <ReportDisplay
                 text={stream.reportText}
                 streaming={stream.reportStreaming}
@@ -453,7 +463,7 @@ const INITIAL_ENROLL: EnrollForm = {
   sex: '男',
   age: '',
   diagnosis: '',
-  paralysis_side: '左',
+  paralysis_side: '',
   disease_days: '',
   fma_ue: '',
   hand_tone: '',
@@ -552,9 +562,12 @@ function EnrollmentPanel({ onEnrolled }: { onEnrolled: () => void }) {
             <div className="field">
               <label>偏瘫侧</label>
               <select
-                value={form.paralysis_side ?? '左'}
+                value={form.paralysis_side}
                 onChange={(e) => set('paralysis_side', e.target.value as ParalysisSide)}
               >
+                <option value="" disabled>
+                  请选择
+                </option>
                 <option value="左">左</option>
                 <option value="右">右</option>
               </select>
@@ -830,6 +843,7 @@ function MysqlRecordsPanel({ reload }: { reload: number }) {
               </pre>
             </details>
           )}
+          <KnowledgeGraphPanel graph={knowledgeGraphFromQuality(selected.quality_json)} />
           {selected.report && (
             <details>
               <summary>AI report</summary>

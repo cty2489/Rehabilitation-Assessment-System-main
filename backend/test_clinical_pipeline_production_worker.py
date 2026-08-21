@@ -11,7 +11,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from clinical_pipeline import production_adapter
-from clinical_pipeline.production_adapter import ProductionPipelineBlockedError
+from clinical_pipeline.production_adapter import (
+    ProductionPipelineBlockedError,
+    ProductionPipelineExecutionError,
+)
 from schemas import PatientInfo
 from session_events import SessionEventStream
 
@@ -64,6 +67,7 @@ def _load_main_with_lightweight_runtime():
     report.llm_model_name = lambda: "qwen3_8b_hf"
     report.llm_provider = lambda: "local"
     report.remote_url = lambda: ""
+    report.stream_report = lambda *args, **kwargs: ("", "fallback")
 
     dotenv = types.ModuleType("dotenv")
     dotenv.load_dotenv = lambda *args, **kwargs: None
@@ -203,6 +207,13 @@ class ProductionWorkerTests(unittest.TestCase):
             "retrieval_status": "complete",
             "report_id": "report-worker-test",
             "validation_status": validation_status,
+            "knowledge_graph_display": {
+                "schema_version": "rehab.knowledge-graph-display.v1",
+                "mode": "graph_enhanced",
+                "status": "matched",
+                "applied": True,
+                "paths": [],
+            },
         }
 
         with ExitStack() as stack:
@@ -270,6 +281,14 @@ class ProductionWorkerTests(unittest.TestCase):
         self.assertEqual(
             state.result.quality["clinical_pipeline"]["mode"], "planner_rag"
         )
+        events, _, _ = state.queue.wait_after(0, timeout=0)
+        graph_events = [
+            event
+            for _, event in events
+            if event.get("type") == "knowledge_graph"
+        ]
+        self.assertEqual(len(graph_events), 1)
+        self.assertTrue(graph_events[0]["graph"]["applied"])
         self.assertEqual(state.assessment_db_id, 41)
         self.assertIsNotNone(orchestrator.run.call_args.args[0].patient.patient_id)
         self.assertIs(pipeline_result, orchestrator.run.return_value)
@@ -348,6 +367,89 @@ class ProductionWorkerTests(unittest.TestCase):
                 for event in payloads
             )
         )
+
+    def test_report_generator_contract_failure_recovers_and_persists(self) -> None:
+        main = self.main
+        state = self._state("hospital")
+        recovered = self._pipeline_result(validation_status="warning")
+        recovered.trace = SimpleNamespace(artifact_refs={})
+        recovered.report = SimpleNamespace(
+            report_id="fallback-report",
+            generation_mode="fallback",
+        )
+        recovered.validation = recovered.validation
+        orchestrator = Mock()
+        orchestrator.run.return_value = SimpleNamespace(
+            status=SimpleNamespace(value="failed"),
+            failure=SimpleNamespace(module=SimpleNamespace(value="ReportGenerator")),
+            report_input=object(),
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    main,
+                    "_load_production_adapter",
+                    return_value=production_adapter,
+                )
+            )
+            stack.enter_context(
+                patch.object(main, "run_pipeline", return_value=_predictions("hospital"))
+            )
+            stack.enter_context(
+                patch.object(
+                    production_adapter,
+                    "build_production_orchestrator",
+                    return_value=orchestrator,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    production_adapter,
+                    "require_completed_report",
+                    side_effect=ProductionPipelineExecutionError(
+                        "planner_rag执行失败：ReportGenerator：JSON契约失败"
+                    ),
+                )
+            )
+            recover = stack.enter_context(
+                patch.object(
+                    production_adapter,
+                    "recover_report_generator_failure",
+                    return_value=(recovered, recovered.validation),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    production_adapter,
+                    "render_compatible_markdown",
+                    return_value="# 保守结构化报告",
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    production_adapter,
+                    "orchestration_metadata",
+                    return_value={
+                        "mode": "planner_rag",
+                        "report_generation_mode": "fallback",
+                    },
+                )
+            )
+            save = stack.enter_context(
+                patch.object(main.mysql_db, "save_assessment_bundle", return_value=42)
+            )
+            main.app.state.dl_model_version = "fake-dl-model"
+            main._worker(state, object(), main.REPORT_MODEL)
+
+        recover.assert_called_once()
+        save.assert_called_once()
+        self.assertIsNotNone(state.result)
+        self.assertEqual(
+            state.result.quality["clinical_pipeline"]["report_generation_mode"],
+            "fallback",
+        )
+        self.assertTrue(main.app.state.report_ready)
 
 
 if __name__ == "__main__":

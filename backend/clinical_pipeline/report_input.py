@@ -1,7 +1,7 @@
 """Report input assembly guarded by the completed Retriever audit record."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from .contracts import (
     CallComponent,
@@ -29,6 +29,9 @@ class ReportInputAssembler:
         core_knowledge: Optional[CoreKnowledgeBundle],
         knowledge_plan: Optional[KnowledgePlan],
         retrieval: Optional[RetrievalResult],
+        clinical_score_source: Literal["dl_prediction", "clinician_provided"] = (
+            "dl_prediction"
+        ),
     ) -> ReportGenerationInput:
         trace = machine.trace
         if trace.stage != PipelineStage.RETRIEVAL_COMPLETED:
@@ -83,6 +86,7 @@ class ReportInputAssembler:
             knowledge_plan=knowledge_plan,
             retrieval=retrieval,
             retrieval_barrier_call_id=retrieval_call.call_id,
+            clinical_score_source=clinical_score_source,
         )
         machine.mark_report_input_ready(value)
         return value

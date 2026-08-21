@@ -7,7 +7,12 @@ from eval_package import read_eval_package
 
 
 class EvalPackageTests(unittest.TestCase):
-    def _bundle(self, root: Path, eeg_path: str = "active/a1/eeg.bdf") -> None:
+    def _bundle(
+        self,
+        root: Path,
+        eeg_path: str = "active/a1/eeg.bdf",
+        clinical_profile: dict | None = None,
+    ) -> None:
         manifest = {
             "patient_id": "P001",
             "assessments": [
@@ -22,6 +27,9 @@ class EvalPackageTests(unittest.TestCase):
                 }
             ],
         }
+        if clinical_profile is not None:
+            manifest["hospital_patient_id"] = clinical_profile.get("hospital_patient_id")
+            manifest["clinical_profile"] = clinical_profile
         (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         for relative in ("active/a1/eeg.bdf", "active/a1/emg.csv", "active/a2/eeg.bdf", "active/a2/emg.csv"):
             path = root / relative
@@ -45,6 +53,27 @@ class EvalPackageTests(unittest.TestCase):
             self._bundle(root, eeg_path="../../etc/passwd")
             with self.assertRaisesRegex(ValueError, "路径越界"):
                 read_eval_package(root, "device")
+
+    def test_enriched_clinical_profile_prefills_basic_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._bundle(
+                root,
+                clinical_profile={
+                    "hospital_patient_id": "89732",
+                    "diagnosis": "脑梗死",
+                    "disease_days": 180,
+                    "paralysis_side": "左",
+                    "age_from_clinical_sheet": 69,
+                },
+            )
+            package = read_eval_package(root, "hospital")
+
+        self.assertEqual(package.patient_prefill["hospital_patient_id"], "89732")
+        self.assertEqual(package.patient_prefill["diagnosis"], "脑梗死")
+        self.assertEqual(package.patient_prefill["disease_days"], 180)
+        self.assertEqual(package.patient_prefill["paralysis_side"], "左")
+        self.assertEqual(package.patient_prefill["clinical_age"], 69)
 
 
 if __name__ == "__main__":

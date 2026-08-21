@@ -5,10 +5,12 @@ import FileUpload from '../components/FileUpload'
 import ProgressSteps from '../components/ProgressSteps'
 import ResultsPanel from '../components/ResultsPanel'
 import ReportDisplay from '../components/ReportDisplay'
+import KnowledgeGraphPanel from '../components/KnowledgeGraphPanel'
 import { useRoute } from '../app/AppContext'
 import { authHeaders, parseError } from '../api'
 import {
   PatientInfo,
+  KnowledgeGraphDisplay,
   PredictionEntry,
   SSEEvent,
   StepKey,
@@ -26,7 +28,7 @@ const INITIAL_PATIENT: PatientInfo = {
   age: '',
   diagnosis: '',
   disease_days: '',
-  paralysis_side: '左',
+  paralysis_side: '',
 }
 
 const STEP_DEFS: { key: StepKey; label: string }[] = [
@@ -53,6 +55,7 @@ export default function AssessmentPage() {
   const [results, setResults] = useState<Partial<Record<TaskKey, PredictionEntry>>>({})
   const [reportText, setReportText] = useState('')
   const [reportStreaming, setReportStreaming] = useState(false)
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraphDisplay | null>(null)
   const [queueAhead, setQueueAhead] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -109,6 +112,9 @@ export default function AssessmentPage() {
         case 'report_chunk':
           setReportText((prev) => prev + event.chunk)
           break
+        case 'knowledge_graph':
+          setKnowledgeGraph(event.graph)
+          break
         case 'done':
           setPhase('done')
           setReportStreaming(false)
@@ -133,6 +139,10 @@ export default function AssessmentPage() {
     }
     if (!patient.diagnosis) {
       setError('请选择诊断类型')
+      return
+    }
+    if (!patient.paralysis_side) {
+      setError('请选择偏瘫侧')
       return
     }
     if (eegFiles.length === 0 || emgFiles.length === 0) {
@@ -160,6 +170,7 @@ export default function AssessmentPage() {
     setResults({})
     setReportText('')
     setReportStreaming(false)
+    setKnowledgeGraph(null)
     setQueueAhead(0)
     setSavedPatientId(patient.patient_id)
     setPhase('processing')
@@ -205,6 +216,7 @@ export default function AssessmentPage() {
     setResults({})
     setReportText('')
     setReportStreaming(false)
+    setKnowledgeGraph(null)
     setQueueAhead(0)
     setError(null)
     setSessionId(null)
@@ -285,6 +297,7 @@ export default function AssessmentPage() {
           )}
           <ProgressSteps steps={steps} />
           <ResultsPanel results={results} />
+          <KnowledgeGraphPanel graph={knowledgeGraph} />
           <ReportDisplay
             text={reportText}
             streaming={reportStreaming}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "rehab.rag.version-config.v1",
+  "rag_version": "v1_candidate",
+  "versions": {
+    "v1_candidate": {
+      "display_name": "新版完整知识库（含U178-U181完整OCR）",
+      "collection": "rehab_knowledge_v1_candidate_next",
+      "runtime_path": "knowledge_base/v1_candidate_next",
+      "mutable": false,
+      "admin_selectable": true,
+      "default": true,
+      "test_only": false,
+      "role": "当前论文/指南/教材统一知识库"
+    }
+  },
+  "selection_rule": "当前生产和管理员检索统一使用已验收的完整 v1_candidate。旧版已停用并归档。"
+}

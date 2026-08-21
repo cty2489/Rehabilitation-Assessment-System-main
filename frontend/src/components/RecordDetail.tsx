@@ -4,24 +4,8 @@ import { downloadAssessmentExport, type AssessmentExportKind } from '../api'
 import { AssessmentRecord } from '../types'
 import { fmtDateTime } from '../util'
 import MarkdownReport from './MarkdownReport'
-
-const HAND_TONE_DESC: Record<string, string> = {
-  '0': '未见肌张力增高',
-  '1': '轻度增高',
-  '1+': '轻中度增高',
-  '2': '中度增高',
-  '3': '重度增高',
-  '4': '强直状态',
-}
-
-const BRUNNSTROM_DESC: Record<number, string> = {
-  1: '弛缓期，无主动运动',
-  2: '联合反应出现',
-  3: '可引出共同运动',
-  4: '部分分离运动',
-  5: '分离运动明显',
-  6: '接近正常',
-}
+import KnowledgeGraphPanel, { knowledgeGraphFromQuality } from './KnowledgeGraphPanel'
+import MetricScoreCards from './MetricScoreCards'
 
 interface BiomarkerCoverage {
   available: number
@@ -113,6 +97,7 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
   const model = [record.llm_provider, record.llm_model].filter(Boolean).join(' / ') || '—'
   const trials = record.trials || []
   const biomarkerItems = record.biomarker_items || []
+  const knowledgeGraph = knowledgeGraphFromQuality(record.quality_json)
 
   const download = async (kind: AssessmentExportKind) => {
     setDownloadError(null)
@@ -145,6 +130,9 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
           )}
           {needsQualityReview(record.quality_json) && (
             <span className="badge badge-warn">信号待复核</span>
+          )}
+          {knowledgeGraph?.applied && (
+            <span className="badge badge-ok">知识图谱增强</span>
           )}
         </div>
         <div className="record-export-actions" aria-label="导出评估结果">
@@ -277,34 +265,13 @@ export default function RecordDetail({ record }: { record: AssessmentRecord }) {
         </details>
       )}
 
-      <div className="results-grid">
-        <div className="result-card">
-          <div className="label">FMA-UE 手部分数</div>
-          <div className="value">
-            {Math.round(record.fma_ue)}
-            <span className="unit">/ 20 分</span>
-          </div>
-          <div className="progress-bar">
-            <div style={{ width: `${(record.fma_ue / 20) * 100}%` }} />
-          </div>
-        </div>
-        <div className="result-card">
-          <div className="label">手部肌张力 · Hand MAS</div>
-          <div className="value">
-            {record.hand_tone}
-            <span className="unit">级</span>
-          </div>
-          <div className="meta">{HAND_TONE_DESC[record.hand_tone] || '—'}</div>
-        </div>
-        <div className="result-card">
-          <div className="label">手功能 · Brunnstrom 分期</div>
-          <div className="value">
-            Brunnstrom {record.hand_function}
-            <span className="unit">期</span>
-          </div>
-          <div className="meta">{BRUNNSTROM_DESC[record.hand_function] || '—'}</div>
-        </div>
-      </div>
+      <MetricScoreCards
+        fmaUe={record.fma_ue}
+        handTone={record.hand_tone}
+        handFunction={record.hand_function}
+      />
+
+      <KnowledgeGraphPanel graph={knowledgeGraph} />
 
       <h4 className="record-report-title">中文康复建议</h4>
       {record.report ? (

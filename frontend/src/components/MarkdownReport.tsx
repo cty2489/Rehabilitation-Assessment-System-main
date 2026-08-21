@@ -72,6 +72,60 @@ const SPECIFIC_METHOD_SEGMENT =
 
 const BRUNNSTROM_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI']
 
+// Transcribed from “根据布氏分期的训练手势分类20260724.docx”.  Keeping this
+// local compatibility map means reports saved before the backend change also
+// gain the same two-level strategy display without mutating stored reports.
+const BRUNNSTROM_GESTURE_ACTIONS: Record<number, ReadonlyArray<readonly [string, string]>> = {
+  1: [['SS-15', '五指伸展'], ['SS-16', '五指屈曲']],
+  2: [
+    ['SS-15', '五指伸展'],
+    ['SS-16', '五指屈曲'],
+    ['SS-10', '拇指屈曲'],
+    ['SS-18', '柱状抓握'],
+  ],
+  3: [
+    ['SS-15', '五指伸展'],
+    ['SS-16', '五指屈曲'],
+    ['SS-11', '拇指竖起'],
+    ['SS-12', '食中指伸展'],
+    ['SS-14', '四指伸展'],
+    ['SS-22', '球体抓握'],
+  ],
+  4: [
+    ['SS-1', '食指屈曲'],
+    ['SS-3', '中指屈曲'],
+    ['SS-11', '拇指竖起'],
+    ['SS-12', '食中指伸展'],
+    ['SS-14', '四指伸展'],
+    ['SS-19', '棍状物抓握'],
+  ],
+  5: [
+    ['SS-19', '棍状物抓握'],
+    ['SS-20', '食指伸展抓握'],
+    ['SS-21', '环形抓握'],
+    ['SS-22', '球体抓握'],
+    ['SS-24', '拇指指尖捏取'],
+  ],
+}
+
+function stripInternalStrategyMetadata(line: string): string {
+  if (!line.includes('检索主题') && !line.includes('相关主题') && !line.includes('锚点')) {
+    return line
+  }
+  if (/^\s*(?:基于本次|锚点|检索主题)/.test(line)) {
+    return ''
+  }
+  return line
+    .replace(/^\s*基于本次.+?(?:检索主题|相关主题)\s*[：:]\s*/s, '')
+    .replace(/^\s*(?:锚点|检索主题)\s*[：:]\s*/, '')
+}
+
+function brunnstromStageFromReport(text: string): number | null {
+  const row = text.match(/\|\s*Brunnstrom手功能分期（模型预测）\s*\|\s*([^|]+)\|/)
+  const stage = row?.[1].match(/模型预测值：\s*([1-6])\s*期/)
+  return stage ? Number(stage[1]) : null
+}
+
 function withHistoricalOverallSubtype(text: string): string {
   // planner_rag reports created before 2026-07-24 did not persist a subtype.
   // Their Brunnstrom model-prediction row is sufficient to restore the same
@@ -80,15 +134,61 @@ function withHistoricalOverallSubtype(text: string): string {
   if (!text.includes('## 三、康复策略建议')) return text
 
   const row = text.match(/\|\s*Brunnstrom手功能分期（模型预测）\s*\|\s*([^|]+)\|/)
-  const stage = row?.[1].match(/模型预测值：\s*([1-6])\s*期/)
-  if (!row || !stage) return text
+  const stageNumber = brunnstromStageFromReport(text)
+  if (!row || stageNumber === null) return text
 
-  const stageNumber = Number(stage[1])
   const stageText = BRUNNSTROM_ROMAN[stageNumber]
   const detail = (row[1].match(/模型预测结果：([^。|]+)。/)?.[1] || '手功能模型预测结果待确认').trim()
   const subtype = `${stageText}期-手功能综合亚型（测试性归纳）：${detail}；中枢驱动、协同分离和关节活动度仍需结合动作检查确认。`
   const section = `\n### 综合亚型（历史测试结果补全）\n\n**综合亚型：** ${subtype}\n`
   return text.replace('\n## 三、康复策略建议', `${section}\n## 三、康复策略建议`)
+}
+
+
+function withHistoricalBrunnstromTrainingActions(text: string): string {
+  // Current reports already have the two-level section.  This only upgrades
+  // stored test reports whose original Markdown cannot be changed in place.
+  if (/^###\s+(?:二、\s*)?按\s+Brunnstrom\s+分期的训练动作\s*$/m.test(text)) return text
+
+  const stageNumber = brunnstromStageFromReport(text)
+  if (stageNumber === null) return text
+
+  const heading = /^##\s+[三四]、康复策略建议\s*$/m.exec(text)
+  if (!heading || heading.index === undefined) return text
+
+  const headingEnd = heading.index + heading[0].length
+  const afterHeading = text.slice(headingEnd)
+  const nextSectionOffset = afterHeading.search(/\n##\s+/)
+  const strategyBody = (
+    nextSectionOffset === -1
+      ? afterHeading
+      : afterHeading.slice(0, nextSectionOffset)
+  ).trim()
+  const remaining = nextSectionOffset === -1 ? '' : afterHeading.slice(nextSectionOffset)
+  const overallDirection = strategyBody
+    ? `### 一、总体训练方向\n\n${strategyBody}`
+    : '### 一、总体训练方向\n\n本次历史测试结果未保存总体训练方向。'
+  const actionBody = stageNumber === 6
+    ? [
+        '手功能模型预测为 Brunnstrom VI期，提示分离运动能力接近正常；仍需结合实际动作表现选择训练任务。',
+        '- 精细操作：扣钮扣、捏取小物体、书写或使用工具。',
+        '- 双手协调：拿取、转移和放置物品，观察两手配合、准确性和速度。',
+        '- 任务反馈：记录代偿、疼痛和动作质量变化，必要时降低难度或暂停。',
+      ].join('\n')
+    : [
+        `当前模型预测为 Brunnstrom ${BRUNNSTROM_ROMAN[stageNumber]}期；可从以下动作中选择训练。`,
+        ...(BRUNNSTROM_GESTURE_ACTIONS[stageNumber] || []).map(
+          ([code, name]) => `- ${code}：${name}`,
+        ),
+      ].join('\n')
+  const actions = [
+    '### 二、按 Brunnstrom 分期的训练动作',
+    '',
+    actionBody,
+    '以下动作是按 Brunnstrom 分期整理的训练示例，需结合实际动作表现选择。',
+  ].join('\n')
+
+  return `${text.slice(0, headingEnd)}\n\n${overallDirection}\n\n${actions}${remaining}`
 }
 
 
@@ -178,7 +278,12 @@ function withHistoricalResultColumns(text: string): string {
 }
 
 function reportDisplayLines(text: string): string[] {
-  const displayText = withHistoricalResultColumns(withHistoricalOverallSubtype(text))
+  const displayText = withHistoricalResultColumns(
+    withHistoricalBrunnstromTrainingActions(withHistoricalOverallSubtype(text)),
+  )
+    .split('\n')
+    .map(stripInternalStrategyMetadata)
+    .join('\n')
   let inStrategySection = false
   const visible: string[] = []
   // Older saved test results put the overall subtype in one standalone line:

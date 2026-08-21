@@ -129,7 +129,10 @@ class KnowledgePlannerTests(unittest.TestCase):
             model,
             messages,
             sample=False,
-            max_new_tokens=768,
+            generation_prefill="</think>\n{",
+            max_new_tokens=512,
+            stop_on_json=True,
+            required_top_keys=["topics", "queries", "reason", "generation_mode"],
         )
         self.assertIn('"generation_mode": "llm"', text)
 
@@ -147,6 +150,27 @@ class KnowledgePlannerTests(unittest.TestCase):
         self.assertIn("core_knowledge", llm.calls[0][0][1]["content"])
         self.assertIn("任务特异", llm.calls[0][0][0]["content"])
         self.assertIn("FES", llm.calls[0][0][0]["content"])
+
+    def test_graph_context_is_presented_as_pending_and_unverified(self) -> None:
+        llm = FakeLlmClient([json.dumps(_valid_payload(), ensure_ascii=False)])
+
+        KnowledgePlanner(llm).plan(
+            _interpretation(),
+            _core_knowledge(),
+            graph_context={
+                "rag_topics": [
+                    {
+                        "topic_id": "topic:emg",
+                        "finding_ids": ["biomarker:movement_smoothness_sparc"],
+                    }
+                ],
+                "expert_review_status": "pending",
+            },
+        )
+
+        system, user = llm.calls[0][0]
+        self.assertIn("pending/unverified", system["content"])
+        self.assertIn("knowledge_graph_context", user["content"])
 
     def test_needs_retrieval_is_forbidden_and_triggers_retry(self) -> None:
         forbidden = {**_valid_payload(), "needs_retrieval": True}

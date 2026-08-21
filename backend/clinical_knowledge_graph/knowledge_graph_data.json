@@ -1,0 +1,649 @@
+{
+  "schema_version": "rehab.clinical-knowledge-graph.v1",
+  "prototype_scope": "MVP测试图谱；仅纳入患者字段、EMG正式14项、EEG正式3项（其中前额叶θ/β为描述性功能表征，未建立临床维度）、数据质量及模型/目标定义。IMU、暂缓EEG(corticomuscular_coherence_beta/movement_mu_power_change/movement_beta_power_change)、fNIRS、ERP、PLV/wPLI、ERS/ERD、神经网络重塑、脑氧合/代谢/血流全部排除。PredictionResult为运行时对象，不写入静态图谱。",
+  "node_types": [
+    "PatientContext",
+    "EEGBiomarker",
+    "EMGBiomarker",
+    "ModelPrediction",
+    "PredictionTarget",
+    "IndicatorState",
+    "FunctionalFinding",
+    "ClinicalDimension",
+    "EvidenceTopic",
+    "Confounder",
+    "EvidenceSource"
+  ],
+  "relation_types": [
+    "MEASURES",
+    "SUPPORTS",
+    "ASSOCIATED_WITH",
+    "MAY_CONTRIBUTE_TO",
+    "BELONGS_TO",
+    "DESCRIBES",
+    "ASSESSED_BY",
+    "SUGGESTS_TOPIC",
+    "MAY_CONFOUND",
+    "IMPLEMENTED_FROM",
+    "SUPPORTED_BY",
+    "PREDICTS_TARGET",
+    "HAS_INTERPRETATION_TOPIC"
+  ],
+  "relation_attribute_defaults": {
+    "source_type": "project_metadata",
+    "source_reference": "项目现有代码与参考元数据；非临床验证关系",
+    "evidence_level": "unverified",
+    "applicable_population": "本系统测试数据；适用人群待专家确认",
+    "applicable_task": "本系统主动上肢/手部评估任务；具体任务映射待确认",
+    "causal_status": "associative",
+    "expert_review_status": "pending",
+    "notes": "研究原型关系，不作诊断或确定因果解释。"
+  },
+  "nodes": [
+    {
+      "node_id": "model:FMA_UE",
+      "node_type": "ModelPrediction",
+      "label": "FMA 手部子量表模型",
+      "source_field": "predictions.FMA_UE",
+      "note": "三模态(EEG+EMG+IMU)回归，0-20手部子量表"
+    },
+    {
+      "node_id": "model:hand_tone",
+      "node_type": "ModelPrediction",
+      "label": "MAS 手部肌张力模型",
+      "source_field": "predictions.hand_tone",
+      "note": "序数分类，Hand MAS 等级"
+    },
+    {
+      "node_id": "model:hand_function",
+      "node_type": "ModelPrediction",
+      "label": "Brunnstrom 手功能分期模型",
+      "source_field": "predictions.hand_function",
+      "note": "序数分类，当前模型输出2-6期"
+    },
+    {
+      "node_id": "target:FMA_hand",
+      "node_type": "PredictionTarget",
+      "label": "手的 Fugl-Meyer 评分（手部子量表 0-20）",
+      "scale_range": "0-20",
+      "scale_note": "FMA 手部子量表 0-20 分，非完整 FMA-UE 0-66。",
+      "scale_kind": "有序/连续评分"
+    },
+    {
+      "node_id": "target:MAS_hand",
+      "node_type": "PredictionTarget",
+      "label": "手部肌张力（MAS 分级 0,1,1+,2,3,4）",
+      "scale_range": "0,1,1+,2,3,4",
+      "scale_note": "Modified Ashworth Scale 手部肌张力",
+      "scale_kind": "Ordinal Scale 有序等级量表"
+    },
+    {
+      "node_id": "target:Brunnstrom_hand",
+      "node_type": "PredictionTarget",
+      "label": "手的布氏分期（Brunnstrom 手功能 2-6 期）",
+      "scale_range": "1-6（量表）；模型分类 2-6",
+      "scale_note": "Brunnstrom 量表理论分期 1-6 期；当前模型分类范围 2-6 期。",
+      "scale_kind": "Ordinal Scale 有序等级量表"
+    },
+    {
+      "node_id": "emg:resting_emg_level",
+      "node_type": "EMGBiomarker",
+      "label": "静息肌电水平",
+      "source_field": "biomarkers.resting_emg_level.value"
+    },
+    {
+      "node_id": "emg:wrist_co_contraction_index",
+      "node_type": "EMGBiomarker",
+      "label": "腕屈伸肌共同激活指数",
+      "source_field": "biomarkers.wrist_co_contraction_index.value"
+    },
+    {
+      "node_id": "emg:finger_co_contraction_index",
+      "node_type": "EMGBiomarker",
+      "label": "掌侧屈肌通道—指伸肌通道共同激活指数",
+      "source_field": "biomarkers.finger_co_contraction_index.value",
+      "note": "通道命名待确认：电极位可能为掌长肌(PL)，代码按临床约定命名FDS"
+    },
+    {
+      "node_id": "emg:emg_activation_rms",
+      "node_type": "EMGBiomarker",
+      "label": "肌电激活强度（RMS）",
+      "source_field": "biomarkers.emg_activation_rms.value"
+    },
+    {
+      "node_id": "emg:fcr_iemg",
+      "node_type": "EMGBiomarker",
+      "label": "FCR 积分肌电",
+      "source_field": "biomarkers.fcr_iemg.value"
+    },
+    {
+      "node_id": "emg:fds_iemg",
+      "node_type": "EMGBiomarker",
+      "label": "掌侧屈肌通道积分肌电",
+      "source_field": "biomarkers.fds_iemg.value",
+      "note": "代码键名fds_iemg；通道命名待确认，展示用中性名"
+    },
+    {
+      "node_id": "emg:ecu_iemg",
+      "node_type": "EMGBiomarker",
+      "label": "ECU 积分肌电",
+      "source_field": "biomarkers.ecu_iemg.value"
+    },
+    {
+      "node_id": "emg:extensor_digitorum_iemg",
+      "node_type": "EMGBiomarker",
+      "label": "指伸肌积分肌电",
+      "source_field": "biomarkers.extensor_digitorum_iemg.value"
+    },
+    {
+      "node_id": "emg:flexor_extensor_iemg_ratio",
+      "node_type": "EMGBiomarker",
+      "label": "屈侧与伸侧肌电活动比值",
+      "source_field": "biomarkers.flexor_extensor_iemg_ratio.value",
+      "note": "iEMG比值，非实际出力/力矩"
+    },
+    {
+      "node_id": "emg:emg_burst_duration",
+      "node_type": "EMGBiomarker",
+      "label": "肌电爆发持续时间",
+      "source_field": "biomarkers.emg_burst_duration.value"
+    },
+    {
+      "node_id": "emg:fcr_mdf",
+      "node_type": "EMGBiomarker",
+      "label": "FCR 中位频率",
+      "source_field": "biomarkers.fcr_mdf.value"
+    },
+    {
+      "node_id": "emg:fds_mdf",
+      "node_type": "EMGBiomarker",
+      "label": "掌侧屈肌通道中位频率",
+      "source_field": "biomarkers.fds_mdf.value",
+      "note": "代码键名fds_mdf；通道命名待确认，展示用中性名"
+    },
+    {
+      "node_id": "emg:ecu_mdf",
+      "node_type": "EMGBiomarker",
+      "label": "ECU 中位频率",
+      "source_field": "biomarkers.ecu_mdf.value"
+    },
+    {
+      "node_id": "emg:extensor_digitorum_mdf",
+      "node_type": "EMGBiomarker",
+      "label": "指伸肌中位频率",
+      "source_field": "biomarkers.extensor_digitorum_mdf.value"
+    },
+    {
+      "node_id": "eeg:pathological_asymmetry_index",
+      "node_type": "EEGBiomarker",
+      "label": "半球间运动区活动不对称特征",
+      "source_field": "biomarkers.pathological_asymmetry_index.value",
+      "note": "基于全段μ/β静息谱功率；非事件相关能量变化、非皮层兴奋性"
+    },
+    {
+      "node_id": "eeg:prefrontal_theta_beta_ratio",
+      "node_type": "EEGBiomarker",
+      "label": "前额叶 θ/β 相对特征",
+      "source_field": "biomarkers.prefrontal_theta_beta_ratio.value",
+      "note": "描述性；不解释为任务控制/执行功能/兴奋性"
+    },
+    {
+      "node_id": "eeg:interhemispheric_motor_coherence",
+      "node_type": "EEGBiomarker",
+      "label": "半球间运动皮层功能耦合特征",
+      "source_field": "biomarkers.interhemispheric_motor_coherence.value",
+      "note": "功能耦合，非因果连接"
+    },
+    {
+      "node_id": "functional:emg_resting_activity",
+      "node_type": "FunctionalFinding",
+      "label": "静息肌电活动特征"
+    },
+    {
+      "node_id": "functional:emg_wrist_coactivation",
+      "node_type": "FunctionalFinding",
+      "label": "腕屈伸肌共同激活特征"
+    },
+    {
+      "node_id": "functional:emg_finger_coactivation",
+      "node_type": "FunctionalFinding",
+      "label": "掌侧屈肌通道与指伸肌通道共同激活特征"
+    },
+    {
+      "node_id": "functional:emg_activation_recruitment",
+      "node_type": "FunctionalFinding",
+      "label": "肌电激活强度特征"
+    },
+    {
+      "node_id": "functional:emg_flexor_extensor_balance",
+      "node_type": "FunctionalFinding",
+      "label": "屈侧与伸侧肌电活动相对特征"
+    },
+    {
+      "node_id": "functional:emg_activity_temporal",
+      "node_type": "FunctionalFinding",
+      "label": "肌电活动时序特征"
+    },
+    {
+      "node_id": "functional:emg_spectral_fatigue",
+      "node_type": "FunctionalFinding",
+      "label": "肌电频谱及疲劳相关特征"
+    },
+    {
+      "node_id": "functional:eeg_hemispheric_motor_activity",
+      "node_type": "FunctionalFinding",
+      "label": "运动区半球活动不对称特征"
+    },
+    {
+      "node_id": "functional:eeg_interhemispheric_coordination",
+      "node_type": "FunctionalFinding",
+      "label": "半球间运动皮层功能耦合特征"
+    },
+    {
+      "node_id": "functional:eeg_prefrontal_theta_beta",
+      "node_type": "FunctionalFinding",
+      "label": "前额叶 θ/β 相对特征",
+      "descriptive_only": true,
+      "note": "描述性特征；未获得临床维度确认前不进入维度解释链。"
+    },
+    {
+      "node_id": "dimension:emg_activation_coordination",
+      "node_type": "ClinicalDimension",
+      "label": "肌电活动与共同激活特征"
+    },
+    {
+      "node_id": "dimension:emg_temporal_spectral",
+      "node_type": "ClinicalDimension",
+      "label": "肌电活动时序与频谱特征"
+    },
+    {
+      "node_id": "dimension:eeg_motor_network",
+      "node_type": "ClinicalDimension",
+      "label": "运动区半球活动与耦合特征"
+    },
+    {
+      "node_id": "topic:emg_activation",
+      "node_type": "EvidenceTopic",
+      "label": "肌电活动与共同激活",
+      "query_template": "上肢康复肌电活动、屈伸肌共同激活、静息肌电与同条件复测的指标解释"
+    },
+    {
+      "node_id": "topic:emg_temporal_spectral",
+      "node_type": "EvidenceTopic",
+      "label": "肌电活动时序与频谱",
+      "query_template": "肌电爆发时长、中位频率与疲劳相关变化的指标解释与测量边界"
+    },
+    {
+      "node_id": "topic:eeg_motor_network",
+      "node_type": "EvidenceTopic",
+      "label": "运动区脑电活动与半球间耦合",
+      "query_template": "运动区半球活动不对称、半球间运动皮层耦合与同条件复测的指标解释"
+    },
+    {
+      "node_id": "topic:measurement_context",
+      "node_type": "EvidenceTopic",
+      "label": "测量条件与解释边界",
+      "query_template": "脑电肌电康复评估的测量条件、有效试次、同步与采样率对解释边界和同条件复测的影响"
+    },
+    {
+      "node_id": "topic:FMA_hand_interpretation",
+      "node_type": "EvidenceTopic",
+      "label": "FMA 手部子量表解释与测量边界",
+      "query_template": "FMA手部子量表(0-20)评分解释、测量边界与康复适用条件"
+    },
+    {
+      "node_id": "topic:MAS_hand_interpretation",
+      "node_type": "EvidenceTopic",
+      "label": "MAS 手部肌张力等级解释与测量边界",
+      "query_template": "手部肌张力MAS等级(0,1,1+,2,3,4)解释、测量边界与康复适用条件"
+    },
+    {
+      "node_id": "topic:Brunnstrom_hand_interpretation",
+      "node_type": "EvidenceTopic",
+      "label": "Brunnstrom 手功能分期解释与阶段特征",
+      "query_template": "Brunnstrom手功能分期(2-6期)解释、阶段特征与训练任务选择条件"
+    },
+    {
+      "node_id": "confounder:missing_or_invalid_marker",
+      "node_type": "Confounder",
+      "label": "指标缺失或有效试次不足"
+    },
+    {
+      "node_id": "confounder:short_trial",
+      "node_type": "Confounder",
+      "label": "试次时长不足"
+    },
+    {
+      "node_id": "confounder:sync_fallback",
+      "node_type": "Confounder",
+      "label": "同步回退"
+    },
+    {
+      "node_id": "confounder:sampling_rate_mismatch",
+      "node_type": "Confounder",
+      "label": "采样率与声明不一致"
+    },
+    {
+      "node_id": "confounder:device_or_protocol_specific_metric",
+      "node_type": "Confounder",
+      "label": "设备或流程特异指标"
+    },
+    {
+      "node_id": "source:biomarker_metadata",
+      "node_type": "EvidenceSource",
+      "label": "项目生物标志物元数据",
+      "reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "node_id": "source:interpreter",
+      "node_type": "EvidenceSource",
+      "label": "项目结构化解释边界",
+      "reference": "backend/clinical_pipeline/interpreter.py"
+    },
+    {
+      "node_id": "source:signal_quality",
+      "node_type": "EvidenceSource",
+      "label": "项目数据质量计算",
+      "reference": "backend/inference.py:run_pipeline"
+    }
+  ],
+  "relations": [
+    {
+      "relation_id": "rel:model-fma-predicts-target",
+      "from": "model:FMA_UE",
+      "type": "PREDICTS_TARGET",
+      "to": "target:FMA_hand",
+      "source_reference": "backend/task_config.py:84-86"
+    },
+    {
+      "relation_id": "rel:model-tone-predicts-target",
+      "from": "model:hand_tone",
+      "type": "PREDICTS_TARGET",
+      "to": "target:MAS_hand",
+      "source_reference": "backend/task_config.py"
+    },
+    {
+      "relation_id": "rel:model-brunnstrom-predicts-target",
+      "from": "model:hand_function",
+      "type": "PREDICTS_TARGET",
+      "to": "target:Brunnstrom_hand",
+      "source_reference": "backend/task_config.py:117"
+    },
+    {
+      "relation_id": "rel:target-fma-has-topic",
+      "from": "target:FMA_hand",
+      "type": "HAS_INTERPRETATION_TOPIC",
+      "to": "topic:FMA_hand_interpretation"
+    },
+    {
+      "relation_id": "rel:target-mas-has-topic",
+      "from": "target:MAS_hand",
+      "type": "HAS_INTERPRETATION_TOPIC",
+      "to": "topic:MAS_hand_interpretation"
+    },
+    {
+      "relation_id": "rel:target-brunnstrom-has-topic",
+      "from": "target:Brunnstrom_hand",
+      "type": "HAS_INTERPRETATION_TOPIC",
+      "to": "topic:Brunnstrom_hand_interpretation"
+    },
+    {
+      "relation_id": "rel:emg-resting-measures-resting",
+      "from": "emg:resting_emg_level",
+      "type": "MEASURES",
+      "to": "functional:emg_resting_activity",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-wrist-measures-coact",
+      "from": "emg:wrist_co_contraction_index",
+      "type": "MEASURES",
+      "to": "functional:emg_wrist_coactivation",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-finger-measures-coact",
+      "from": "emg:finger_co_contraction_index",
+      "type": "MEASURES",
+      "to": "functional:emg_finger_coactivation",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-rms-measures-activation",
+      "from": "emg:emg_activation_rms",
+      "type": "MEASURES",
+      "to": "functional:emg_activation_recruitment",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-fcr-iemg-measures-activation",
+      "from": "emg:fcr_iemg",
+      "type": "MEASURES",
+      "to": "functional:emg_activation_recruitment",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-fds-iemg-measures-activation",
+      "from": "emg:fds_iemg",
+      "type": "MEASURES",
+      "to": "functional:emg_activation_recruitment",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-ecu-iemg-measures-activation",
+      "from": "emg:ecu_iemg",
+      "type": "MEASURES",
+      "to": "functional:emg_activation_recruitment",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-ed-iemg-measures-activation",
+      "from": "emg:extensor_digitorum_iemg",
+      "type": "MEASURES",
+      "to": "functional:emg_activation_recruitment",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-ratio-measures-balance",
+      "from": "emg:flexor_extensor_iemg_ratio",
+      "type": "MEASURES",
+      "to": "functional:emg_flexor_extensor_balance",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-burst-measures-temporal",
+      "from": "emg:emg_burst_duration",
+      "type": "MEASURES",
+      "to": "functional:emg_activity_temporal",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-fcr-mdf-measures-spectral",
+      "from": "emg:fcr_mdf",
+      "type": "MEASURES",
+      "to": "functional:emg_spectral_fatigue",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-fds-mdf-measures-spectral",
+      "from": "emg:fds_mdf",
+      "type": "MEASURES",
+      "to": "functional:emg_spectral_fatigue",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-ecu-mdf-measures-spectral",
+      "from": "emg:ecu_mdf",
+      "type": "MEASURES",
+      "to": "functional:emg_spectral_fatigue",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-ed-mdf-measures-spectral",
+      "from": "emg:extensor_digitorum_mdf",
+      "type": "MEASURES",
+      "to": "functional:emg_spectral_fatigue",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:eeg-pai-measures-hemispheric",
+      "from": "eeg:pathological_asymmetry_index",
+      "type": "MEASURES",
+      "to": "functional:eeg_hemispheric_motor_activity",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:eeg-theta-beta-measures-prefrontal",
+      "from": "eeg:prefrontal_theta_beta_ratio",
+      "type": "MEASURES",
+      "to": "functional:eeg_prefrontal_theta_beta",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:eeg-interhemispheric-measures-coupling",
+      "from": "eeg:interhemispheric_motor_coherence",
+      "type": "MEASURES",
+      "to": "functional:eeg_interhemispheric_coordination",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META"
+    },
+    {
+      "relation_id": "rel:emg-resting-belongs-coord",
+      "from": "functional:emg_resting_activity",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_activation_coordination"
+    },
+    {
+      "relation_id": "rel:emg-wrist-belongs-coord",
+      "from": "functional:emg_wrist_coactivation",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_activation_coordination"
+    },
+    {
+      "relation_id": "rel:emg-finger-belongs-coord",
+      "from": "functional:emg_finger_coactivation",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_activation_coordination"
+    },
+    {
+      "relation_id": "rel:emg-activation-belongs-coord",
+      "from": "functional:emg_activation_recruitment",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_activation_coordination"
+    },
+    {
+      "relation_id": "rel:emg-balance-belongs-coord",
+      "from": "functional:emg_flexor_extensor_balance",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_activation_coordination"
+    },
+    {
+      "relation_id": "rel:emg-temporal-belongs-ts",
+      "from": "functional:emg_activity_temporal",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_temporal_spectral"
+    },
+    {
+      "relation_id": "rel:emg-spectral-belongs-ts",
+      "from": "functional:emg_spectral_fatigue",
+      "type": "BELONGS_TO",
+      "to": "dimension:emg_temporal_spectral"
+    },
+    {
+      "relation_id": "rel:eeg-hemi-belongs-motor",
+      "from": "functional:eeg_hemispheric_motor_activity",
+      "type": "BELONGS_TO",
+      "to": "dimension:eeg_motor_network"
+    },
+    {
+      "relation_id": "rel:eeg-coupling-belongs-motor",
+      "from": "functional:eeg_interhemispheric_coordination",
+      "type": "BELONGS_TO",
+      "to": "dimension:eeg_motor_network"
+    },
+    {
+      "relation_id": "rel:emg-coord-suggests-topic",
+      "from": "dimension:emg_activation_coordination",
+      "type": "SUGGESTS_TOPIC",
+      "to": "topic:emg_activation"
+    },
+    {
+      "relation_id": "rel:emg-ts-suggests-topic",
+      "from": "dimension:emg_temporal_spectral",
+      "type": "SUGGESTS_TOPIC",
+      "to": "topic:emg_temporal_spectral"
+    },
+    {
+      "relation_id": "rel:eeg-motor-suggests-topic",
+      "from": "dimension:eeg_motor_network",
+      "type": "SUGGESTS_TOPIC",
+      "to": "topic:eeg_motor_network"
+    },
+    {
+      "relation_id": "rel:measurement-context-suggests-topic",
+      "from": "dimension:emg_activation_coordination",
+      "type": "SUGGESTS_TOPIC",
+      "to": "topic:measurement_context",
+      "source_reference": "backend/inference.py:quality",
+      "notes": "测量条件与解释边界主题，源自数据质量分支中性措辞"
+    },
+    {
+      "relation_id": "rel:missing-confounds-quality",
+      "from": "confounder:missing_or_invalid_marker",
+      "type": "MAY_CONFOUND",
+      "to": "dimension:emg_activation_coordination",
+      "source_reference": "backend/clinical_pipeline/interpreter.py:_biomarker_finding"
+    },
+    {
+      "relation_id": "rel:short-confounds-quality",
+      "from": "confounder:short_trial",
+      "type": "MAY_CONFOUND",
+      "to": "dimension:emg_activation_coordination",
+      "source_reference": "backend/inference.py:run_pipeline"
+    },
+    {
+      "relation_id": "rel:sync-confounds-eeg",
+      "from": "confounder:sync_fallback",
+      "type": "MAY_CONFOUND",
+      "to": "dimension:eeg_motor_network",
+      "source_reference": "backend/inference.py:run_pipeline"
+    },
+    {
+      "relation_id": "rel:sampling-confounds-eeg",
+      "from": "confounder:sampling_rate_mismatch",
+      "type": "MAY_CONFOUND",
+      "to": "dimension:eeg_motor_network",
+      "source_reference": "backend/inference.py:run_pipeline"
+    },
+    {
+      "relation_id": "rel:protocol-confounds-emg",
+      "from": "confounder:device_or_protocol_specific_metric",
+      "type": "MAY_CONFOUND",
+      "to": "dimension:emg_activation_coordination",
+      "source_reference": "backend/biomarker_refs.py"
+    },
+    {
+      "relation_id": "rel:emg-coord-implemented-from",
+      "from": "dimension:emg_activation_coordination",
+      "type": "IMPLEMENTED_FROM",
+      "to": "source:biomarker_metadata",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META",
+      "notes": "项目实现溯源，不是医学文献支持。"
+    },
+    {
+      "relation_id": "rel:emg-ts-implemented-from",
+      "from": "dimension:emg_temporal_spectral",
+      "type": "IMPLEMENTED_FROM",
+      "to": "source:biomarker_metadata",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META",
+      "notes": "项目实现溯源，不是医学文献支持。"
+    },
+    {
+      "relation_id": "rel:eeg-implemented-from-metadata",
+      "from": "dimension:eeg_motor_network",
+      "type": "IMPLEMENTED_FROM",
+      "to": "source:biomarker_metadata",
+      "source_reference": "backend/biomarkers.py:_BIOMARKER_META",
+      "notes": "项目实现溯源，不是医学文献支持。"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 export type Sex = '男' | '女'
-export type ParalysisSide = '左' | '右'
+export type ParalysisSide = '' | '左' | '右'
 
 // Age / disease_days use `number | ''` so the form fields can be genuinely
 // empty (no forced 0, no leading-zero artifacts).
@@ -23,12 +23,72 @@ export type Route =
   | 'records'
   | 'stats'
   | 'knowledge'
+  | 'knowledge-graph'
   | 'rag-guidelines'
   // Legacy route kept only so an already-open internal link still resolves.
   | 'rag-guidelines-test'
   | 'system'
   | 'llm-settings'
+  | 'llm-control-test'
+  | 'llm-benchmark'
   | 'task-interface'
+
+export interface BenchmarkPresetConfig {
+  assessment_input_mode: 'manual_clinical_scores' | 'dl_prediction'
+  clinical_score_source: 'clinician_provided' | 'dl_prediction'
+  rag_enabled: boolean
+  rag_version: string | null
+  knowledge_graph_enabled: boolean
+  kg_version: string | null
+  prompt_version: string
+  temperature?: number | null
+  max_new_tokens?: number | null
+}
+
+export interface BenchmarkPresetsResponse {
+  prompt_version: string
+  score_schema: string[]
+  presets: Record<string, BenchmarkPresetConfig>
+}
+
+export interface BenchmarkBatchPrepareResponse {
+  schema_version: 'rehab.llm-benchmark-batch.v1'
+  batch_id: string
+  preset: string
+  config: BenchmarkPresetConfig
+  patient_count: number
+  patients: Array<{
+    patient_id: string
+    n_trials: number
+    clinical_scores: {
+      fma_wrist: number
+      fma_hand: number
+      hand_mas: string
+      brunnstrom_hand: number
+    }
+    warnings: string[]
+  }>
+  clinical_scores_file: string
+  output_directory: string
+  biomarker_counts: Record<string, number>
+  model_execution: 'not_started'
+}
+
+export interface BenchmarkSinglePrepareResponse {
+  schema_version: 'rehab.llm-benchmark-input.v1'
+  input: Record<string, unknown>
+  model_execution: 'not_started'
+}
+
+export interface LlmControlTestSession {
+  session_id: string
+  input_fingerprint: string
+  n_trials: number
+  report_model_id: string
+  biomarker_source: 'computed_from_uploaded_signals'
+  persisted: false
+  dl_inference_skipped: true
+}
 
 export type ReportStatus = 'generated' | 'failed' | 'manual'
 
@@ -111,6 +171,68 @@ export interface DeviceCredentialSecret {
   schema_version: 'rehab.device_credential_secret.v1'
   credential: DeviceCredentialRecord
   token: string
+}
+
+export interface ClinicalKnowledgeGraphAdminNode {
+  node_id: string
+  node_type: string
+  label: string
+  source_field?: string
+  reference?: string
+  query_template?: string
+}
+
+export interface ClinicalKnowledgeGraphAdminRelation {
+  relation_id: string
+  from: string
+  type: string
+  to: string
+  source_type: string
+  source_reference: string
+  evidence_level: string
+  applicable_population: string
+  applicable_task: string
+  causal_status: string
+  expert_review_status: string
+  notes: string
+}
+
+export interface ClinicalKnowledgeGraphAdminRule {
+  rule_id: string
+  when?: Record<string, unknown>
+  when_all?: Array<Record<string, unknown>>
+  result: {
+    status: string
+    evidence_strength: string
+    message: string
+  }
+  evidence_level: string
+  expert_review_status: string
+}
+
+export interface ClinicalKnowledgeGraphAdmin {
+  schema_version: 'rehab.knowledge-graph-admin.v1'
+  graph_schema_version: string
+  prototype_scope: string
+  node_types: string[]
+  relation_types: string[]
+  summary: {
+    node_count: number
+    relation_count: number
+    rule_count: number
+    node_type_counts: Record<string, number>
+    relation_type_counts: Record<string, number>
+    pending_relation_count: number
+    unverified_relation_count: number
+    implemented_from_count: number
+    supported_by_count: number
+    pending_rule_count: number
+  }
+  nodes: ClinicalKnowledgeGraphAdminNode[]
+  relations: ClinicalKnowledgeGraphAdminRelation[]
+  rules: ClinicalKnowledgeGraphAdminRule[]
+  expert_review_status: string
+  prototype_notice: string
 }
 
 export interface HealthStatus {
@@ -202,6 +324,74 @@ export interface KnowledgeStatusResponse {
     valid: boolean
     issues: string[]
   }
+}
+
+export interface RagVersionHealth {
+  status: string
+  enabled?: boolean
+  loaded?: boolean
+  collection?: string
+  backend?: string
+  allow_demo?: boolean
+  detail?: string
+}
+
+export interface RagVersionInfo {
+  display_name?: string
+  collection?: string
+  release_dir?: string
+  default?: boolean
+  test_only?: boolean
+}
+
+export interface RagVersionsResponse {
+  schema_version: string
+  selected: string
+  default: string
+  selection_scope: string
+  production_report_rag_unchanged: boolean
+  versions: Record<string, RagVersionInfo>
+  health: Record<string, RagVersionHealth>
+  release?: {
+    release: string
+    knowledge_base: string
+    sources: number
+    chunks: number
+    embeddings: number
+    qdrant_points: number
+    collection: string
+    source_files: number
+    embedding_dimensions: number
+    distance: string
+    role_counts: Record<string, number>
+    textbook_ocr?: Record<string, { chunk_count?: number; rag_indexed?: boolean; ocr_pending?: boolean }>
+    failed_page_excluded?: Record<string, unknown>
+  }
+}
+
+export interface RagTestSearchHit {
+  rank: number
+  score: number
+  knowledge_id: string
+  chunk_id: string
+  title: string
+  text: string
+  uid?: string
+  page_number?: number | null
+  source_file_id?: string
+  source_page_url?: string
+  source_pdf_url?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface RagTestSearchResponse {
+  selected_rag_version: string
+  selection_scope: string
+  results: Array<{
+    key: string
+    query: string
+    hits: RagTestSearchHit[]
+  }>
 }
 
 export interface KnowledgeEntriesResponse {
@@ -329,6 +519,21 @@ export interface PatientSummary {
 
 export interface PatientDetail extends PatientSummary {
   assessments: AssessmentRecord[]
+}
+
+export interface PatientAssessmentSummary {
+  id: number
+  created_at: string
+  assessment_time: string | null
+  fma_ue: number
+  hand_tone: string
+  hand_function: number
+  report_status: ReportStatus
+}
+
+export interface PatientAssessmentList {
+  total: number
+  items: PatientAssessmentSummary[]
 }
 
 export interface PatientUpdate {
@@ -482,6 +687,7 @@ export type SSEEvent =
       total: number
       missing_keys: string[]
     }
+  | { type: 'knowledge_graph'; graph: KnowledgeGraphDisplay }
   | { type: 'done' }
   | { type: 'cancelled'; message?: string }
   | { type: 'error'; message: string }
@@ -490,6 +696,98 @@ export interface BiomarkerCoverage {
   available: number
   total: number
   missing_keys: string[]
+}
+
+export interface KnowledgeGraphDisplayNode {
+  id: string
+  label: string
+  type?: string
+}
+
+export interface KnowledgeGraphDisplaySource extends KnowledgeGraphDisplayNode {
+  value: string
+  state: string
+  modality: string
+}
+
+export interface KnowledgeGraphDisplayPath {
+  path_id: string
+  source_field: string
+  source: KnowledgeGraphDisplaySource
+  indicator: KnowledgeGraphDisplayNode
+  functional_finding: KnowledgeGraphDisplayNode
+  clinical_dimension: KnowledgeGraphDisplayNode
+  rag_topic: KnowledgeGraphDisplayNode
+  relations: string[]
+}
+
+export interface KnowledgeGraphDisplayTopic {
+  topic_id: string
+  label: string
+  priority: string
+  origins: string[]
+}
+
+export interface KnowledgeGraphDisplayRule {
+  rule_id: string
+  status: string
+  message: string
+  evidence_level: string
+  expert_review_status: string
+}
+
+// MVP：预测结果区（运行时对象，不写入静态图谱）
+export interface KnowledgeGraphDisplayPrediction {
+  target_id: string
+  target_label: string
+  value: number | string | null
+  value_text: string
+  range: string
+  range_note: string
+  model_label: string
+  is_model_prediction: boolean
+}
+
+// MVP：数据质量区（独立于临床维度）
+export interface KnowledgeGraphDisplayQuality {
+  status: string
+  trial_count: number | null
+  short_trial_count: number | null
+  sync_fallback_count: number | null
+  sampling_rate_mismatch_count: number | null
+  warnings: Array<{ code: string; message: string }>
+  is_clinical_dimension: boolean
+  blocked_support: boolean
+}
+
+export interface KnowledgeGraphDisplay {
+  schema_version: string
+  mode: string
+  status: string
+  scope: string
+  applied: boolean
+  prototype_notice: string
+  expert_review_status: string
+  summary: {
+    indicator_count: number
+    path_count: number
+    displayed_path_count: number
+    dimension_count: number
+    final_topic_count: number
+    graph_seeded_topic_count: number
+    matched_rule_count: number
+    retrieval_status: string | null
+    retrieval_evidence_count: number
+  }
+  paths: KnowledgeGraphDisplayPath[]
+  paths_truncated: boolean
+  analysis_dimensions: Array<{ dimension_id: string; label: string }>
+  final_topics: KnowledgeGraphDisplayTopic[]
+  matched_rules: KnowledgeGraphDisplayRule[]
+  data_quality_warnings: unknown[]
+  measurement_context_topics: Array<{ topic_id: string; label: string }>
+  prediction_results: KnowledgeGraphDisplayPrediction[]
+  data_quality: KnowledgeGraphDisplayQuality
 }
 
 // Isolated guideline RAG test page. These responses are never clinical-ready. //

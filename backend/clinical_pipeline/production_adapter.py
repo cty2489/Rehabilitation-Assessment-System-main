@@ -7,6 +7,7 @@ Markdown/SSE surface. It contains no clinical classification rules.
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass
 from numbers import Real
@@ -16,7 +17,12 @@ import knowledge_admin
 from biomarker_refs import marker_ref
 from pydantic import ValidationError
 
-from .config import CoreKnowledgeConfig, LlmRoleConfig, PipelineConfig
+from .config import (
+    CoreKnowledgeConfig,
+    KnowledgeGraphConfig,
+    LlmRoleConfig,
+    PipelineConfig,
+)
 from .contracts import CanonicalBiomarker, CanonicalPredictions
 from .knowledge_planner import ExistingLlmClient, KnowledgePlanner
 from .orchestrator import (
@@ -26,8 +32,15 @@ from .orchestrator import (
     PipelinePatientInput,
     PipelineRunStatus,
 )
-from .report_generator import ExistingReportLlmClient, ReportGenerator, ReportResult
-from .validator import ValidationResult
+from .report_generator import (
+    ExistingReportLlmClient,
+    LlmStrategyContractError,
+    ReportGenerator,
+    ReportResult,
+    build_conservative_report,
+    build_llm_strategy_recovery_report,
+)
+from .validator import ValidationResult, Validator
 
 
 class ProductionAdapterError(ValueError):
@@ -233,17 +246,24 @@ def build_production_orchestrator(report_model_id: str) -> ClinicalPipelineOrche
     """Build independent Planner and ReportGenerator roles on the selected LLM."""
     model_id = _required_text(report_model_id, "report_model_id")
     collection_id = knowledge_admin.active_collection_id()
+    graph_mode = os.environ.get("CLINICAL_KG_MODE", "llm_only").strip().lower()
+    if graph_mode not in {"llm_only", "graph_enhanced"}:
+        raise ProductionAdapterError(
+            "CLINICAL_KG_MODE只支持llm_only或graph_enhanced"
+        )
     config = PipelineConfig(
         config_version="planner_rag-v0.1-production",
         core_knowledge=CoreKnowledgeConfig(bundle_version=collection_id),
         planner=LlmRoleConfig(model_id=model_id),
+        knowledge_graph=KnowledgeGraphConfig(mode=graph_mode),
         report_generator=LlmRoleConfig(model_id=model_id),
     )
     return ClinicalPipelineOrchestrator(
         config=config,
         knowledge_planner=KnowledgePlanner(ExistingLlmClient(model_id=model_id)),
         report_generator=ReportGenerator(
-            ExistingReportLlmClient(model_id=model_id)
+            ExistingReportLlmClient(model_id=model_id),
+            prefer_compact_contract=True,
         ),
     )
 
@@ -268,6 +288,318 @@ def require_completed_report(
     return result.report, result.validation
 
 
+def recover_report_generator_failure(
+    result: OrchestrationResult,
+    *,
+    report_model_id: str,
+) -> tuple[OrchestrationResult, ValidationResult]:
+    """Recover only a ReportGenerator JSON-contract failure.
+
+    Earlier stages (including graph-enhanced non-IMU filtering, planner and
+    retriever) have completed at this point.  The recovery therefore builds a
+    conservative report from that exact ``ReportGenerationInput`` instead of
+    routing back through the legacy report path, which could have a different
+    modality scope.
+    """
+    failure = result.failure
+    if (
+        result.status != PipelineRunStatus.FAILED
+        or failure is None
+        or failure.module.value != "ReportGenerator"
+        or result.report_input is None
+    ):
+        raise ProductionPipelineExecutionError(
+            "仅ReportGenerator失败且保留ReportInput时允许保守报告回退"
+        )
+
+    try:
+        report = build_llm_strategy_recovery_report(
+            result.report_input,
+            model_id=report_model_id,
+            attempt=2,
+        )
+        recovery_mode = "llm_strategy_recovery"
+    except Exception as recovery_exc:  # noqa: BLE001 - final availability guard
+        report = build_conservative_report(
+            result.report_input,
+            model_id=report_model_id,
+        )
+        recovery_mode = "conservative_structured_fallback"
+        result.trace.artifact_refs["llm_strategy_recovery_error_type"] = type(
+            recovery_exc
+        ).__name__
+        if isinstance(recovery_exc, LlmStrategyContractError):
+            result.trace.artifact_refs["llm_strategy_recovery_error_code"] = (
+                recovery_exc.code
+            )
+    validation = Validator().validate(report, result.report_input)
+    result.trace.artifact_refs["report_generator_recovery"] = recovery_mode
+    result.trace.artifact_refs["report_generator_failure"] = failure.message
+    result.trace.artifact_refs["validation_result"] = validation.validation_id
+    result.trace.artifact_refs["validation_status"] = validation.status.value
+    recovered = result.model_copy(
+        update={
+            "status": PipelineRunStatus.COMPLETED,
+            "report": report,
+            "validation": validation,
+            "failure": None,
+        }
+    )
+    return recovered, validation
+
+
+_GRAPH_DISPLAY_PATH_LIMIT = 24
+_GRAPH_INDICATOR_NODE_TYPES = {
+    "EEGBiomarker",
+    "EMGBiomarker",
+}
+
+
+def _graph_display_value(state: Mapping[str, Any]) -> str:
+    value = state.get("value")
+    if value is None:
+        return "未获得可用值"
+    if isinstance(value, float):
+        value_text = format(value, ".6g")
+    else:
+        value_text = _one_line(value)
+    unit = _one_line(state.get("unit"))
+    return f"{value_text} {unit}".strip()
+
+
+def _graph_path_node(
+    nodes: list[Mapping[str, Any]],
+    node_type: str | set[str],
+) -> Mapping[str, Any]:
+    types = {node_type} if isinstance(node_type, str) else node_type
+    return next(
+        (node for node in nodes if str(node.get("node_type")) in types),
+        {},
+    )
+
+
+def _knowledge_graph_display(result: OrchestrationResult) -> Dict[str, Any]:
+    """Build a bounded, de-identified package for the web relationship view."""
+    mode = result.trace.artifact_refs.get("knowledge_graph_mode", "llm_only")
+    status = result.trace.artifact_refs.get("knowledge_graph_status", "disabled")
+    scope = result.trace.artifact_refs.get(
+        "knowledge_graph_non_imu_scope", "not_applied"
+    )
+    evidence = result.knowledge_graph_evidence or {}
+    indicator_states = list(evidence.get("matched_indicator_states") or [])
+    state_by_id = {
+        str(state.get("state_id")): state
+        for state in indicator_states
+        if state.get("state_id")
+    }
+
+    raw_paths = list(evidence.get("matched_graph_paths") or [])
+    display_paths: list[Dict[str, Any]] = []
+    for path in raw_paths[:_GRAPH_DISPLAY_PATH_LIMIT]:
+        nodes = [
+            node for node in (path.get("node_path") or []) if isinstance(node, Mapping)
+        ]
+        state_node = _graph_path_node(nodes, "IndicatorState")
+        state = state_by_id.get(str(state_node.get("node_id")), {})
+        indicator = _graph_path_node(nodes, _GRAPH_INDICATOR_NODE_TYPES)
+        functional = _graph_path_node(nodes, "FunctionalFinding")
+        dimension = _graph_path_node(nodes, "ClinicalDimension")
+        topic = _graph_path_node(nodes, "EvidenceTopic")
+        if not all((indicator, functional, dimension, topic)):
+            continue
+        relations = [
+            str(relation.get("type"))
+            for relation in (path.get("relation_path") or [])
+            if isinstance(relation, Mapping) and relation.get("type")
+        ]
+        display_paths.append(
+            {
+                "path_id": str(path.get("path_id") or f"path:{len(display_paths) + 1}"),
+                "source_field": _one_line(
+                    state.get("source_field") or path.get("source_field")
+                ),
+                "source": {
+                    "id": str(state_node.get("node_id") or path.get("source_field")),
+                    "label": _one_line(
+                        state.get("label") or indicator.get("label") or "本次指标"
+                    ),
+                    "value": _graph_display_value(state),
+                    "state": _one_line(state.get("state") or state_node.get("state")),
+                    "modality": _one_line(state.get("source_modality")) or "clinical_scale",
+                },
+                "indicator": {
+                    "id": str(indicator.get("node_id") or ""),
+                    "label": _one_line(indicator.get("label") or "图谱指标"),
+                    "type": str(indicator.get("node_type") or ""),
+                },
+                "functional_finding": {
+                    "id": str(functional.get("node_id") or ""),
+                    "label": _one_line(functional.get("label") or "功能表现"),
+                },
+                "clinical_dimension": {
+                    "id": str(dimension.get("node_id") or ""),
+                    "label": _one_line(dimension.get("label") or "临床维度"),
+                },
+                "rag_topic": {
+                    "id": str(topic.get("node_id") or ""),
+                    "label": _one_line(topic.get("label") or "RAG检索主题"),
+                },
+                "relations": relations,
+            }
+        )
+
+    final_topics: list[Dict[str, Any]] = []
+    if result.knowledge_plan is not None:
+        for topic in result.knowledge_plan.topics[:20]:
+            origins = list(
+                dict.fromkeys(
+                    result.knowledge_plan.topic_origins.get(topic.topic_id)
+                    or ["planner"]
+                )
+            )
+            final_topics.append(
+                {
+                    "topic_id": topic.topic_id,
+                    "label": topic.label,
+                    "priority": topic.priority,
+                    "origins": origins,
+                }
+            )
+
+    rule_results = [
+        {
+            "rule_id": str(item.get("rule_id") or ""),
+            "status": _one_line((item.get("result") or {}).get("status")),
+            "message": _one_line((item.get("result") or {}).get("message")),
+            "evidence_level": _one_line(item.get("evidence_level")),
+            "expert_review_status": _one_line(item.get("expert_review_status")),
+        }
+        for item in (evidence.get("rule_results") or [])
+        if item.get("matched")
+    ]
+    dimensions = [
+        {
+            "dimension_id": str(item.get("dimension_id") or ""),
+            "label": _one_line(item.get("label") or "临床维度"),
+        }
+        for item in (evidence.get("analysis_dimensions") or [])
+    ]
+    graph_seeded_topic_count = sum(
+        1
+        for topic in final_topics
+        if any(str(origin).startswith("graph:") for origin in topic["origins"])
+    )
+
+    # MVP：预测结果区（运行时从 CanonicalPredictions 读取，不写入静态图谱）。
+    prediction_results: list[Dict[str, Any]] = []
+    predictions = (
+        result.canonical_context.predictions
+        if result.canonical_context is not None
+        else None
+    )
+    if predictions is not None:
+        prediction_results = [
+            {
+                "target_id": "target:FMA_hand",
+                "target_label": "手的 Fugl-Meyer 评分（手部子量表 0-20）",
+                "value": predictions.FMA_UE,
+                "value_text": _fma_score_text(predictions.FMA_UE),
+                "range": "0-20",
+                "range_note": "手部子量表，非完整 FMA-UE 0-66",
+                "model_label": "FMA 手部子量表模型",
+                "is_model_prediction": True,
+            },
+            {
+                "target_id": "target:MAS_hand",
+                "target_label": "手部肌张力（MAS 分级）",
+                "value": predictions.hand_tone,
+                "value_text": _one_line(predictions.hand_tone) if predictions.hand_tone is not None else "未获得可用值",
+                "range": "0,1,1+,2,3,4",
+                "range_note": "Modified Ashworth Scale 手部肌张力",
+                "model_label": "MAS 手部肌张力模型",
+                "is_model_prediction": True,
+            },
+            {
+                "target_id": "target:Brunnstrom_hand",
+                "target_label": "手的布氏分期（Brunnstrom 手功能）",
+                "value": predictions.hand_function,
+                "value_text": (
+                    _one_line(str(predictions.hand_function))
+                    if predictions.hand_function is not None
+                    else "未获得可用值"
+                ),
+                "range": "2-6",
+                "range_note": "Brunnstrom 量表理论分期为 1-6 期；当前模型分类范围为 2-6 期。",
+                "model_label": "Brunnstrom 手功能分期模型",
+                "is_model_prediction": True,
+            },
+        ]
+
+    # MVP：数据质量区（独立于临床维度；沿用 inference 质量字段，无 blocked）。
+    quality_meta = dict(evidence.get("patient_summary") or {}).get("quality") or {}
+    data_quality = {
+        "status": _one_line(quality_meta.get("status")) or "unknown",
+        "trial_count": quality_meta.get("trial_count"),
+        "short_trial_count": quality_meta.get("short_trial_count"),
+        "sync_fallback_count": quality_meta.get("sync_fallback_count"),
+        "sampling_rate_mismatch_count": quality_meta.get("sampling_rate_mismatch_count"),
+        "warnings": [
+            {
+                "code": _one_line(item.get("code")),
+                "message": _one_line(item.get("message")),
+            }
+            for item in (evidence.get("data_quality_warnings") or [])
+            if isinstance(item, dict)
+        ],
+        "is_clinical_dimension": False,
+        "blocked_support": False,
+    }
+
+    return {
+        "schema_version": "rehab.knowledge-graph-display.v1",
+        "mode": mode,
+        "status": status,
+        "scope": scope,
+        "applied": bool(
+            mode == "graph_enhanced"
+            and status == "matched"
+            and scope == "applied"
+        ),
+        "prototype_notice": "研究原型关系；表示本次分析与检索路径，不表达诊断或确定因果。",
+        "expert_review_status": evidence.get("expert_review_status") or "pending",
+        "summary": {
+            "indicator_count": len(indicator_states),
+            "path_count": len(raw_paths),
+            "displayed_path_count": len(display_paths),
+            "dimension_count": len(dimensions),
+            "final_topic_count": len(final_topics),
+            "graph_seeded_topic_count": graph_seeded_topic_count,
+            "matched_rule_count": len(rule_results),
+            "retrieval_status": (
+                result.retrieval.status.value if result.retrieval else None
+            ),
+            "retrieval_evidence_count": (
+                len(result.retrieval.evidence) if result.retrieval else 0
+            ),
+        },
+        "paths": display_paths,
+        "paths_truncated": len(raw_paths) > len(display_paths),
+        "analysis_dimensions": dimensions,
+        "final_topics": final_topics,
+        "matched_rules": rule_results,
+        "data_quality_warnings": list(evidence.get("data_quality_warnings") or []),
+        "measurement_context_topics": [
+            {
+                "topic_id": str(item.get("topic_id") or ""),
+                "label": _one_line(item.get("label") or "测量条件与解释边界"),
+            }
+            for item in (evidence.get("measurement_context_topics") or [])
+        ],
+        "prediction_results": prediction_results,
+        "data_quality": data_quality,
+    }
+
+
 def orchestration_metadata(result: OrchestrationResult) -> Dict[str, Any]:
     """Small in-band audit summary used before a dedicated DB column exists."""
     report, validation = require_completed_report(result)
@@ -279,9 +611,32 @@ def orchestration_metadata(result: OrchestrationResult) -> Dict[str, Any]:
         "planner_generation_mode": (
             result.knowledge_plan.generation_mode if result.knowledge_plan else None
         ),
+        "knowledge_graph_mode": result.trace.artifact_refs.get(
+            "knowledge_graph_mode", "llm_only"
+        ),
+        "knowledge_graph_status": result.trace.artifact_refs.get(
+            "knowledge_graph_status", "disabled"
+        ),
+        "knowledge_graph_topic_count": result.trace.artifact_refs.get(
+            "knowledge_graph_topic_count", "0"
+        ),
+        "knowledge_graph_measurement_context_topic_count": result.trace.artifact_refs.get(
+            "knowledge_graph_measurement_context_topic_count", "0"
+        ),
+        "knowledge_graph_non_imu_scope": result.trace.artifact_refs.get(
+            "knowledge_graph_non_imu_scope", "not_applied"
+        ),
         "retrieval_status": result.retrieval.status.value if result.retrieval else None,
         "report_id": report.report_id,
+        "report_generation_mode": report.generation_mode,
+        "report_generator_recovery": result.trace.artifact_refs.get(
+            "report_generator_recovery", "none"
+        ),
+        "report_generator_llm_error_code": result.trace.artifact_refs.get(
+            "llm_strategy_recovery_error_code"
+        ),
         "validation_status": validation.status.value,
+        "knowledge_graph_display": _knowledge_graph_display(result),
     }
 
 
@@ -313,21 +668,43 @@ def _one_line(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
 
 
+def _fma_score_text(value: Any) -> str:
+    """FMA 手部子量表分数按整数展示（0-20 分，不出现小数点）。"""
+    if value is None:
+        return "未获得可用值"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _one_line(value)
+    return str(int(round(number)))
+
+
 def _table_cell(value: Any) -> str:
     return _one_line(value).replace("|", "\\|") or "—"
 
 
 
 
-def _result_value_text(finding: Any) -> str:
+def _result_value_text(
+    finding: Any,
+    clinical_score_source: str = "dl_prediction",
+) -> str:
     """Keep the result cell factual and separate from the explanation."""
     if finding is None or getattr(finding, "value", None) is None:
         return "未获得可用数据"
     modality = str(getattr(getattr(finding, "modality", None), "value", ""))
-    prefix = "模型预测值" if modality == "clinical_scale" else "本次记录值"
+    prefix = (
+        "医生提供的临床评定结果"
+        if clinical_score_source == "clinician_provided" and modality == "clinical_scale"
+        else "模型预测值"
+        if modality == "clinical_scale"
+        else "本次记录值"
+    )
     unit = _one_line(getattr(finding, "unit", ""))
     suffix = f" {unit}" if unit else ""
-    return f"{prefix}：{_one_line(finding.value)}{suffix}"
+    metric_key = str(getattr(finding, "metric_key", ""))
+    displayed = _fma_score_text(finding.value) if metric_key == "FMA_UE" else _one_line(finding.value)
+    return f"{prefix}：{displayed}{suffix}"
 
 
 def _first_reading_sentence(value: Any) -> str:
@@ -370,10 +747,13 @@ def _metric_purpose(finding: Any) -> str:
     return _METRIC_PURPOSES.get(key, _one_line(getattr(finding, "name", "该指标")))
 
 
-def _plain_interpretation_text(finding: Any) -> str:
+def _plain_interpretation_text(
+    finding: Any,
+    clinical_score_source: str = "dl_prediction",
+) -> str:
     """Explain what the indicator measures before stating comparison limits."""
     if finding is None:
-        return "本次数据已记录，建议结合同条件复测看变化。"
+        return "本次数据已记录。"
     if getattr(finding, "value", None) is None:
         return f"用于观察{_metric_purpose(finding)}；本次没有可用数据，暂不作判断。"
 
@@ -387,10 +767,13 @@ def _plain_interpretation_text(finding: Any) -> str:
             return f"{reading or '反映肌肉放松和阻力情况'}；需由治疗师实际检查确认。"
         if metric_key == "hand_function":
             return f"{reading or '反映手部动作恢复阶段'}；以实际抓握和伸指观察为准。"
+        if clinical_score_source == "clinician_provided":
+            return "这是医生提供的临床评定结果，仍需结合现场检查确认。"
         return "这是模型预测结果，需结合现场检查确认。"
 
     purpose = _metric_purpose(finding)
-    result = _result_value_text(finding)
+    result = _result_value_text(finding, clinical_score_source)
+    observed_value = result.replace("本次记录值：", "记录值为")
     status = str(getattr(getattr(finding, "status", None), "value", ""))
     if status == "within_reference":
         return f"用于观察{purpose}；{result}在文献参考范围内，仍需结合动作表现判断。"
@@ -404,20 +787,131 @@ def _plain_interpretation_text(finding: Any) -> str:
         str(reference.get("expected_direction") or "")
     )
     if status == "direction_only":
-        trend = f"研究通常看同条件下是否{direction}" if direction else "研究通常看同条件下的变化方向"
-        return f"用于观察{purpose}；{result}是本次记录，{trend}，本次先作为个人基线。"
+        trend = (
+            f"研究通常关注同条件下是否{direction}"
+            if direction
+            else "研究通常关注同条件下的变化方向"
+        )
+        return (
+            f"用于观察{purpose}；{observed_value}。{trend}，"
+            "应结合既往同条件记录比较变化。"
+        )
     if status in {"not_classifiable", "missing"}:
         return (
-            f"用于观察{purpose}；{result}是本设备/算法算出的本次记录，"
-            "目前没有统一的好坏范围，后续同条件复测看变化。"
+            f"用于观察{purpose}；{observed_value}。"
+            "目前没有统一的单次判断范围，应结合既往同条件记录比较变化。"
         )
-    return f"用于观察{purpose}；{result}先作为本次基线，后续同条件复测看变化。"
+    return (
+        f"用于观察{purpose}；{observed_value}。"
+        "应结合既往同条件记录比较变化。"
+    )
 
 
 _BRUNNSTROM_ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
 
+# Transcribed from the user-provided document
+# "根据布氏分期的训练手势分类20260724.docx".  This is a controlled
+# presentation list for the test report rather than a new classification rule.
+_BRUNNSTROM_GESTURE_ACTIONS = {
+    1: (("SS-15", "五指伸展"), ("SS-16", "五指屈曲")),
+    2: (
+        ("SS-15", "五指伸展"),
+        ("SS-16", "五指屈曲"),
+        ("SS-10", "拇指屈曲"),
+        ("SS-18", "柱状抓握"),
+    ),
+    3: (
+        ("SS-15", "五指伸展"),
+        ("SS-16", "五指屈曲"),
+        ("SS-11", "拇指竖起"),
+        ("SS-12", "食中指伸展"),
+        ("SS-14", "四指伸展"),
+        ("SS-22", "球体抓握"),
+    ),
+    4: (
+        ("SS-1", "食指屈曲"),
+        ("SS-3", "中指屈曲"),
+        ("SS-11", "拇指竖起"),
+        ("SS-12", "食中指伸展"),
+        ("SS-14", "四指伸展"),
+        ("SS-19", "棍状物抓握"),
+    ),
+    5: (
+        ("SS-19", "棍状物抓握"),
+        ("SS-20", "食指伸展抓握"),
+        ("SS-21", "环形抓握"),
+        ("SS-22", "球体抓握"),
+        ("SS-24", "拇指指尖捏取"),
+    ),
+}
 
-def _overall_subtype_text(result: OrchestrationResult) -> str:
+_REVIEW_ONLY_RECOMMENDATION = re.compile(
+    r"^(?:建议)?(?:由)?(?:康复)?(?:专业人员|治疗师|专家).{0,16}"
+    r"(?:人工)?(?:复核|审核|确认)。?$"
+)
+
+
+def _brunnstrom_stage_number(result: OrchestrationResult) -> Optional[int]:
+    """Return the observed hand-function stage only when it is 1 through 6."""
+    findings = result.interpretation.findings if result.interpretation else []
+    hand_function = next(
+        (finding for finding in findings if finding.metric_key == "hand_function"),
+        None,
+    )
+    if hand_function is None:
+        return None
+    try:
+        stage_number = int(hand_function.value)
+    except (TypeError, ValueError):
+        return None
+    return stage_number if stage_number in _BRUNNSTROM_ROMAN else None
+
+
+def _fallback_overall_recommendations(stage_number: Optional[int]) -> list[str]:
+    """Keep the test report useful if an LLM returns only a review request."""
+    stage_text = (
+        f"Brunnstrom {_BRUNNSTROM_ROMAN[stage_number]}期"
+        if stage_number in _BRUNNSTROM_ROMAN
+        else "本次手功能分期"
+    )
+    return [
+        (
+            f"训练重点：围绕{stage_text}的手部动作表现，优先选择能够稳定完成的动作，"
+            "先保证手指打开、抓握和放开的质量，再逐步提高任务复杂度。"
+        ),
+        (
+            "执行原则：练习中关注是否出现明显代偿、疼痛、张力增加或动作质量持续下降；"
+            "出现时应降低当前难度或暂停该动作，不把完成次数作为唯一目标。"
+        ),
+        (
+            "记录与调整：记录各动作能否完成、需要的辅助和完成质量；"
+            "后续在同一设备和相近任务条件下复测，再据变化调整动作选择。"
+        ),
+    ]
+
+
+def _overall_rehabilitation_recommendations(
+    result: OrchestrationResult,
+    report: ReportResult,
+) -> list[str]:
+    """Return detailed overall directions, excluding a review-only placeholder."""
+    recommendations = _dedup_recommendations(
+        [_one_line(item) for item in report.recommendations if _one_line(item)]
+    )
+    usable = [
+        item
+        for item in recommendations
+        if not _REVIEW_ONLY_RECOMMENDATION.fullmatch(item)
+    ]
+    return usable or _fallback_overall_recommendations(
+        _brunnstrom_stage_number(result)
+    )
+
+
+def _overall_subtype_text(
+    result: OrchestrationResult,
+    clinical_score_source: str = "dl_prediction",
+) -> str:
     """Create the visible test-only overall subtype from pipeline observations.
 
     The planner_rag ReportGenerator owns narrative and strategy text, but its
@@ -430,12 +924,7 @@ def _overall_subtype_text(result: OrchestrationResult) -> str:
     hand_function = by_metric.get("hand_function")
     fma_hand = by_metric.get("FMA_UE")
 
-    stage_number: Optional[int] = None
-    if hand_function is not None:
-        try:
-            stage_number = int(hand_function.value)
-        except (TypeError, ValueError):
-            stage_number = None
+    stage_number = _brunnstrom_stage_number(result)
     stage_prefix = (
         f"{_BRUNNSTROM_ROMAN[stage_number]}期"
         if stage_number in _BRUNNSTROM_ROMAN
@@ -443,11 +932,20 @@ def _overall_subtype_text(result: OrchestrationResult) -> str:
     )
     stage_detail = _one_line(
         hand_function.description if hand_function is not None else ""
-    ) or "本次未获得可用的手功能模型预测结果"
+    ) or (
+        "本次未获得可用的手功能临床评定结果"
+        if clinical_score_source == "clinician_provided"
+        else "本次未获得可用的手功能模型预测结果"
+    )
 
     fma_detail = ""
     if fma_hand is not None and fma_hand.value is not None:
-        fma_detail = f"FMA手部子量表模型预测值为{_one_line(fma_hand.value)}分；"
+        provenance = (
+            "医生提供的临床评定结果"
+            if clinical_score_source == "clinician_provided"
+            else "模型预测值"
+        )
+        fma_detail = f"FMA手部子量表{provenance}为{_fma_score_text(fma_hand.value)}分；"
 
     return (
         f"{stage_prefix}-手功能综合亚型（测试性归纳）：{stage_detail}；"
@@ -477,6 +975,7 @@ def render_compatible_markdown(
 ) -> str:
     """Render ``ReportResult`` for the existing Markdown/SSE frontend surface."""
     report, _validation = require_completed_report(result)
+    clinical_score_source = str(quality.get("clinical_score_source") or "dl_prediction")
     source_ids = _ordered_citations(report)
     citation_numbers = {value: index for index, value in enumerate(source_ids, start=1)}
 
@@ -556,7 +1055,10 @@ def render_compatible_markdown(
         f"**临床解读：** {_one_line(report.summary)}",
     ])
     modality_groups = [
-        ("clinical_scale", "临床任务模型预测"),
+        (
+            "clinical_scale",
+            "临床评定结果" if clinical_score_source == "clinician_provided" else "临床任务模型预测",
+        ),
         ("emg", "肌电指标"),
         ("eeg", "脑电指标"),
         ("multimodal", "脑肌多模态指标"),
@@ -588,8 +1090,8 @@ def render_compatible_markdown(
                             finding_names.get(finding.finding_id)
                             or finding.finding_id
                         ),
-                        _table_cell(_result_value_text(source_findings.get(finding.finding_id))),
-                        _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id))),
+                        _table_cell(_result_value_text(source_findings.get(finding.finding_id), clinical_score_source)),
+                        _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id), clinical_score_source)),
                         markers(finding.citations) or "—",
                     ]
                 )
@@ -605,14 +1107,14 @@ def render_compatible_markdown(
             "| "
             + " | ".join([
                 _table_cell(finding_names.get(finding.finding_id) or finding.finding_id),
-                _table_cell(_result_value_text(source_findings.get(finding.finding_id))),
-                _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id))),
+                _table_cell(_result_value_text(source_findings.get(finding.finding_id), clinical_score_source)),
+                _table_cell(_plain_interpretation_text(source_findings.get(finding.finding_id), clinical_score_source)),
                 markers(finding.citations) or "—",
             ])
             + " |",
         ])
 
-    overall_subtype = _overall_subtype_text(result)
+    overall_subtype = _overall_subtype_text(result, clinical_score_source)
     lines.extend([
         "",
         "## 三、综合亚型界定",
@@ -620,12 +1122,36 @@ def render_compatible_markdown(
         f"**综合亚型：** {_one_line(overall_subtype)}",
     ])
 
-    deduped_recommendations = _dedup_recommendations([r for r in report.recommendations if r])
-    lines.extend(["", "## 四、康复策略建议", ""])
+    recommendations = _overall_rehabilitation_recommendations(result, report)
+    stage_number = _brunnstrom_stage_number(result)
+    lines.extend(["", "## 四、康复策略建议", "", "### 一、总体训练方向", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"
-        for index, value in enumerate(deduped_recommendations, start=1)
+        for index, value in enumerate(recommendations, start=1)
     )
+    lines.extend(["", "### 二、按 Brunnstrom 分期的训练动作", ""])
+    if stage_number is None:
+        lines.append("本次未获得可用的 Brunnstrom 手功能分期，暂不展示分期动作清单。")
+    elif stage_number == 6:
+        lines.append(
+            f"手功能{'临床评定结果' if clinical_score_source == 'clinician_provided' else '模型预测'}为 Brunnstrom VI期，提示分离运动能力接近正常；"
+            "仍需结合实际动作表现选择训练任务。"
+        )
+        lines.extend([
+            "- 精细操作：扣钮扣、捏取小物体、书写或使用工具。",
+            "- 双手协调：拿取、转移和放置物品，观察两手配合、准确性和速度。",
+            "- 任务反馈：记录代偿、疼痛和动作质量变化，必要时降低难度或暂停。",
+        ])
+    else:
+        lines.append(
+            f"当前{'临床评定结果' if clinical_score_source == 'clinician_provided' else '模型预测'}为 Brunnstrom {_BRUNNSTROM_ROMAN[stage_number]}期；"
+            "可从以下动作中选择训练。"
+        )
+        lines.extend(
+            f"- {code}：{name}"
+            for code, name in _BRUNNSTROM_GESTURE_ACTIONS[stage_number]
+        )
+    lines.append("以下动作是按 Brunnstrom 分期整理的训练示例，需结合实际动作表现选择。")
     lines.extend(["", "## 五、进一步个体化所需信息", ""])
     lines.extend(
         f"{index}. {_one_line(value)}"

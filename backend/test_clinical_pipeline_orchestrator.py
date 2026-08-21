@@ -9,6 +9,7 @@ import rag_client
 
 from clinical_pipeline.config import (
     CoreKnowledgeConfig,
+    KnowledgeGraphConfig,
     LlmRoleConfig,
     PipelineConfig,
 )
@@ -108,10 +109,15 @@ class FakeReportLlm:
         values = list(messages)
         self.calls.append((values, attempt))
         unavailable = '"status":"unavailable"' in values[1]["content"]
+        partial = '"status":"partial"' in values[1]["content"]
         evidence_summary = (
             "检索证据不可用，本次仅使用结构化观察和固定核心知识。"
             if unavailable
-            else "检索证据覆盖本次知识主题。"
+            else (
+                "检索证据覆盖不完整，本次仍保留结构化观察和固定核心知识。"
+                if partial
+                else "检索证据覆盖本次知识主题。"
+            )
         )
         return json.dumps(
             {
@@ -167,11 +173,12 @@ def _settings() -> rag_client.RagClientSettings:
     )
 
 
-def _config() -> PipelineConfig:
+def _config(*, graph_mode: str = "llm_only") -> PipelineConfig:
     return PipelineConfig(
         config_version="orchestrator-test-v0.1",
         core_knowledge=CoreKnowledgeConfig(bundle_version="fake-core-v1"),
         planner=LlmRoleConfig(model_id=PLANNER_MODEL_ID),
+        knowledge_graph=KnowledgeGraphConfig(mode=graph_mode),
         report_generator=LlmRoleConfig(model_id=REPORT_MODEL_ID),
     )
 
@@ -206,6 +213,8 @@ def _harness(
     *,
     rag_failure: bool = False,
     core_failure: Exception | None = None,
+    graph_mode: str = "llm_only",
+    graph_rag_adapter=None,
 ):
     planner_llm = FakePlannerLlm()
     report_llm = FakeReportLlm()
@@ -217,13 +226,51 @@ def _harness(
     )
     core = FakeCoreKnowledgeProvider(core_failure)
     orchestrator = ClinicalPipelineOrchestrator(
-        config=_config(),
+        config=_config(graph_mode=graph_mode),
         core_knowledge_provider=core,
         knowledge_planner=KnowledgePlanner(planner_llm),
         retriever=Retriever(settings=_settings(), transport=transport),
         report_generator=ReportGenerator(report_llm),
+        graph_rag_adapter=graph_rag_adapter,
     )
     return orchestrator, planner_llm, report_llm, transport, core
+
+
+def _non_imu_markers() -> list[CanonicalBiomarker]:
+    return [
+        CanonicalBiomarker(
+            metric_key="wrist_co_contraction_index",
+            name="腕屈伸肌共收缩指数（CCI-腕）",
+            value=0.42,
+            modality="emg",
+            available=True,
+            n_valid=3,
+        ),
+        CanonicalBiomarker(
+            metric_key="emg_activation_rms",
+            name="肌肉激活幅度（RMS）",
+            value=0.0011,
+            modality="emg",
+            available=True,
+            n_valid=3,
+        ),
+        CanonicalBiomarker(
+            metric_key="pathological_asymmetry_index",
+            name="病理性半球不对称指数（PAI）",
+            value=0.12,
+            modality="eeg",
+            available=True,
+            n_valid=3,
+        ),
+        CanonicalBiomarker(
+            metric_key="interhemispheric_motor_coherence",
+            name="半球间运动皮层相干",
+            value=0.28,
+            modality="eeg",
+            available=True,
+            n_valid=3,
+        ),
+    ]
 
 
 class ClinicalPipelineOrchestratorTests(unittest.TestCase):
@@ -326,6 +373,98 @@ class ClinicalPipelineOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(report_llm.calls), 1)
         transport.assert_called_once()
 
+    def test_graph_enhanced_mode_seeds_planner_and_retains_non_imu_topics(self) -> None:
+        orchestrator, planner_llm, _, transport, _ = _harness(
+            graph_mode="graph_enhanced"
+        )
+
+        result = orchestrator.run(_input(biomarkers=_non_imu_markers()))
+
+        self.assertEqual(result.status, PipelineRunStatus.COMPLETED)
+        self.assertIsNotNone(result.knowledge_graph_evidence)
+        self.assertEqual(result.trace.artifact_refs["knowledge_graph_mode"], "graph_enhanced")
+        self.assertEqual(result.trace.artifact_refs["knowledge_graph_status"], "matched")
+        self.assertIn("knowledge_graph_context", planner_llm.calls[0][0][1]["content"])
+        self.assertTrue(
+            any(topic.topic_id.startswith("kg-topic-") for topic in result.knowledge_plan.topics)
+        )
+        payload = transport.call_args.args[1]
+        self.assertGreater(len(payload["queries"]), 1)
+        self.assertFalse(
+            any(
+                state["source_modality"] == "imu"
+                for state in result.knowledge_graph_evidence["matched_indicator_states"]
+            )
+        )
+
+    def test_graph_enhanced_filters_imu_before_planner_and_report_input(self) -> None:
+        orchestrator, planner_llm, _, _, core = _harness(graph_mode="graph_enhanced")
+
+        result = orchestrator.run(
+            _input(biomarkers=[*_non_imu_markers(), _marker()])
+        )
+
+        self.assertEqual(result.status, PipelineRunStatus.COMPLETED)
+        self.assertEqual(result.trace.artifact_refs["knowledge_graph_non_imu_scope"], "applied")
+        self.assertNotIn("movement_smoothness_sparc", planner_llm.calls[0][0][1]["content"])
+        self.assertNotIn("movement_smoothness_sparc", core.calls[0])
+        self.assertFalse(
+            any(
+                finding.modality.value == "imu"
+                for finding in result.report_input.findings.findings
+            )
+        )
+        self.assertFalse(
+            any(
+                finding.modality.value == "imu"
+                for finding in result.interpretation.findings
+            )
+        )
+        self.assertFalse(result.knowledge_graph_evidence["data_quality_warnings"])
+        self.assertTrue(result.knowledge_graph_evidence["measurement_context_topics"])
+
+    def test_llm_only_keeps_legacy_imu_behavior(self) -> None:
+        orchestrator, planner_llm, _, _, core = _harness(graph_mode="llm_only")
+
+        result = orchestrator.run(_input(biomarkers=[*_non_imu_markers(), _marker()]))
+
+        self.assertEqual(result.status, PipelineRunStatus.COMPLETED)
+        self.assertEqual(result.trace.artifact_refs["knowledge_graph_non_imu_scope"], "not_applied")
+        self.assertIn("movement_smoothness_sparc", planner_llm.calls[0][0][1]["content"])
+        self.assertIn("movement_smoothness_sparc", core.calls[0])
+        self.assertTrue(
+            any(
+                finding.modality.value == "imu"
+                for finding in result.report_input.findings.findings
+            )
+        )
+
+    def test_graph_failure_falls_back_to_legacy_complete_context(self) -> None:
+        class FailingGraphAdapter:
+            def build_evidence(self, *_args, **_kwargs):
+                raise RuntimeError("intentional graph failure")
+
+        orchestrator, planner_llm, _, _, core = _harness(
+            graph_mode="graph_enhanced",
+            graph_rag_adapter=FailingGraphAdapter(),
+        )
+
+        result = orchestrator.run(_input(biomarkers=[*_non_imu_markers(), _marker()]))
+
+        self.assertEqual(result.status, PipelineRunStatus.COMPLETED)
+        self.assertEqual(
+            result.trace.artifact_refs["knowledge_graph_status"],
+            "fallback_to_llm_only",
+        )
+        self.assertIn("movement_smoothness_sparc", planner_llm.calls[0][0][1]["content"])
+        self.assertIn("movement_smoothness_sparc", core.calls[0])
+        self.assertTrue(
+            any(
+                finding.modality.value == "imu"
+                for finding in result.report_input.findings.findings
+            )
+        )
+
     def test_module_order_cannot_skip(self) -> None:
         orchestrator, *_ = _harness()
 
@@ -346,7 +485,7 @@ class ClinicalPipelineOrchestratorTests(unittest.TestCase):
         self.assertEqual(completed, expected)
         self.assertEqual(
             [event.sequence for event in result.module_events],
-            list(range(1, 17)),
+            list(range(1, len(result.module_events) + 1)),
         )
         trace_event_keys = [
             key

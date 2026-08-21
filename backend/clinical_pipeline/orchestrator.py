@@ -132,6 +132,7 @@ class QualityGate:
 class PipelineModule(str, Enum):
     QUALITY_GATE = "QualityGate"
     INTERPRETER = "Interpreter"
+    KNOWLEDGE_GRAPH = "KnowledgeGraph"
     CORE_KNOWLEDGE_PROVIDER = "CoreKnowledgeProvider"
     KNOWLEDGE_PLANNER = "KnowledgePlanner"
     RETRIEVER = "Retriever"
@@ -177,6 +178,7 @@ class OrchestrationResult(ContractModel):
     quality_gate: Optional[QualityGateResult] = None
     canonical_context: Optional[CanonicalAssessmentContext] = None
     interpretation: Optional[InterpretationResult] = None
+    knowledge_graph_evidence: Optional[Dict[str, Any]] = None
     core_knowledge: Optional[CoreKnowledgeBundle] = None
     knowledge_plan: Optional[KnowledgePlan] = None
     retrieval: Optional[RetrievalResult] = None
@@ -205,6 +207,7 @@ class ClinicalPipelineOrchestrator:
         report_input_assembler: Optional[ReportInputAssembler] = None,
         report_generator: Optional[ReportGenerator] = None,
         validator: Optional[Validator] = None,
+        graph_rag_adapter: Optional[Any] = None,
     ) -> None:
         self._config = config
         self._quality_gate = quality_gate or QualityGate()
@@ -219,6 +222,15 @@ class ClinicalPipelineOrchestrator:
         )
         self._report_generator = report_generator or ReportGenerator()
         self._validator = validator or Validator()
+        self._graph_rag_adapter = None
+        self._non_imu_scope = None
+        if self._config.knowledge_graph.mode == "graph_enhanced":
+            # Keep the graph module optional and isolated from the frozen
+            # planner_rag package. The import only occurs when explicitly enabled.
+            from clinical_knowledge_graph import GraphRagAdapter, NonImuScope
+
+            self._graph_rag_adapter = graph_rag_adapter or GraphRagAdapter()
+            self._non_imu_scope = NonImuScope()
 
     def run(self, value: PipelineAssessmentInput) -> OrchestrationResult:
         if not isinstance(value, PipelineAssessmentInput):
@@ -230,6 +242,7 @@ class ClinicalPipelineOrchestrator:
         quality_gate_result: Optional[QualityGateResult] = None
         canonical_context: Optional[CanonicalAssessmentContext] = None
         interpretation: Optional[InterpretationResult] = None
+        knowledge_graph_evidence: Optional[Dict[str, Any]] = None
         core_knowledge: Optional[CoreKnowledgeBundle] = None
         knowledge_plan: Optional[KnowledgePlan] = None
         retrieval: Optional[RetrievalResult] = None
@@ -284,6 +297,78 @@ class ClinicalPipelineOrchestrator:
             )
             current_module = None
 
+            if self._graph_rag_adapter is not None:
+                current_module = PipelineModule.KNOWLEDGE_GRAPH
+                self._record_module_event(trace, module_events, current_module, "started")
+                try:
+                    scoped_context, scoped_interpretation = (
+                        self._non_imu_scope.assessment_view(
+                            canonical_context,
+                            interpretation,
+                        )
+                    )
+                    knowledge_graph_evidence = self._graph_rag_adapter.build_evidence(
+                        scoped_context,
+                        scoped_interpretation,
+                    )
+                    knowledge_graph_evidence = self._non_imu_scope.evidence_view(
+                        knowledge_graph_evidence,
+                        scoped_interpretation,
+                    )
+                except Exception as exc:  # noqa: BLE001 - graph must not break baseline flow
+                    trace.artifact_refs["knowledge_graph_mode"] = "graph_enhanced"
+                    trace.artifact_refs["knowledge_graph_status"] = "fallback_to_llm_only"
+                    self._record_module_event(
+                        trace,
+                        module_events,
+                        current_module,
+                        "failed",
+                        detail=f"{type(exc).__name__}: {str(exc)[:400]}",
+                    )
+                    knowledge_graph_evidence = None
+                else:
+                    # From this point onward, every downstream module sees the
+                    # same non-IMU view. llm_only and graph-fallback retain the
+                    # legacy complete context by design.
+                    canonical_context = scoped_context
+                    interpretation = scoped_interpretation
+                    topics = knowledge_graph_evidence.get("rag_topics") or []
+                    measurement_topics = (
+                        knowledge_graph_evidence.get("measurement_context_topics")
+                        or []
+                    )
+                    trace.artifact_refs["knowledge_graph_mode"] = "graph_enhanced"
+                    trace.artifact_refs["knowledge_graph_status"] = str(
+                        knowledge_graph_evidence.get("graph_status", "matched")
+                    )
+                    trace.artifact_refs["knowledge_graph_topic_count"] = str(len(topics))
+                    trace.artifact_refs[
+                        "knowledge_graph_measurement_context_topic_count"
+                    ] = str(len(measurement_topics))
+                    trace.artifact_refs["knowledge_graph_non_imu_scope"] = "applied"
+                    self._record_module_event(
+                        trace,
+                        module_events,
+                        current_module,
+                        "completed",
+                        detail=f"topics={len(topics)}",
+                    )
+                current_module = None
+            else:
+                current_module = PipelineModule.KNOWLEDGE_GRAPH
+                self._record_module_event(trace, module_events, current_module, "started")
+                trace.artifact_refs["knowledge_graph_mode"] = "llm_only"
+                trace.artifact_refs["knowledge_graph_status"] = "disabled"
+                trace.artifact_refs["knowledge_graph_non_imu_scope"] = "not_applied"
+                self._record_module_event(
+                    trace,
+                    module_events,
+                    current_module,
+                    "completed",
+                    detail="disabled",
+                )
+                current_module = None
+
             current_module = PipelineModule.CORE_KNOWLEDGE_PROVIDER
             self._record_module_event(trace, module_events, current_module, "started")
             system_keys = list(
@@ -301,10 +386,24 @@ class ClinicalPipelineOrchestrator:
             planner_call_id = machine.start_planner(self._config.planner.model_id)
             active_call_id = planner_call_id
             trace.artifact_refs["planner_call_id"] = planner_call_id
-            knowledge_plan = self._knowledge_planner.plan(
-                interpretation,
-                core_knowledge,
-            )
+            if knowledge_graph_evidence is not None:
+                graph_context = self._graph_rag_adapter.planner_context(
+                    knowledge_graph_evidence
+                )
+                knowledge_plan = self._knowledge_planner.plan(
+                    interpretation,
+                    core_knowledge,
+                    graph_context=graph_context,
+                )
+                knowledge_plan = self._graph_rag_adapter.merge_with_plan(
+                    knowledge_plan,
+                    knowledge_graph_evidence,
+                )
+            else:
+                knowledge_plan = self._knowledge_planner.plan(
+                    interpretation,
+                    core_knowledge,
+                )
             machine.complete_planner(planner_call_id, knowledge_plan)
             active_call_id = None
             self._record_module_event(
@@ -340,6 +439,9 @@ class ClinicalPipelineOrchestrator:
                 core_knowledge=core_knowledge,
                 knowledge_plan=knowledge_plan,
                 retrieval=retrieval,
+                clinical_score_source=str(
+                    value.quality_metadata.get("clinical_score_source", "dl_prediction")
+                ),
             )
             self._record_module_event(
                 trace, module_events, current_module, "completed"
@@ -399,6 +501,7 @@ class ClinicalPipelineOrchestrator:
                 quality_gate=quality_gate_result,
                 canonical_context=canonical_context,
                 interpretation=interpretation,
+                knowledge_graph_evidence=knowledge_graph_evidence,
                 core_knowledge=core_knowledge,
                 knowledge_plan=knowledge_plan,
                 retrieval=retrieval,
@@ -430,6 +533,7 @@ class ClinicalPipelineOrchestrator:
                 quality_gate=quality_gate_result,
                 canonical_context=canonical_context,
                 interpretation=interpretation,
+                knowledge_graph_evidence=knowledge_graph_evidence,
                 core_knowledge=core_knowledge,
                 knowledge_plan=knowledge_plan,
                 retrieval=retrieval,
@@ -525,6 +629,7 @@ class ClinicalPipelineOrchestrator:
         quality_gate: Optional[QualityGateResult] = None,
         canonical_context: Optional[CanonicalAssessmentContext] = None,
         interpretation: Optional[InterpretationResult] = None,
+        knowledge_graph_evidence: Optional[Dict[str, Any]] = None,
         core_knowledge: Optional[CoreKnowledgeBundle] = None,
         knowledge_plan: Optional[KnowledgePlan] = None,
         retrieval: Optional[RetrievalResult] = None,
@@ -544,6 +649,7 @@ class ClinicalPipelineOrchestrator:
             quality_gate=quality_gate,
             canonical_context=canonical_context,
             interpretation=interpretation,
+            knowledge_graph_evidence=knowledge_graph_evidence,
             core_knowledge=core_knowledge,
             knowledge_plan=knowledge_plan,
             retrieval=retrieval,
