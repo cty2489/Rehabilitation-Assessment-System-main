@@ -4116,6 +4116,83 @@ summary:focus-visible {
 .kg-admin-relation-card li p { margin: 7px 0 3px; color: var(--ink-500); font-size: 10.5px; line-height: 1.55; }
 .kg-admin-relation-card li small { color: var(--ink-400); font-size: 9.5px; }
 
+/* Approved v11 rehabilitation strategy report generator */
+.strategy-report-page { display: grid; gap: 16px; }
+.strategy-report-page .page-head { margin-bottom: 0; }
+.strategy-template-badge {
+  display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px;
+  border: 1px solid #b9d8d3; border-radius: 999px; color: var(--teal-700);
+  background: #eef8f6; font-size: 12px; font-weight: 700;
+}
+.strategy-template-badge svg { width: 16px; height: 16px; }
+.strategy-boundary {
+  display: flex; gap: 12px; align-items: flex-start; padding: 15px 17px;
+  border: 1px solid #b9d8d3; border-radius: var(--radius); background: #eef8f6;
+  color: var(--ink-700);
+}
+.strategy-boundary > svg { width: 21px; height: 21px; flex: 0 0 21px; color: var(--teal-500); }
+.strategy-boundary strong { display: block; margin-bottom: 4px; color: var(--teal-700); font-size: 14px; }
+.strategy-boundary p { margin: 0; font-size: 12px; line-height: 1.65; }
+.strategy-upload-card h2, .strategy-results-card h2 { overflow: visible; }
+.strategy-drop-zone {
+  display: flex; min-height: 122px; align-items: center; justify-content: center; gap: 14px;
+  padding: 24px; border: 1px dashed #83b7b0; border-radius: var(--radius);
+  background: #f8fcfb; color: var(--teal-700); cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.strategy-drop-zone:hover { border-color: var(--teal-500); background: #f0f9f7; }
+.strategy-drop-zone > svg { width: 32px; height: 32px; }
+.strategy-drop-zone span { display: grid; gap: 5px; }
+.strategy-drop-zone strong { font-size: 14px; }
+.strategy-drop-zone small { color: var(--ink-400); font-size: 11px; }
+.strategy-drop-zone input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.strategy-toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 14px; }
+.strategy-toolbar > span { color: var(--ink-400); font-size: 11px; line-height: 1.5; }
+.strategy-toolbar > div { display: flex; gap: 9px; flex: 0 0 auto; }
+.strategy-toolbar .button, .strategy-file-actions .button { display: inline-flex; align-items: center; gap: 6px; }
+.strategy-toolbar .button svg, .strategy-file-actions .button svg { width: 15px; height: 15px; }
+.strategy-empty { display: grid; place-items: center; gap: 8px; min-height: 130px; color: var(--ink-300); font-size: 12px; }
+.strategy-empty svg { width: 30px; height: 30px; }
+.strategy-file-list { display: grid; gap: 9px; }
+.strategy-file-row {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 11px; align-items: center;
+  min-height: 74px; padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: #fff;
+}
+.strategy-file-row.status-success { border-color: #b7dacb; background: #fbfefc; }
+.strategy-file-row.status-error,
+.strategy-file-row.status-review { border-color: #e8c0bd; background: #fffafa; }
+.strategy-file-status { color: var(--ink-300); }
+.strategy-file-status svg { width: 21px; height: 21px; }
+.status-success .strategy-file-status { color: var(--mint-500); }
+.status-error .strategy-file-status,
+.status-review .strategy-file-status { color: var(--rose-500); }
+.strategy-file-main { min-width: 0; }
+.strategy-file-title { display: flex; min-width: 0; align-items: baseline; gap: 9px; }
+.strategy-file-title strong { overflow: hidden; color: var(--ink-700); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.strategy-file-title span { flex: 0 0 auto; color: var(--ink-300); font-size: 10px; }
+.strategy-file-main > p { margin: 5px 0 0; font-size: 10.5px; }
+.strategy-error { color: var(--rose-500); line-height: 1.5; }
+.strategy-progress { position: relative; height: 21px; margin-top: 8px; border-radius: 3px; background: #e9efef; overflow: hidden; }
+.strategy-progress > span { position: absolute; inset: 0 auto 0 0; background: #9ad0c9; transition: width .15s ease; }
+.strategy-progress small { position: relative; z-index: 1; display: block; padding: 3px 7px; color: var(--teal-700); font-size: 9.5px; }
+.strategy-success-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.strategy-success-meta span { padding: 3px 7px; border-radius: 999px; background: #edf5f3; color: #38625e; font-size: 9.5px; }
+.strategy-file-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.strategy-file-actions .button { padding: 7px 10px; font-size: 10.5px; }
+.strategy-file-actions .icon-btn { display: grid; place-items: center; width: 32px; height: 32px; }
+.strategy-file-actions .icon-btn svg { width: 16px; height: 16px; }
+.spin { animation: strategy-spin .85s linear infinite; }
+@keyframes strategy-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 800px) {
+  .strategy-template-badge { display: none; }
+  .strategy-toolbar { align-items: stretch; flex-direction: column; }
+  .strategy-toolbar > div { justify-content: flex-end; }
+  .strategy-file-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .strategy-file-actions { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
+}
+
 .kg-admin-relation-legend { display: flex; flex-wrap: wrap; gap: 7px; }
 .kg-admin-relation-legend span {
   display: inline-flex;

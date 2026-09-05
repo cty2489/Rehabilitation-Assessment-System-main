@@ -7,6 +7,7 @@ const ROUTE_LABEL: Record<Route, string> = {
   dashboard: '工作台总览',
   patients: '患者管理',
   assessment: '康复评估',
+  'strategy-reports': '康复训练策略报告生成',
   records: '评估记录',
   stats: '统计分析',
   'task-interface': '设备接口',

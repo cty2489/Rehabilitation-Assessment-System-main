@@ -14,6 +14,7 @@ import KnowledgeGovernancePage from '../pages/KnowledgeGovernancePage'
 import KnowledgeGraphPage from '../pages/KnowledgeGraphPage'
 import LlmControlTestPage from '../pages/LlmControlTestPage'
 import LlmBenchmarkPage from '../pages/LlmBenchmarkPage'
+import StrategyReportPage from '../pages/StrategyReportPage'
 
 export default function AppShell() {
   const { route } = useRoute()
@@ -36,6 +37,7 @@ export default function AppShell() {
           {route === 'dashboard' && <DashboardPage />}
           {route === 'patients' && <PatientManagementPage />}
           {route === 'assessment' && <AssessmentPage />}
+          {route === 'strategy-reports' && <StrategyReportPage />}
           {route === 'records' && <RecordsOverviewPage />}
           {route === 'stats' && <StatisticsPage />}
           {renderTaskInterface && (

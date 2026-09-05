@@ -1,0 +1,317 @@
+{
+  "source_docx": "source/根据布氏分期的训练手势分类20260724.docx",
+  "source_sha256": "4f6f4c5d495a441a6e1ac506ee858de93048ddcdf4db08c5a652f4d791fed0b7",
+  "stage_6_policy": "已接近正常能力，可从手势库自由选择，并按任务需求设置难度。",
+  "stages": {
+    "1": [
+      "SS-15",
+      "SS-16"
+    ],
+    "2": [
+      "SS-15",
+      "SS-16",
+      "SS-10",
+      "SS-18"
+    ],
+    "3": [
+      "SS-15",
+      "SS-16",
+      "SS-11",
+      "SS-12",
+      "SS-14",
+      "SS-22"
+    ],
+    "4": [
+      "SS-1",
+      "SS-3",
+      "SS-11",
+      "SS-12",
+      "SS-14",
+      "SS-19"
+    ],
+    "5": [
+      "SS-19",
+      "SS-20",
+      "SS-21",
+      "SS-22",
+      "SS-24"
+    ]
+  },
+  "gestures": [
+    {
+      "code": "SS-1",
+      "name": "食指屈曲",
+      "image": "gesture_images/SS-1.png",
+      "image_sha256": "25d0d7ceaf7abb07df063ac9b6e7be096c7c9b61bcc57faba5367a66287b04b9",
+      "allowed_stages": [
+        4
+      ]
+    },
+    {
+      "code": "SS-3",
+      "name": "中指屈曲",
+      "image": "gesture_images/SS-3.png",
+      "image_sha256": "8bfcd74c135b58f3f08c6931b66cb61e35544f682dcf21fe22751c00d7655595",
+      "allowed_stages": [
+        4
+      ]
+    },
+    {
+      "code": "SS-10",
+      "name": "拇指屈曲",
+      "image": "gesture_images/SS-10.png",
+      "image_sha256": "9e232929e0b256952b7698f962793b5dc720643b82c49d5c7bdf924def031871",
+      "allowed_stages": [
+        2
+      ]
+    },
+    {
+      "code": "SS-11",
+      "name": "拇指竖起",
+      "image": "gesture_images/SS-11.png",
+      "image_sha256": "e362060e723d93111d274424a41913374ef1f6836ee080c266289b5c1c8e9ddd",
+      "allowed_stages": [
+        3,
+        4
+      ]
+    },
+    {
+      "code": "SS-12",
+      "name": "食中指伸展",
+      "image": "gesture_images/SS-12.png",
+      "image_sha256": "b38b57a17f714c1160bb5dc9f22ebe87cf02d8276640c47deb92f4a231dd0f57",
+      "allowed_stages": [
+        3,
+        4
+      ]
+    },
+    {
+      "code": "SS-14",
+      "name": "四指伸展",
+      "image": "gesture_images/SS-14.png",
+      "image_sha256": "e4b67a3a7ece8742b0ac580e4e60318ea3180d3672d7782b3f3f5d25915d9a9d",
+      "allowed_stages": [
+        3,
+        4
+      ]
+    },
+    {
+      "code": "SS-15",
+      "name": "五指伸展",
+      "image": "gesture_images/SS-15.png",
+      "image_sha256": "51dc78c9938b145f3c7e52611f87467a6191a465a818527eaaafb58800977879",
+      "allowed_stages": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "code": "SS-16",
+      "name": "五指屈曲",
+      "image": "gesture_images/SS-16.png",
+      "image_sha256": "87a74e7eaa4450cfd00177c86c7452ca91d236b841a8a8b2a276cd92c9ab5c74",
+      "allowed_stages": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "code": "SS-18",
+      "name": "柱状抓握",
+      "image": "gesture_images/SS-18.png",
+      "image_sha256": "6273367835c7a8b12b73517a5be8761bbc07499bd913c936f974cd8d0da69109",
+      "allowed_stages": [
+        2
+      ]
+    },
+    {
+      "code": "SS-19",
+      "name": "棍状物抓握",
+      "image": "gesture_images/SS-19.png",
+      "image_sha256": "417d07d8550c3149213c37e4cbfc1e43dff159f3618e60216768fd714ff6dc78",
+      "allowed_stages": [
+        4,
+        5
+      ]
+    },
+    {
+      "code": "SS-20",
+      "name": "食指伸展抓握",
+      "image": "gesture_images/SS-20.png",
+      "image_sha256": "dafaf9653822aacdece150607361f7c10e9ac90a6e46db7f48e0b3b097352f40",
+      "allowed_stages": [
+        5
+      ]
+    },
+    {
+      "code": "SS-21",
+      "name": "环形抓握",
+      "image": "gesture_images/SS-21.png",
+      "image_sha256": "a2df9d1973b54c150fc6fee14e77024b346df7c0e5c7fdbad6af6b701896244a",
+      "allowed_stages": [
+        5
+      ]
+    },
+    {
+      "code": "SS-22",
+      "name": "球体抓握",
+      "image": "gesture_images/SS-22.png",
+      "image_sha256": "808cf1a8505a90054a89ce98c2c6ca1821f5b52b8cef8099af3ea87af21597c0",
+      "allowed_stages": [
+        3,
+        5
+      ]
+    },
+    {
+      "code": "SS-24",
+      "name": "拇指指尖捏取",
+      "image": "gesture_images/SS-24.png",
+      "image_sha256": "2165209fdcccdd14652812cb95c19bf8c54c1e1edbcbc7870da340d008c5b6ab",
+      "allowed_stages": [
+        5
+      ]
+    }
+  ],
+  "occurrences": [
+    {
+      "stage": 1,
+      "code": "SS-15",
+      "name": "五指伸展",
+      "image_sha256": "51dc78c9938b145f3c7e52611f87467a6191a465a818527eaaafb58800977879"
+    },
+    {
+      "stage": 1,
+      "code": "SS-16",
+      "name": "五指屈曲",
+      "image_sha256": "87a74e7eaa4450cfd00177c86c7452ca91d236b841a8a8b2a276cd92c9ab5c74"
+    },
+    {
+      "stage": 2,
+      "code": "SS-15",
+      "name": "五指伸展",
+      "image_sha256": "51dc78c9938b145f3c7e52611f87467a6191a465a818527eaaafb58800977879"
+    },
+    {
+      "stage": 2,
+      "code": "SS-16",
+      "name": "五指屈曲",
+      "image_sha256": "87a74e7eaa4450cfd00177c86c7452ca91d236b841a8a8b2a276cd92c9ab5c74"
+    },
+    {
+      "stage": 2,
+      "code": "SS-10",
+      "name": "拇指屈曲",
+      "image_sha256": "9e232929e0b256952b7698f962793b5dc720643b82c49d5c7bdf924def031871"
+    },
+    {
+      "stage": 2,
+      "code": "SS-18",
+      "name": "柱状抓握",
+      "image_sha256": "6273367835c7a8b12b73517a5be8761bbc07499bd913c936f974cd8d0da69109"
+    },
+    {
+      "stage": 3,
+      "code": "SS-15",
+      "name": "五指伸展",
+      "image_sha256": "51dc78c9938b145f3c7e52611f87467a6191a465a818527eaaafb58800977879"
+    },
+    {
+      "stage": 3,
+      "code": "SS-16",
+      "name": "五指屈曲",
+      "image_sha256": "87a74e7eaa4450cfd00177c86c7452ca91d236b841a8a8b2a276cd92c9ab5c74"
+    },
+    {
+      "stage": 3,
+      "code": "SS-11",
+      "name": "拇指竖起",
+      "image_sha256": "e362060e723d93111d274424a41913374ef1f6836ee080c266289b5c1c8e9ddd"
+    },
+    {
+      "stage": 3,
+      "code": "SS-12",
+      "name": "食中指伸展",
+      "image_sha256": "b38b57a17f714c1160bb5dc9f22ebe87cf02d8276640c47deb92f4a231dd0f57"
+    },
+    {
+      "stage": 3,
+      "code": "SS-14",
+      "name": "四指伸展",
+      "image_sha256": "e4b67a3a7ece8742b0ac580e4e60318ea3180d3672d7782b3f3f5d25915d9a9d"
+    },
+    {
+      "stage": 3,
+      "code": "SS-22",
+      "name": "球体抓握",
+      "image_sha256": "808cf1a8505a90054a89ce98c2c6ca1821f5b52b8cef8099af3ea87af21597c0"
+    },
+    {
+      "stage": 4,
+      "code": "SS-1",
+      "name": "食指屈曲",
+      "image_sha256": "25d0d7ceaf7abb07df063ac9b6e7be096c7c9b61bcc57faba5367a66287b04b9"
+    },
+    {
+      "stage": 4,
+      "code": "SS-3",
+      "name": "中指屈曲",
+      "image_sha256": "8bfcd74c135b58f3f08c6931b66cb61e35544f682dcf21fe22751c00d7655595"
+    },
+    {
+      "stage": 4,
+      "code": "SS-11",
+      "name": "拇指竖起",
+      "image_sha256": "e362060e723d93111d274424a41913374ef1f6836ee080c266289b5c1c8e9ddd"
+    },
+    {
+      "stage": 4,
+      "code": "SS-12",
+      "name": "食中指伸展",
+      "image_sha256": "b38b57a17f714c1160bb5dc9f22ebe87cf02d8276640c47deb92f4a231dd0f57"
+    },
+    {
+      "stage": 4,
+      "code": "SS-14",
+      "name": "四指伸展",
+      "image_sha256": "e4b67a3a7ece8742b0ac580e4e60318ea3180d3672d7782b3f3f5d25915d9a9d"
+    },
+    {
+      "stage": 4,
+      "code": "SS-19",
+      "name": "棍状物抓握",
+      "image_sha256": "417d07d8550c3149213c37e4cbfc1e43dff159f3618e60216768fd714ff6dc78"
+    },
+    {
+      "stage": 5,
+      "code": "SS-19",
+      "name": "棍状物抓握",
+      "image_sha256": "417d07d8550c3149213c37e4cbfc1e43dff159f3618e60216768fd714ff6dc78"
+    },
+    {
+      "stage": 5,
+      "code": "SS-20",
+      "name": "食指伸展抓握",
+      "image_sha256": "dafaf9653822aacdece150607361f7c10e9ac90a6e46db7f48e0b3b097352f40"
+    },
+    {
+      "stage": 5,
+      "code": "SS-21",
+      "name": "环形抓握",
+      "image_sha256": "a2df9d1973b54c150fc6fee14e77024b346df7c0e5c7fdbad6af6b701896244a"
+    },
+    {
+      "stage": 5,
+      "code": "SS-22",
+      "name": "球体抓握",
+      "image_sha256": "808cf1a8505a90054a89ce98c2c6ca1821f5b52b8cef8099af3ea87af21597c0"
+    },
+    {
+      "stage": 5,
+      "code": "SS-24",
+      "name": "拇指指尖捏取",
+      "image_sha256": "2165209fdcccdd14652812cb95c19bf8c54c1e1edbcbc7870da340d008c5b6ab"
+    }
+  ]
+}

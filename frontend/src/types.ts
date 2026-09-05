@@ -20,6 +20,7 @@ export type Route =
   | 'dashboard'
   | 'patients'
   | 'assessment'
+  | 'strategy-reports'
   | 'records'
   | 'stats'
   | 'knowledge'
