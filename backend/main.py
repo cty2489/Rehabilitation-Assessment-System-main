@@ -90,6 +90,7 @@ from inference import (
     run_pipeline,
 )
 from report import REPORT_MODEL, llm_model_name, llm_provider, remote_url
+from strategy_report_api import router as strategy_report_router
 from schemas import (
     AssessmentOverview,
     AssessmentResult,
@@ -464,6 +465,9 @@ def _require_admin(
     ):
         if not _browser_write_origin_allowed(request):
             raise HTTPException(status_code=403, detail="请求来源校验失败，请刷新页面后重试")
+
+
+app.include_router(strategy_report_router, dependencies=[Depends(_require_admin)])
 
 
 def _require_device(

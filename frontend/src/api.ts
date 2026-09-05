@@ -420,6 +420,132 @@ export function parseEvalPackage(
   })
 }
 
+// 真实流水线 v11 视觉版康复训练策略报告生成 ------------------------------- //
+export interface StrategyReportCapabilities {
+  schema_version: 'rehab.strategy_report_capabilities.v3'
+  template_version: string
+  pipeline_mode: 'real_upload_pipeline'
+  execution_mode: 'asynchronous_job'
+  refresh_recovery_supported: true
+  matching_policy: string
+  multiple_upload_supported: boolean
+  preset_case_fixture_used: false
+  score_policy: string
+  publication_states: Array<'PASSED' | 'WARNING' | 'MANUAL_REVIEW'>
+  outputs: Array<'pdf' | 'json' | 'markdown' | 'zip'>
+}
+
+export interface StrategyReportJob {
+  schema_version: 'rehab.strategy_report_job.v3'
+  job_id: string
+  source_upload_name: string
+  source_upload_size: number
+  accepted_at: string
+  updated_at: string
+  processing_status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+  current_stage: string
+  progress_percent: number
+  error_message?: string
+  case_id?: string
+  report_number?: string
+  patient_code?: string
+  generated_at: string
+  strategy_count?: number
+  biomarker_coverage?: { available: number; total: number; missing_keys?: string[] }
+  generation_mode?: 'real_upload_pipeline'
+  clinical_score_mode?: 'doctor_clinical_score' | 'dl_prediction'
+  report_llm_called_during_request?: true
+  publication_status: 'PASSED' | 'WARNING' | 'MANUAL_REVIEW' | null
+  publication_warnings: string[]
+  formal_report_created: boolean
+  files: Partial<Record<'pdf' | 'json' | 'markdown' | 'zip', string>>
+}
+
+export type StrategyReportDownloadKind = 'pdf' | 'json' | 'markdown' | 'zip'
+
+export function fetchStrategyReportCapabilities(): Promise<StrategyReportCapabilities> {
+  return getJSON('/api/strategy-reports/capabilities')
+}
+
+export function fetchStrategyReportJobs(limit = 50): Promise<{ jobs: StrategyReportJob[] }> {
+  return getJSON(`/api/strategy-reports?limit=${Math.max(1, Math.min(limit, 100))}`)
+}
+
+export function fetchStrategyReportJob(jobId: string): Promise<StrategyReportJob> {
+  return getJSON(`/api/strategy-reports/${encodeURIComponent(jobId)}`)
+}
+
+export function generateStrategyReport(
+  file: File,
+  onProgress?: (progress: PackageUploadProgress) => void,
+): Promise<StrategyReportJob> {
+  const form = new FormData()
+  form.append('package', file)
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    let lastReportedPercent = -1
+    request.open('POST', '/api/strategy-reports')
+    request.withCredentials = true
+    request.timeout = 30 * 60 * 1000
+    Object.entries(authHeaders()).forEach(([name, value]) => request.setRequestHeader(name, value))
+    request.upload.onprogress = (event) => {
+      const totalBytes = event.lengthComputable && event.total > 0 ? event.total : file.size
+      const percent = totalBytes > 0 ? Math.min(99, Math.round((event.loaded / totalBytes) * 100)) : 0
+      if (percent === lastReportedPercent) return
+      lastReportedPercent = percent
+      onProgress?.({ phase: 'uploading', loadedBytes: event.loaded, totalBytes, percent })
+    }
+    request.upload.onload = () => {
+      onProgress?.({ phase: 'server_processing', loadedBytes: file.size, totalBytes: file.size, percent: 100 })
+    }
+    request.onload = () => {
+      let payload: unknown = null
+      try {
+        payload = request.responseText ? JSON.parse(request.responseText) : null
+      } catch {
+        payload = null
+      }
+      if (request.status >= 200 && request.status < 300) {
+        resolve(payload as StrategyReportJob)
+        return
+      }
+      if (request.status === 401 || request.status === 403) {
+        window.dispatchEvent(new Event('rehab:unauthorized'))
+      }
+      const detail = payload && typeof payload === 'object'
+        ? (payload as { detail?: unknown }).detail
+        : null
+      reject(new Error(typeof detail === 'string' ? detail : `HTTP ${request.status}`))
+    }
+    request.onerror = () => reject(new Error('上传连接中断；系统将自动查询已接收的报告任务，请勿立即重复上传'))
+    request.ontimeout = () => reject(new Error('上传确认超时；系统将自动查询已接收的报告任务，请勿立即重复上传'))
+    request.onabort = () => reject(new Error('报告数据包上传已取消'))
+    request.send(form)
+  })
+}
+
+export async function downloadStrategyReport(
+  job: StrategyReportJob,
+  kind: StrategyReportDownloadKind,
+): Promise<void> {
+  const path = job.files[kind]
+  if (!path || !job.formal_report_created) throw new Error('该结果未通过发布门，不能下载正式报告')
+  const res = await fetch(path, { headers: authHeaders() })
+  if (!res.ok) throw await parseError(res)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const ext = kind === 'markdown' ? 'md' : kind
+  const fallback = `${job.report_number || '匿名'}_康复评估与训练策略报告.${ext}`
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filenameFromDisposition(res.headers.get('Content-Disposition'), fallback)
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  URL.revokeObjectURL(url)
+}
+
+
 export function submitOffline(form: FormData): Promise<{ session_id: string; n_trials: number }> {
   return postForm('/api/task-interface/offline', form)
 }
